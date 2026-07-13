@@ -79,10 +79,28 @@ def synth_silent_track(duration: float, out_path: Path,
         return False
     src = ("anullsrc=channel_layout=stereo:sample_rate=44100"
            if freq == 0 else f"sine=frequency={freq}:sample_rate=44100")
+    # choose an encoder compatible with the requested container/extension
+    codec = "pcm_s16le" if out_path.suffix.lower() == ".wav" else "aac"
     try:
         subprocess.run(
             [ffmpeg, "-y", "-f", "lavfi", "-i", src,
-             "-t", f"{max(duration, 0.5):.2f}", "-c:a", "aac", str(out_path)],
+             "-t", f"{max(duration, 0.5):.2f}", "-c:a", codec, str(out_path)],
+            capture_output=True, timeout=60,
+        )
+        return out_path.exists()
+    except Exception:
+        return False
+
+
+def trim_audio(src: Path, out_path: Path, seconds: float) -> bool:
+    """Extract a short mono 24 kHz reference clip (for voice cloning)."""
+    ffmpeg = _bin("ffmpeg")
+    if not ffmpeg or not src.exists():
+        return False
+    try:
+        subprocess.run(
+            [ffmpeg, "-y", "-i", str(src), "-t", f"{max(seconds, 1.0):.2f}",
+             "-ac", "1", "-ar", "24000", str(out_path)],
             capture_output=True, timeout=60,
         )
         return out_path.exists()

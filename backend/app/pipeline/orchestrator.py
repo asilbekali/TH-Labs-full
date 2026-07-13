@@ -129,16 +129,18 @@ class Orchestrator:
             await _tick(job, "nmt", emit, segments_preview(segments))
 
         # 3 ── TTS + Voice Cloning ----------------------------------------
-        dubbed_audio = s.outputs_dir / f"{job.id}_audio.m4a"
+        dubbed_audio = s.outputs_dir / f"{job.id}_audio.wav"
         async with _stage(job, "tts", emit) as st:
             engine_mode = "simulation"
             if real_tts:
                 try:
-                    ref = s.uploads_dir / f"{job.id}.wav"
-                    ref = ref if ref.exists() else None
+                    # Build a bounded speaker reference from the source audio +
+                    # its transcript (OmniVoice needs ref_audio + ref_text).
+                    ref_audio, ref_text = await asyncio.to_thread(
+                        _build_speaker_ref, job.id, segments)
                     ok = await asyncio.to_thread(
-                        self.tts.synthesize, segments, ref,
-                        options.voice_clone, dubbed_audio)
+                        self.tts.synthesize, segments, ref_audio, ref_text,
+                        options.voice_clone, dubbed_audio, duration)
                     engine_mode = "real"
                     used_real = True
                 except Exception as exc:
@@ -267,3 +269,23 @@ def _source_url(input_video: Path) -> str:
         return f"/media/{rel.as_posix()}"
     except ValueError:
         return f"/media/uploads/{input_video.name}"
+
+
+def _build_speaker_ref(job_id: str, segments: list[Segment]):
+    """Trim the extracted source audio to a short reference clip and gather the
+    matching source transcript, for OmniVoice zero-shot cloning.
+
+    Returns (ref_audio_path | None, ref_text | None).
+    """
+    s = get_settings()
+    src_wav = s.uploads_dir / f"{job_id}.wav"
+    if not src_wav.exists():
+        return None, None
+    secs = s.omnivoice_ref_seconds
+    ref_clip = s.uploads_dir / f"{job_id}_ref.wav"
+    if not media.trim_audio(src_wav, ref_clip, secs):
+        ref_clip = src_wav          # fall back to the full source audio
+    ref_text = " ".join(x.source_text for x in segments if x.start < secs).strip()
+    if not ref_text and segments:
+        ref_text = segments[0].source_text
+    return ref_clip, ref_text

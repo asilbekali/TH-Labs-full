@@ -13,8 +13,12 @@ pydantic-settings>=2.2
 #
 #   STT  (Whisper medium):   pip install faster-whisper
 #   NMT  (NLLB-200):         pip install "transformers>=4.40" torch sentencepiece
-#   TTS  (OmniVoice):        configure OMNIVOICE_API_URL / OMNIVOICE_API_KEY env
+#   TTS  (OmniVoice):        pip install omnivoice soundfile
+#                            (needs a transformers new enough to expose
+#                             HiggsAudioV2TokenizerModel — newer than 4.36)
 #   LipSync (Wav2Lip):       provide a local Wav2Lip checkout + weights
 #
-# NOTE: on Python 3.14 prebuilt wheels for torch/ctranslate2 may be unavailable;
-# use Python 3.11/3.12 for real inference if you hit install errors.
+# NOTE: on Python 3.14 prebuilt wheels for torch/ctranslate2 may be unavailable,
+# and faster-whisper (ctranslate2) + torch (CUDA) can segfault in one process.
+# Use Python 3.11/3.12 for real inference. The server defaults to TH_LABS_MODE=demo
+# (all-simulation, no heavy imports) so it always runs regardless.

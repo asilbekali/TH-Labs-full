@@ -122,9 +122,9 @@ pip install faster-whisper
 # NMT — real NLLB-200 (downloads ~2.4 GB on first run)
 pip install "transformers>=4.40" torch sentencepiece
 
-# TTS — real OmniVoice voice cloning
-TH_LABS_OMNIVOICE_API_URL=https://your-omnivoice-endpoint/synthesize
-TH_LABS_OMNIVOICE_API_KEY=sk-...
+# TTS — real OmniVoice zero-shot voice cloning
+pip install omnivoice soundfile         # needs transformers with HiggsAudioV2TokenizerModel
+TH_LABS_OMNIVOICE_MODEL=k2-fsa/OmniVoice
 
 # Lip Sync — real Wav2Lip
 TH_LABS_WAV2LIP_DIR=/path/to/Wav2Lip     # with checkpoints/wav2lip_gan.pth

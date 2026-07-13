@@ -48,9 +48,12 @@ class Settings(BaseSettings):
     # ── NMT · NLLB-200 ────────────────────────────────────────────────────
     nmt_model: str = "facebook/nllb-200-distilled-600M"
 
-    # ── TTS · OmniVoice (voice cloning) ──────────────────────────────────-
-    omnivoice_api_url: str | None = None
-    omnivoice_api_key: str | None = None
+    # ── TTS · OmniVoice (zero-shot voice cloning) ────────────────────────-
+    # Uses the `omnivoice` package: OmniVoice.from_pretrained(model).generate(
+    #   text, ref_audio, ref_text)  →  list[np.ndarray] @ 24 kHz
+    omnivoice_model: str = "k2-fsa/OmniVoice"
+    omnivoice_device: str = "auto"       # auto|cuda:0|cpu
+    omnivoice_ref_seconds: float = 12.0  # length of speaker reference clip
 
     # ── Lip sync · Wav2Lip (optional) ─────────────────────────────────────
     wav2lip_dir: Path | None = None
