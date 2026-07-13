@@ -1,0 +1,25 @@
+# ── Python / backend ──
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+*.egg-info/
+backend/.env
+backend/data/uploads/*
+backend/data/outputs/*
+backend/data/assets/*
+!backend/data/**/.gitkeep
+
+# ── Node / frontend ──
+node_modules/
+frontend/dist/
+frontend/.vite/
+*.local
+
+# ── Misc ──
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.log

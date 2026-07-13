@@ -1,0 +1,184 @@
+@import 'tailwindcss';
+
+/* ─────────────────────────────────────────────────────────────────────────
+   TH-Labs design tokens (Tailwind v4 CSS-first theme)
+   ───────────────────────────────────────────────────────────────────────── */
+@theme {
+  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI',
+    Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', 'Fira Code', monospace;
+
+  --color-ink: #05050a;
+  --color-ink-2: #0a0a14;
+  --color-surface: #10101c;
+  --color-surface-2: #16162a;
+  --color-line: #23233a;
+
+  --color-violet: #8b5cf6;
+  --color-fuchsia: #d946ef;
+  --color-cyan: #22d3ee;
+  --color-accent: #a855f7;
+
+  --color-muted: #8b8ba7;
+}
+
+:root {
+  color-scheme: dark;
+  --grad-brand: linear-gradient(120deg, #8b5cf6 0%, #d946ef 50%, #22d3ee 100%);
+}
+
+* { border-color: var(--color-line); }
+
+html { scroll-behavior: smooth; }
+
+body {
+  margin: 0;
+  background: var(--color-ink);
+  color: #eef0f6;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow-x: hidden;
+}
+
+/* Subtle site-wide backdrop: radial glows + fine grid */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  background:
+    radial-gradient(60rem 60rem at 12% -10%, rgba(139, 92, 246, 0.18), transparent 60%),
+    radial-gradient(50rem 50rem at 100% 0%, rgba(34, 211, 238, 0.12), transparent 55%),
+    radial-gradient(55rem 55rem at 50% 120%, rgba(217, 70, 239, 0.12), transparent 60%);
+}
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+  background-size: 46px 46px;
+  mask-image: radial-gradient(circle at 50% 30%, black, transparent 85%);
+}
+
+::selection { background: rgba(168, 85, 247, 0.35); }
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: #2a2a44;
+  border-radius: 9999px;
+  border: 2px solid var(--color-ink);
+}
+::-webkit-scrollbar-thumb:hover { background: #3a3a5c; }
+
+/* ── Reusable component classes ─────────────────────────────────────────── */
+@layer components {
+  .gradient-text {
+    background: var(--grad-brand);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  .glass {
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02));
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    backdrop-filter: blur(14px);
+  }
+
+  .card {
+    background: linear-gradient(180deg, rgba(22, 22, 42, 0.7), rgba(16, 16, 28, 0.7));
+    border: 1px solid var(--color-line);
+    border-radius: 1.25rem;
+  }
+
+  .card-hover {
+    transition: transform 0.3s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.3s, box-shadow 0.3s;
+  }
+  .card-hover:hover {
+    transform: translateY(-4px);
+    border-color: rgba(168, 85, 247, 0.5);
+    box-shadow: 0 20px 60px -20px rgba(139, 92, 246, 0.45);
+  }
+
+  .btn-primary {
+    position: relative;
+    background: var(--grad-brand);
+    background-size: 200% 200%;
+    color: white;
+    font-weight: 600;
+    border-radius: 9999px;
+    box-shadow: 0 10px 40px -12px rgba(168, 85, 247, 0.7);
+    transition: transform 0.2s, box-shadow 0.3s, background-position 0.6s;
+  }
+  .btn-primary:hover {
+    transform: translateY(-2px);
+    background-position: 100% 50%;
+    box-shadow: 0 16px 50px -12px rgba(168, 85, 247, 0.9);
+  }
+  .btn-primary:active { transform: translateY(0); }
+
+  .btn-ghost {
+    border: 1px solid var(--color-line);
+    border-radius: 9999px;
+    color: #d6d9e6;
+    transition: border-color 0.2s, background 0.2s, color 0.2s;
+  }
+  .btn-ghost:hover {
+    border-color: rgba(168, 85, 247, 0.6);
+    background: rgba(168, 85, 247, 0.08);
+    color: white;
+  }
+
+  .chip {
+    border: 1px solid var(--color-line);
+    background: rgba(255, 255, 255, 0.03);
+    border-radius: 9999px;
+  }
+}
+
+/* ── Keyframes ──────────────────────────────────────────────────────────── */
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-12px); }
+}
+@keyframes pulse-glow {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+@keyframes marquee {
+  from { transform: translateX(0); }
+  to { transform: translateX(-50%); }
+}
+@keyframes wave {
+  0%, 100% { transform: scaleY(0.35); }
+  50% { transform: scaleY(1); }
+}
+@keyframes dash {
+  to { stroke-dashoffset: -1000; }
+}
+@keyframes shimmer {
+  100% { transform: translateX(100%); }
+}
+@keyframes spin-slow { to { transform: rotate(360deg); } }
+
+.animate-float { animation: float 6s ease-in-out infinite; }
+.animate-marquee { animation: marquee 40s linear infinite; }
+.animate-spin-slow { animation: spin-slow 18s linear infinite; }
+.flow-dash {
+  stroke-dasharray: 6 10;
+  animation: dash 24s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
