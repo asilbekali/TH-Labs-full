@@ -3,8 +3,8 @@ import Logo from './Logo'
 
 export default function Footer() {
   return (
-    <footer className="mt-24 border-t border-white/5">
-      <div className="mx-auto grid max-w-7xl gap-10 px-5 py-14 md:grid-cols-[1.5fr_1fr_1fr]">
+    <footer className="mt-16 border-t border-white/5">
+      <div className="mx-auto grid max-w-7xl gap-10 px-5 py-10 md:grid-cols-[1.5fr_1fr_1fr]">
         <div>
           <Logo />
           <p className="mt-4 max-w-sm text-sm leading-relaxed text-white/50">
@@ -28,12 +28,12 @@ export default function Footer() {
         </div>
 
         <div>
-          <h4 className="text-sm font-semibold text-white/80">Pipeline</h4>
+          <h4 className="text-sm font-semibold text-white/80">Capabilities</h4>
           <ul className="mt-4 space-y-2.5 text-sm text-white/50">
-            <li>Whisper medium · ASR</li>
-            <li>NLLB-200 · translation</li>
-            <li>OmniVoice · voice cloning</li>
-            <li>Wav2Lip · optional lip sync</li>
+            <li>Speech-to-text · transcription</li>
+            <li>Neural translation · 30+ languages</li>
+            <li>Voice cloning · identity preserved</li>
+            <li>Background &amp; optional lip sync</li>
           </ul>
         </div>
       </div>

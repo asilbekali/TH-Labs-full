@@ -4,6 +4,7 @@ const ICONS: Record<string, React.ReactNode> = {
   asr: <><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3" /></>,
   nmt: <path d="M4 5h7M7 4v1c0 4-2 7-4 8m1-4c1 3 3 5 5 6M13 20l4-9 4 9M14.5 17h5" />,
   tts: <path d="M3 12h3l2-6 3 15 3-12 2 5h4" />,
+  separation: <path d="M9 18V5l12-2v13M9 13l12-2M6 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0zm15-2a3 3 0 1 1-6 0 3 3 0 0 1 6 0z" />,
   lipsync: <path d="M3 12c3-3 15-3 18 0-3 4-15 4-18 0zM7 12h10" />,
   sync: <path d="M12 3l2 5 5 2-5 2-2 5-2-5-5-2 5-2z" />,
 }
@@ -57,7 +58,7 @@ export default function StageTimeline({ stages }: { stages: StageState[] }) {
                   </span>
                 </div>
                 <div className="mt-1 truncate text-xs text-white/45">
-                  {st.message || detailLine(st)}
+                  {primaryLine(st)}
                   {st.duration_ms != null && st.status === 'done' && (
                     <span className="ml-2 font-mono text-white/30">{(st.duration_ms / 1000).toFixed(1)}s</span>
                   )}
@@ -79,11 +80,35 @@ export default function StageTimeline({ stages }: { stages: StageState[] }) {
   )
 }
 
+// Prefer a custom status message ("No speech detected"), then a meaningful
+// detail line (segments / VAD info), and only fall back to "Done"/"Working…".
+function primaryLine(st: StageState): string {
+  const generic = st.message === 'Done' || st.message === 'Working…' || !st.message
+  if (!generic) return st.message
+  return detailLine(st) || st.message || ''
+}
+
 function detailLine(st: StageState): string {
   const d = st.detail || {}
-  if (st.key === 'asr' && d.segments != null) return `${d.segments} segments · ${d.words ?? '—'} words`
+  if (st.key === 'asr' && d.segments != null) {
+    const vad =
+      d.vad_regions != null
+        ? ` · VAD ${d.vad_regions} region${d.vad_regions === 1 ? '' : 's'}` +
+          (d.speech_seconds != null ? ` (${d.speech_seconds}s speech)` : '')
+        : ''
+    return `${d.segments} segments · ${d.words ?? '—'} words${vad}`
+  }
   if (st.key === 'nmt' && d.length_ratio != null) return `length ratio ${d.length_ratio}`
-  if (st.key === 'tts') return d.voice_clone ? 'cloning source voice' : 'neutral narrator'
+  if (st.key === 'tts' && d.engine) {
+    if (d.engine === 'OmniVoice') return 'cloning source voice (OmniVoice)'
+    if (d.engine === 'edge-tts + OpenVoice') return 'edge-tts + OpenVoice voice clone'
+    if (d.engine === 'edge-tts') return 'neural voice · edge-tts'
+    return 'placeholder tone'
+  }
+  if (st.key === 'separation') {
+    if (st.status === 'skipped') return 'original audio replaced'
+    return d.kept_background ? 'background music/FX kept' : 'separating vocals…'
+  }
   if (st.status === 'pending') return 'waiting…'
   return ''
 }

@@ -11,6 +11,20 @@ backend/data/outputs/*
 backend/data/assets/*
 !backend/data/**/.gitkeep
 
+# ── ML models & weights (download per setup; too large for git) ──
+backend/models/
+*.pth
+*.ckpt
+*.pt
+*.safetensors
+*.onnx
+
+# ── Generated / bundled media (regenerated at runtime) ──
+backend/app/assets/*.mp4
+backend/app/assets/*.wav
+backend/app/assets/*.mp3
+backend/app/assets/*.m4a
+
 # ── Node / frontend ──
 node_modules/
 frontend/dist/

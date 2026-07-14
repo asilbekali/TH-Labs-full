@@ -23,8 +23,10 @@ class NLLBTranslator:
     engine = "NLLB-200 (distilled-600M)"
 
     def __init__(self) -> None:
+        import threading
         self._model = None
         self._tok = None
+        self._lock = threading.Lock()
 
     def available(self) -> bool:
         # Detect installation without importing torch/transformers (see stt.py).
@@ -41,13 +43,29 @@ class NLLBTranslator:
     def _load(self):
         if self._model is not None:
             return
-        import torch
-        from transformers import (AutoModelForSeq2SeqLM, AutoTokenizer)
-        s = get_settings()
-        self._tok = AutoTokenizer.from_pretrained(s.nmt_model)
-        self._model = AutoModelForSeq2SeqLM.from_pretrained(s.nmt_model)
-        if torch.cuda.is_available():
-            self._model = self._model.to("cuda")
+        with self._lock:
+            if self._model is not None:
+                return
+            import torch
+            from transformers import (AutoModelForSeq2SeqLM, AutoTokenizer)
+            s = get_settings()
+            # use_fast=False → the SentencePiece tokenizer. The fast (Rust
+            # `tokenizers`) NLLB tokenizer segfaults on Python 3.14; the slow one
+            # is stable and produces identical ids.
+            tok = AutoTokenizer.from_pretrained(s.nmt_model, use_fast=False)
+            model = AutoModelForSeq2SeqLM.from_pretrained(s.nmt_model)
+            if torch.cuda.is_available():
+                model = model.to("cuda")
+            model.eval()
+            self._tok, self._model = tok, model
+
+    def unload(self) -> None:
+        """Drop the model and free its VRAM (see stt.unload)."""
+        from .stt import _free_cuda
+        with self._lock:
+            self._model = None
+            self._tok = None
+        _free_cuda()
 
     # ── real translation ──────────────────────────────────────────────────
     def translate(self, segments: list[Segment], source_lang: str,
@@ -60,16 +78,23 @@ class NLLBTranslator:
             return segments
         self._tok.src_lang = src.nllb if src else "eng_Latn"
         bos = self._tok.convert_tokens_to_ids(tgt.nllb)
-        for seg in segments:
-            enc = self._tok(seg.source_text, return_tensors="pt")
-            if torch.cuda.is_available():
-                enc = {k: v.to("cuda") for k, v in enc.items()}
-            # length-compatibility: cap generated length near the source length
-            max_len = max(16, int(len(seg.source_text.split()) * 2.2))
-            gen = self._model.generate(**enc, forced_bos_token_id=bos,
-                                       max_length=max_len, num_beams=4)
-            seg.target_text = self._tok.batch_decode(
-                gen, skip_special_tokens=True)[0].strip()
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        # Translate in batches (padded) — one generate() per ~16 segments
+        # instead of one per segment. Huge speed-up on long videos.
+        BATCH = 16
+        for i in range(0, len(segments), BATCH):
+            chunk = segments[i:i + BATCH]
+            texts = [seg.source_text for seg in chunk]
+            enc = self._tok(texts, return_tensors="pt", padding=True,
+                            truncation=True, max_length=256).to(device)
+            in_len = enc["input_ids"].shape[1]
+            max_new = max(40, int(in_len * 3) + 16)
+            gen = self._model.generate(
+                **enc, forced_bos_token_id=bos, max_new_tokens=max_new,
+                num_beams=4, length_penalty=1.0, no_repeat_ngram_size=3)
+            out = self._tok.batch_decode(gen, skip_special_tokens=True)
+            for seg, txt in zip(chunk, out):
+                seg.target_text = txt.strip()
         return segments
 
     # ── simulation ────────────────────────────────────────────────────────

@@ -34,6 +34,8 @@ class DubOptions(BaseModel):
     target_lang: str = Field(..., description="Target language ISO code")
     voice_clone: bool = Field(True, description="Preserve original speaker voice")
     lip_sync: bool = Field(False, description="Optional Wav2Lip lip synchronisation")
+    keep_background: bool = Field(
+        True, description="Keep original music/FX; remove only the original speech")
     quality: Quality = Quality.balanced
     preserve_timing: bool = True
 

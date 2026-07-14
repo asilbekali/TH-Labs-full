@@ -19,9 +19,19 @@ _STAGE_DEFS = [
     ("asr", "Speech-to-Text"),
     ("nmt", "Translation"),
     ("tts", "Text-to-Speech + Voice Cloning"),
+    ("separation", "Background Preservation"),
     ("lipsync", "Lip Sync"),
     ("sync", "Sync & Mux"),
 ]
+
+
+def _initial_status(key: str, options: DubOptions) -> StageStatus:
+    if key == "lipsync" and not options.lip_sync:
+        return StageStatus.skipped
+    if key == "separation" and (not options.keep_background
+                                or options.quality == "fast"):
+        return StageStatus.skipped
+    return StageStatus.pending
 
 
 class JobManager:
@@ -29,6 +39,12 @@ class JobManager:
         self._jobs: dict[str, Job] = {}
         self._subs: dict[str, list[asyncio.Queue]] = {}
         self._orch = Orchestrator()
+        # Jobs execute one at a time through a single worker. The shared
+        # openai-whisper model has stateful KV-cache hooks that concurrent
+        # transcribe() calls corrupt, and a 6 GB GPU can't hold two model runs
+        # at once — so serialising is both correct and necessary.
+        self._pending: "asyncio.Queue | None" = None
+        self._worker: "asyncio.Task | None" = None
 
     # ── introspection ─────────────────────────────────────────────────────
     @property
@@ -45,10 +61,7 @@ class JobManager:
         job_id = uuid.uuid4().hex[:12]
         now = time.time()
         stages = [
-            StageState(key=k, label=l,
-                       status=(StageStatus.skipped
-                               if k == "lipsync" and not options.lip_sync
-                               else StageStatus.pending))
+            StageState(key=k, label=l, status=_initial_status(k, options))
             for k, l in _STAGE_DEFS
         ]
         simulated = force_simulate or self._orch.is_simulated(options)
@@ -58,9 +71,28 @@ class JobManager:
                   created_at=now, updated_at=now)
         self._jobs[job_id] = job
         self._subs[job_id] = []
-        # kick off the pipeline in the background
-        asyncio.create_task(self._run(job, input_video, scenario, force_simulate))
+        # enqueue for the single serial worker (started lazily on the loop)
+        self._ensure_worker()
+        self._pending.put_nowait((job, input_video, scenario, force_simulate))
         return job
+
+    # ── serial worker ─────────────────────────────────────────────────────
+    def _ensure_worker(self) -> None:
+        if self._pending is None:
+            self._pending = asyncio.Queue()
+        if self._worker is None or self._worker.done():
+            self._worker = asyncio.create_task(self._worker_loop())
+
+    async def _worker_loop(self) -> None:
+        assert self._pending is not None
+        while True:
+            job, input_video, scenario, force_simulate = await self._pending.get()
+            try:
+                await self._run(job, input_video, scenario, force_simulate)
+            except Exception:  # pragma: no cover - defensive; keep worker alive
+                pass
+            finally:
+                self._pending.task_done()
 
     # ── runner ────────────────────────────────────────────────────────────
     async def _run(self, job: Job, input_video: Path, scenario: str,
@@ -97,7 +129,13 @@ class JobManager:
             if job.status in (JobStatus.completed, JobStatus.failed):
                 return
             while True:
-                evt = await q.get()
+                try:
+                    evt = await asyncio.wait_for(q.get(), timeout=12)
+                except asyncio.TimeoutError:
+                    # no updates for a while (e.g. mid-transcription of a long
+                    # video) — emit a keepalive so proxies don't drop the SSE
+                    yield {"keepalive": True}
+                    continue
                 yield evt
                 if evt.get("final"):
                     return

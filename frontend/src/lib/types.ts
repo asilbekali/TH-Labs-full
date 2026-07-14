@@ -73,6 +73,7 @@ export interface DubOptions {
   target_lang: string
   voice_clone: boolean
   lip_sync: boolean
+  keep_background: boolean
   quality: string
   preserve_timing: boolean
 }

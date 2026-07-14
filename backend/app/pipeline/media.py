@@ -45,12 +45,20 @@ def extract_audio(video: Path, out_wav: Path) -> bool:
 
 
 def make_sample_video(out_path: Path, seconds: float = 25.0) -> bool:
-    """Generate a self-contained branded sample clip (test pattern + tone)."""
+    """Provide the sample clip.
+
+    Prefers the bundled real-speech lecture clip (so the sample exercises real
+    STT/NMT); falls back to generating a branded test pattern + tone if ffmpeg
+    is present but the bundled asset is missing.
+    """
+    if out_path.exists():
+        return True
+    bundled = Path(__file__).resolve().parent.parent / "assets" / "sample_source.mp4"
+    if bundled.exists():
+        return copy_passthrough(bundled, out_path)
     ffmpeg = _bin("ffmpeg")
     if not ffmpeg:
         return False
-    if out_path.exists():
-        return True
     try:
         subprocess.run(
             [
@@ -102,6 +110,108 @@ def trim_audio(src: Path, out_path: Path, seconds: float) -> bool:
             [ffmpeg, "-y", "-i", str(src), "-t", f"{max(seconds, 1.0):.2f}",
              "-ac", "1", "-ar", "24000", str(out_path)],
             capture_output=True, timeout=60,
+        )
+        return out_path.exists()
+    except Exception:
+        return False
+
+
+def tts_fit(src_audio: Path, out_wav: Path, slot_seconds: float,
+            sr: int = 24000) -> bool:
+    """Decode a synthesized clip to mono `sr` WAV, speeding it up (pitch-
+    preserving atempo) only if it's longer than its time slot — so the dubbed
+    line lands inside the original utterance without chipmunk artefacts."""
+    ffmpeg = _bin("ffmpeg")
+    if not ffmpeg or not src_audio.exists():
+        return False
+    dur = probe_duration(src_audio) or slot_seconds
+    ratio = (dur / slot_seconds) if slot_seconds > 0 else 1.0
+    tempo = min(max(ratio, 1.0), 1.6)           # only compress, cap at 1.6×
+    cmd = [ffmpeg, "-y", "-i", str(src_audio)]
+    if tempo > 1.01:
+        cmd += ["-af", f"atempo={tempo:.3f}"]
+    cmd += ["-ar", str(sr), "-ac", "1", str(out_wav)]
+    try:
+        subprocess.run(cmd, capture_output=True, timeout=60)
+        return out_wav.exists()
+    except Exception:
+        return False
+
+
+def split_audio(src: Path, out_dir: Path, seconds: float = 30.0,
+                sr: int = 22050) -> list[Path]:
+    """Split `src` into ~`seconds` mono WAV chunks (for chunked voice cloning
+    so we never convert a huge track in one pass)."""
+    ffmpeg = _bin("ffmpeg")
+    if not ffmpeg or not src.exists():
+        return []
+    out_dir.mkdir(parents=True, exist_ok=True)
+    pat = str(out_dir / "seg_%04d.wav")
+    try:
+        subprocess.run(
+            [ffmpeg, "-y", "-i", str(src), "-ar", str(sr), "-ac", "1",
+             "-f", "segment", "-segment_time", str(seconds), pat],
+            capture_output=True, timeout=300,
+        )
+    except Exception:
+        return []
+    return sorted(out_dir.glob("seg_*.wav"))
+
+
+def concat_audio(paths: list[Path], out_path: Path) -> bool:
+    """Concatenate same-format WAV chunks into one file."""
+    ffmpeg = _bin("ffmpeg")
+    if not ffmpeg or not paths:
+        return False
+    listing = out_path.with_suffix(".txt")
+    listing.write_text("".join(f"file '{p.as_posix()}'\n" for p in paths))
+    try:
+        subprocess.run(
+            [ffmpeg, "-y", "-f", "concat", "-safe", "0", "-i", str(listing),
+             "-c", "copy", str(out_path)],
+            capture_output=True, timeout=180,
+        )
+        return out_path.exists()
+    except Exception:
+        return False
+    finally:
+        try:
+            listing.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+
+def extract_audio_hq(video: Path, out_wav: Path) -> bool:
+    """Extract full-quality stereo audio (for source separation / mixing)."""
+    ffmpeg = _bin("ffmpeg")
+    if not ffmpeg:
+        return False
+    try:
+        subprocess.run(
+            [ffmpeg, "-y", "-i", str(video), "-vn", "-ac", "2", "-ar", "44100",
+             str(out_wav)],
+            capture_output=True, timeout=180,
+        )
+        return out_wav.exists()
+    except Exception:
+        return False
+
+
+def mix_voice_over_background(voice: Path, background: Path, out_path: Path,
+                             voice_gain: float = 1.25,
+                             bg_gain: float = 0.55) -> bool:
+    """Mix the dubbed voice on top of the preserved background (M&E)."""
+    ffmpeg = _bin("ffmpeg")
+    if not ffmpeg or not voice.exists() or not background.exists():
+        return False
+    filt = (f"[0:a]volume={bg_gain}[bg];[1:a]volume={voice_gain}[v];"
+            f"[bg][v]amix=inputs=2:duration=longest:normalize=0[out]")
+    try:
+        subprocess.run(
+            [ffmpeg, "-y", "-i", str(background), "-i", str(voice),
+             "-filter_complex", filt, "-map", "[out]",
+             "-c:a", "pcm_s16le", str(out_path)],
+            capture_output=True, timeout=180,
         )
         return out_path.exists()
     except Exception:

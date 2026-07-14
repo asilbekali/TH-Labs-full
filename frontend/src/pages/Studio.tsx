@@ -7,7 +7,7 @@ import StageTimeline from '../components/StageTimeline'
 import VideoCompare from '../components/VideoCompare'
 import SegmentTable from '../components/SegmentTable'
 import ResultMetrics from '../components/ResultMetrics'
-import { createJob, getHealth, getLanguages, subscribeJob } from '../lib/api'
+import { createJob, getHealth, getLanguages, pollJob, subscribeJob } from '../lib/api'
 import type { Health, Job, Language } from '../lib/types'
 
 const QUALITIES = [
@@ -28,6 +28,7 @@ export default function Studio() {
   const [targetLang, setTargetLang] = useState('es')
   const [voiceClone, setVoiceClone] = useState(true)
   const [lipSync, setLipSync] = useState(false)
+  const [keepBackground, setKeepBackground] = useState(true)
   const [quality, setQuality] = useState('balanced')
 
   const [job, setJob] = useState<Job | null>(null)
@@ -71,16 +72,23 @@ export default function Studio() {
         source_lang: sourceLang,
         voice_clone: voiceClone,
         lip_sync: lipSync,
+        keep_background: keepBackground,
         quality,
         sample: isSampleRun,
         file: isSampleRun ? null : file,
       })
       setJob(created)
-      unsubRef.current = subscribeJob(
+      // Live progress via SSE; if the stream drops (e.g. a proxy times out
+      // during a long transcription), transparently fall back to polling.
+      const stopSse = subscribeJob(
         created.id,
         (evt) => setJob(evt.job),
-        () => setError('Lost connection to the pipeline stream.'),
+        () => {
+          const stopPoll = pollJob(created.id, (j) => setJob(j))
+          unsubRef.current = stopPoll
+        },
       )
+      unsubRef.current = stopSse
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to start job')
     } finally {
@@ -157,6 +165,13 @@ export default function Studio() {
               icon={<path d="M3 12h3l2-6 3 15 3-12 2 5h4" />}
             />
             <OptionToggle
+              checked={keepBackground}
+              onChange={setKeepBackground}
+              title="Keep background music & effects"
+              description="Dub over the original music/ambience instead of replacing it; the original speech is removed (Demucs)."
+              icon={<path d="M9 18V5l12-2v13M9 13l12-2M6 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0zm15-2a3 3 0 1 1-6 0 3 3 0 0 1 6 0z" />}
+            />
+            <OptionToggle
               checked={lipSync}
               onChange={setLipSync}
               accent="cyan"
@@ -182,6 +197,11 @@ export default function Studio() {
                 </button>
               ))}
             </div>
+            <p className="mt-1.5 text-[11px] leading-relaxed text-white/40">
+              {quality === 'fast' && 'Whisper base · skips separation & voice cloning — fastest, best for long videos.'}
+              {quality === 'balanced' && 'Whisper small + separation + voice cloning — balanced.'}
+              {quality === 'studio' && 'Whisper medium (paper) + separation + cloning — best, slowest.'}
+            </p>
           </div>
 
           <button
@@ -193,14 +213,11 @@ export default function Studio() {
           </button>
 
           {health && (
-            <p className="text-center text-[11px] text-white/35">
-              Engines:{' '}
-              {health.stages.map((s) => (
-                <span key={s.key} className="mr-1.5">
-                  {s.engine.split(' ')[0]}
-                  <span className={s.mode === 'real' ? 'text-emerald-400' : 'text-white/30'}>•</span>
-                </span>
-              ))}
+            <p className="flex items-center justify-center gap-1.5 text-center text-[11px] text-white/35">
+              <span className={`h-1.5 w-1.5 rounded-full ${health.stages.some((s) => s.mode === 'real') ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+              {health.stages.filter((s) => s.mode === 'real').length > 0
+                ? 'Pipeline online'
+                : 'Simulation mode'}
             </p>
           )}
         </div>

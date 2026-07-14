@@ -27,19 +27,26 @@ def _jitter(job_id: str, key: str, spread: float) -> float:
 def simulated_metrics(job_id: str, options: DubOptions,
                       processing_seconds: float,
                       media_duration: float | None,
-                      length_ratio: float) -> DubMetrics:
+                      length_ratio: float,
+                      voice_cloned: bool = False,
+                      measured_similarity: float | None = None) -> DubMetrics:
     b = BASELINE
-    # voice cloning meaningfully lifts speaker similarity; lip sync tightens sync
-    sim_bonus = 0.0 if options.voice_clone else -22.0
     sync_bonus = -8.0 if options.lip_sync else 0.0
     rtf = (processing_seconds / media_duration) if media_duration else None
+    # Prefer the REAL measured speaker similarity (cosine of source vs. cloned
+    # speaker embeddings) when cloning ran; else None (generic voice, no fake %).
+    if measured_similarity is not None:
+        speaker_sim = measured_similarity
+    elif voice_cloned:
+        speaker_sim = round(b["speaker_similarity"] + _jitter(job_id, "sim", 1.5), 1)
+    else:
+        speaker_sim = None
     return DubMetrics(
         wer=round(b["wer"] + _jitter(job_id, "wer", 1.2), 1),
         bleu=round(b["bleu"] + _jitter(job_id, "bleu", 1.5), 1),
         comet=round(b["comet"] + _jitter(job_id, "comet", 0.02), 3),
         mos=round(b["mos"] + _jitter(job_id, "mos", 0.2), 2),
-        speaker_similarity=round(
-            b["speaker_similarity"] + sim_bonus + _jitter(job_id, "sim", 1.5), 1),
+        speaker_similarity=speaker_sim,
         sync_offset_ms=round(
             max(5.0, b["sync_offset_ms"] + sync_bonus + _jitter(job_id, "sync", 6)), 1),
         processing_seconds=round(processing_seconds, 1),

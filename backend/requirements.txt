@@ -11,14 +11,22 @@ pydantic-settings>=2.2
 # lazily and falls back to Simulation mode if they are missing, so the server
 # always starts. Install the ones you want to enable per stage:
 #
-#   STT  (Whisper medium):   pip install faster-whisper
+#   STT  (Whisper medium):   pip install openai-whisper
 #   NMT  (NLLB-200):         pip install "transformers>=4.40" torch sentencepiece
-#   TTS  (OmniVoice):        pip install omnivoice soundfile
-#                            (needs a transformers new enough to expose
-#                             HiggsAudioV2TokenizerModel — newer than 4.36)
+#   TTS  (real speech):      pip install edge-tts soundfile   ← natural neural
+#                            voice per language (Microsoft, online, free)
+#   Voice cloning (works on 6 GB!):  pip install \
+#      "git+https://github.com/myshell-ai/OpenVoice.git" --no-deps \
+#      && pip install unidecode inflect eng_to_ipa pypinyin cn2an jieba wavmark
+#      then download the v2 converter (131 MB) to backend/models/openvoice_v2/:
+#      hf_hub_download("myshell-ai/OpenVoiceV2", "converter/checkpoint.pth"|"converter/config.json")
+#      → clones the source speaker's timbre onto the edge-tts voice (any language).
+#   TTS  (OmniVoice cloning): pip install omnivoice soundfile   ← 16 GB model,
+#                            needs transformers>=5.3 + ~16-24 GB VRAM (cloud only)
 #   LipSync (Wav2Lip):       provide a local Wav2Lip checkout + weights
 #
-# NOTE: on Python 3.14 prebuilt wheels for torch/ctranslate2 may be unavailable,
-# and faster-whisper (ctranslate2) + torch (CUDA) can segfault in one process.
-# Use Python 3.11/3.12 for real inference. The server defaults to TH_LABS_MODE=demo
-# (all-simulation, no heavy imports) so it always runs regardless.
+# NOTE — Python 3.14: the HuggingFace `tokenizers` Rust extension segfaults, which
+# breaks faster-whisper's transcribe and NLLB's *fast* tokenizer. This app avoids
+# both: STT uses openai-whisper (torch + tiktoken) and NMT forces the slow
+# SentencePiece tokenizer (use_fast=False). With that, real STT + NMT run fine on
+# 3.14. OmniVoice TTS still needs a newer transformers (Py 3.11/3.12).

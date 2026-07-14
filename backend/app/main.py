@@ -11,6 +11,8 @@ Endpoints
 from __future__ import annotations
 
 import json
+import threading
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -25,7 +27,31 @@ from .pipeline import media
 from .schemas import (DubOptions, HealthInfo, Quality, StageInfo)
 
 settings = get_settings()
-app = FastAPI(title=settings.app_name, version=__version__)
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    # Pre-warm the STT + NMT models in the background (auto/real modes) so the
+    # first real job doesn't pay the ~30 s cold-load cost mid-request.
+    if settings.mode != "demo":
+        def warm() -> None:
+            try:
+                orch = manager.orchestrator
+                if orch.stt.available():
+                    orch.stt._load("small")     # the default (Balanced) model
+                    if orch.stt._vad.available():
+                        orch.stt._vad._load()
+                if orch.nmt.available():
+                    orch.nmt._load()
+                if orch.cloner.available():
+                    orch.cloner._load()
+            except Exception:
+                pass
+        threading.Thread(target=warm, daemon=True).start()
+    yield
+
+
+app = FastAPI(title=settings.app_name, version=__version__, lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -59,6 +85,7 @@ async def create_job(
     source_lang: str = Form("auto"),
     voice_clone: bool = Form(True),
     lip_sync: bool = Form(False),
+    keep_background: bool = Form(True),
     quality: Quality = Form(Quality.balanced),
     sample: bool = Form(False),
     file: UploadFile | None = File(None),
@@ -68,7 +95,8 @@ async def create_job(
 
     options = DubOptions(
         source_lang=source_lang, target_lang=target_lang,
-        voice_clone=voice_clone, lip_sync=lip_sync, quality=quality,
+        voice_clone=voice_clone, lip_sync=lip_sync,
+        keep_background=keep_background, quality=quality,
     )
 
     scenario = "lecture"
@@ -85,7 +113,10 @@ async def create_job(
                 503, "Sample generation needs ffmpeg. Upload a file instead.")
         input_video = sample_path
         filename = "sample_source.mp4"
-        force_simulate = True
+        # The bundled sample carries real English speech, so run the real
+        # pipeline on it when Whisper is available; otherwise use the canned
+        # scenario (demo mode / no models).
+        force_simulate = not manager.orchestrator.stt.available()
     else:
         suffix = Path(file.filename or "upload.mp4").suffix or ".mp4"
         input_video = settings.uploads_dir / f"upload_{_safe_id()}{suffix}"
@@ -112,7 +143,10 @@ async def job_events(job_id: str) -> StreamingResponse:
 
     async def stream():
         async for evt in manager.subscribe(job_id):
-            yield f"data: {json.dumps(evt)}\n\n"
+            if evt.get("keepalive"):
+                yield ": keepalive\n\n"      # SSE comment — keeps connection warm
+            else:
+                yield f"data: {json.dumps(evt)}\n\n"
 
     return StreamingResponse(
         stream(),

@@ -35,10 +35,10 @@ const I = {
 
 const STAGES: Stage[] = [
   { key: 'in', label: 'Source Video', engine: 'audio + timing', icon: I.film },
-  { key: 'asr', label: 'Speech-to-Text', engine: 'Whisper medium', icon: I.mic },
-  { key: 'nmt', label: 'Translation', engine: 'NLLB-200', icon: I.translate },
-  { key: 'tts', label: 'Voice Cloning', engine: 'OmniVoice', icon: I.voice },
-  { key: 'lip', label: 'Lip Sync', engine: 'Wav2Lip', icon: I.lips, optional: true },
+  { key: 'asr', label: 'Speech-to-Text', engine: 'transcribe', icon: I.mic },
+  { key: 'nmt', label: 'Translation', engine: 'translate + fit', icon: I.translate },
+  { key: 'tts', label: 'Voice Cloning', engine: 'preserve voice', icon: I.voice },
+  { key: 'lip', label: 'Lip Sync', engine: 'optional', icon: I.lips, optional: true },
   { key: 'out', label: 'Dubbed Video', engine: 'sync & mux', icon: I.sparkle },
 ]
 

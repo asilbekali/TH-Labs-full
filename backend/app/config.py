@@ -20,15 +20,12 @@ class Settings(BaseSettings):
 
     # ── General ───────────────────────────────────────────────────────────
     app_name: str = "TH-Labs AI Dubbing"
-    # "demo"  → force simulation for every stage (default: rock-solid, never
-    #           imports heavy CUDA libs — safe on any Python incl. 3.14)
-    # "auto"  → use real models where installed, simulate the rest. Best on
-    #           Python 3.11/3.12; on 3.14 torch+ctranslate2 can segfault.
+    # "auto"  → use real models where installed, simulate the rest (default).
+    #           Real STT (openai-whisper) + NMT (NLLB) run on the source audio;
+    #           TTS falls back to simulation unless OmniVoice can load.
+    # "demo"  → force simulation for every stage (never imports heavy libs).
     # "real"  → require real models.
-    #
-    # Default is "demo" for reliability. Set TH_LABS_MODE=auto to enable real
-    # Whisper + NLLB inference on uploaded videos.
-    mode: str = "demo"
+    mode: str = "auto"
 
     # CORS — the Vite dev server origins
     cors_origins: list[str] = [
@@ -45,8 +42,35 @@ class Settings(BaseSettings):
     whisper_device: str = "auto"           # auto|cuda|cpu
     whisper_compute_type: str = "auto"     # e.g. float16 / int8
 
+    # ── VAD · silero-vad ──────────────────────────────────────────────────
+    # Gates ASR to real speech regions so Whisper doesn't hallucinate text on
+    # music/silence (and so "no speech" is reported honestly, not faked).
+    vad_enabled: bool = True
+
+    # ── Background preservation · Demucs source separation ────────────────
+    # Splits the original audio into speech (removed) and background music/FX
+    # (kept), so the dub is mixed OVER the background instead of replacing it,
+    # while the original language becomes inaudible.
+    separation_model: str = "htdemucs"
+    # cpu is reliable on this 6 GB box (GPU is full with STT/NMT). On a bigger
+    # GPU / cloud set TH_LABS_SEPARATION_DEVICE=cuda for a big speed-up.
+    separation_device: str = "cpu"       # cpu | cuda
+    separation_timeout: int = 900        # seconds; on timeout → voice-only
+    background_gain: float = 0.55        # background level under the dubbed voice
+    voice_gain: float = 1.25             # dubbed voice level
+
     # ── NMT · NLLB-200 ────────────────────────────────────────────────────
     nmt_model: str = "facebook/nllb-200-distilled-600M"
+
+    # ── Voice cloning · OpenVoice v2 tone-color converter ─────────────────
+    # Clones the source speaker's timbre onto the edge-tts output — real voice
+    # cloning that fits a 6 GB GPU (131 MB model). Works for any language.
+    openvoice_converter_dir: Path = (
+        Path(__file__).resolve().parent.parent
+        / "models" / "openvoice_v2" / "converter")
+    # The 131 MB converter needs only ~280 MB VRAM and is ~15× faster on GPU;
+    # it fits alongside Whisper+NLLB. Falls back to CPU automatically on OOM.
+    clone_device: str = "cuda"           # cuda | cpu
 
     # ── TTS · OmniVoice (zero-shot voice cloning) ────────────────────────-
     # Uses the `omnivoice` package: OmniVoice.from_pretrained(model).generate(

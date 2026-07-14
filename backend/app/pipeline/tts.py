@@ -34,15 +34,27 @@ class OmniVoiceTTS:
 
     def __init__(self) -> None:
         self._model = None
+        self._importable: bool | None = None
 
-    # ── capability probe (no heavy import — see stt.py) ───────────────────
+    # ── capability probe ──────────────────────────────────────────────────
     def available(self) -> bool:
         import importlib.util
         s = get_settings()
         if s.mode == "demo":
             return False
-        return (importlib.util.find_spec("omnivoice") is not None
-                and importlib.util.find_spec("soundfile") is not None)
+        if importlib.util.find_spec("omnivoice") is None \
+                or importlib.util.find_spec("soundfile") is None:
+            return False
+        # The package can be present but fail to import (e.g. it needs a newer
+        # transformers than the one pinned for NLLB). Probe the import once and
+        # cache it, so we don't advertise / attempt OmniVoice when it can't load.
+        if self._importable is None:
+            try:
+                from omnivoice import OmniVoice  # noqa: F401
+                self._importable = True
+            except Exception:
+                self._importable = False
+        return self._importable
 
     def mode(self) -> str:
         return "real" if self.available() else "simulation"
