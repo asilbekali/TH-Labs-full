@@ -31,6 +31,26 @@
 
 html { scroll-behavior: smooth; }
 
+/* On large / high-res displays, scale the whole rem-based design up so it
+   fills the screen and stays readable instead of floating in a narrow column.
+   Everything (type, spacing, radii, max-widths) is rem-based, so it grows
+   proportionally — cards keep their relationships and never collide. */
+@media (min-width: 1920px) { html { font-size: 17px; } }
+@media (min-width: 2560px) { html { font-size: 19px; } }
+@media (min-width: 3440px) { html { font-size: 21px; } }
+
+/* Page container — centered, fluid padding, and a max-width that steps up on
+   wide screens. Replaces the fixed `max-w-7xl` so the layout adapts to any
+   display width. */
+.wrap {
+  margin-inline: auto;
+  max-width: 80rem;
+  padding-inline: clamp(1.25rem, 3vw, 4rem);
+}
+@media (min-width: 1536px) { .wrap { max-width: 90rem; } }
+@media (min-width: 1920px) { .wrap { max-width: 100rem; } }
+@media (min-width: 2560px) { .wrap { max-width: 112rem; } }
+
 body {
   margin: 0;
   background: var(--color-ink);

@@ -103,9 +103,15 @@ export default function Studio() {
   }
 
   return (
-    <div className="mx-auto max-w-7xl px-5 pt-12 pb-8">
+    <div className="wrap pt-12 pb-8">
       <div className="mb-8">
-        <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">Dubbing Studio</h1>
+        <span className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-violet-300/80">
+          <span className="h-px w-6 bg-gradient-to-r from-violet-400 to-cyan-400" />
+          Dubbing Studio
+        </span>
+        <h1 className="mt-3 text-3xl font-bold tracking-tight sm:text-4xl">
+          Dub a clip, <span className="gradient-text">keep the voice</span>
+        </h1>
         <p className="mt-2 max-w-2xl text-white/55">
           Upload a clip or run the built-in sample, pick a target language, keep
           the original voice, and optionally sync the lips. Watch the pipeline
@@ -115,24 +121,27 @@ export default function Studio() {
 
       <div className="grid gap-5 lg:grid-cols-[380px_1fr]">
         {/* ── Config panel ─────────────────────────────────────────── */}
-        <div className="card h-fit space-y-5 p-5 lg:sticky lg:top-24">
-          <Uploader file={file} onFile={setFile} disabled={running} />
+        <div className="card h-fit space-y-6 p-5 lg:sticky lg:top-24">
+          <div className="space-y-3">
+            <GroupLabel n="01">Source</GroupLabel>
+            <Uploader file={file} onFile={setFile} disabled={running} />
+            <label className="flex cursor-pointer items-center gap-2.5 text-sm text-white/70">
+              <input
+                type="checkbox"
+                checked={isSampleRun}
+                disabled={running}
+                onChange={(e) => {
+                  setUseSample(e.target.checked)
+                  if (e.target.checked) setFile(null)
+                }}
+                className="h-4 w-4 accent-violet-500"
+              />
+              Use the built-in sample clip
+            </label>
+          </div>
 
-          <label className="flex cursor-pointer items-center gap-2.5 text-sm text-white/70">
-            <input
-              type="checkbox"
-              checked={isSampleRun}
-              disabled={running}
-              onChange={(e) => {
-                setUseSample(e.target.checked)
-                if (e.target.checked) setFile(null)
-              }}
-              className="h-4 w-4 accent-violet-500"
-            />
-            Use the built-in sample clip
-          </label>
-
-          <div className="grid gap-3">
+          <div className="space-y-3 border-t border-white/5 pt-5">
+            <GroupLabel n="02">Languages</GroupLabel>
             <LanguageSelect
               label="Source language"
               languages={languages}
@@ -146,17 +155,17 @@ export default function Studio() {
               value={targetLang}
               onChange={setTargetLang}
             />
+            {sampleLangNote && (
+              <p className="rounded-lg border border-amber-400/20 bg-amber-400/[0.05] px-3 py-2 text-xs text-amber-200/80">
+                The sample ships hand-authored translations for UZ, RU, ES, FR, DE.
+                Pick one of those to hear a real translation, or upload your own clip
+                for full NLLB translation.
+              </p>
+            )}
           </div>
 
-          {sampleLangNote && (
-            <p className="rounded-lg border border-amber-400/20 bg-amber-400/[0.05] px-3 py-2 text-xs text-amber-200/80">
-              The sample ships hand-authored translations for UZ, RU, ES, FR, DE.
-              Pick one of those to hear a real translation, or upload your own clip
-              for full NLLB translation.
-            </p>
-          )}
-
-          <div className="space-y-2.5">
+          <div className="space-y-2.5 border-t border-white/5 pt-5">
+            <GroupLabel n="03">Options</GroupLabel>
             <OptionToggle
               checked={voiceClone}
               onChange={setVoiceClone}
@@ -181,26 +190,26 @@ export default function Studio() {
             />
           </div>
 
-          <div>
-            <label className="mb-1.5 block text-xs font-medium text-white/50">Quality</label>
+          <div className="space-y-3 border-t border-white/5 pt-5">
+            <GroupLabel n="04">Quality</GroupLabel>
             <div className="flex rounded-xl border border-white/10 bg-white/[0.02] p-1">
               {QUALITIES.map((q) => (
                 <button
                   key={q.key}
                   onClick={() => setQuality(q.key)}
                   disabled={running}
-                  className={`flex-1 rounded-lg px-3 py-2 text-sm transition-colors ${
-                    quality === q.key ? 'bg-violet-500/20 text-white' : 'text-white/50 hover:text-white'
+                  className={`flex-1 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+                    quality === q.key ? 'bg-violet-500/20 text-white shadow-[inset_0_0_0_1px_rgba(168,85,247,0.4)]' : 'text-white/50 hover:text-white'
                   }`}
                 >
                   {q.label}
                 </button>
               ))}
             </div>
-            <p className="mt-1.5 text-[11px] leading-relaxed text-white/40">
-              {quality === 'fast' && 'Whisper base · skips separation & voice cloning — fastest, best for long videos.'}
-              {quality === 'balanced' && 'Whisper small + separation + voice cloning — balanced.'}
-              {quality === 'studio' && 'Whisper medium (paper) + separation + cloning — best, slowest.'}
+            <p className="text-[11px] leading-relaxed text-white/40">
+              {quality === 'fast' && 'Fastest — skips separation & voice cloning. Best for long videos.'}
+              {quality === 'balanced' && 'Balanced — separation + voice cloning on.'}
+              {quality === 'studio' && 'Highest fidelity — full pipeline. Best quality, slowest.'}
             </p>
           </div>
 
@@ -295,6 +304,15 @@ export default function Studio() {
           )}
         </div>
       </div>
+    </div>
+  )
+}
+
+function GroupLabel({ n, children }: { n: string; children: React.ReactNode }) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="font-mono text-[10px] text-violet-300/70">{n}</span>
+      <span className="text-xs font-semibold uppercase tracking-[0.14em] text-white/45">{children}</span>
     </div>
   )
 }

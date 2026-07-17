@@ -4,7 +4,7 @@ import Logo from './Logo'
 export default function Footer() {
   return (
     <footer className="mt-16 border-t border-white/5">
-      <div className="mx-auto grid max-w-7xl gap-10 px-5 py-10 md:grid-cols-[1.5fr_1fr_1fr]">
+      <div className="wrap grid gap-10 py-10 md:grid-cols-[1.5fr_1fr_1fr]">
         <div>
           <Logo />
           <p className="mt-4 max-w-sm text-sm leading-relaxed text-white/50">
@@ -39,7 +39,7 @@ export default function Footer() {
       </div>
 
       <div className="border-t border-white/5">
-        <div className="mx-auto flex max-w-7xl flex-col items-center justify-between gap-3 px-5 py-6 text-xs text-white/40 sm:flex-row">
+        <div className="wrap flex flex-col items-center justify-between gap-3 py-6 text-xs text-white/40 sm:flex-row">
           <span>© {new Date().getFullYear()} TH-Labs. For research & authorized use.</span>
           <span className="flex items-center gap-2">
             <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />

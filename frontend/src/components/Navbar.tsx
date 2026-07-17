@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link, NavLink, useLocation } from 'react-router-dom'
+import { AnimatePresence, motion } from 'framer-motion'
 import Logo from './Logo'
 import { getHealth } from '../lib/api'
 
@@ -41,7 +42,7 @@ export default function Navbar() {
         scrolled ? 'glass border-b border-white/5' : 'bg-transparent'
       }`}
     >
-      <nav className="mx-auto flex max-w-7xl items-center justify-between px-5 py-3.5">
+      <nav className="wrap flex items-center justify-between py-3.5">
         <Link to="/" className="shrink-0">
           <Logo />
         </Link>
@@ -51,13 +52,25 @@ export default function Navbar() {
             <NavLink
               key={l.to}
               to={l.to}
+              end={l.to === '/'}
               className={({ isActive }) =>
-                `rounded-full px-4 py-2 text-sm transition-colors ${
+                `relative rounded-full px-4 py-2 text-sm transition-colors ${
                   isActive ? 'text-white' : 'text-white/60 hover:text-white'
                 }`
               }
             >
-              {l.label}
+              {({ isActive }) => (
+                <>
+                  {isActive && (
+                    <motion.span
+                      layoutId="nav-pill"
+                      className="absolute inset-0 -z-10 rounded-full border border-white/10 bg-white/[0.06]"
+                      transition={{ type: 'spring', stiffness: 380, damping: 30 }}
+                    />
+                  )}
+                  {l.label}
+                </>
+              )}
             </NavLink>
           ))}
         </div>
@@ -73,29 +86,48 @@ export default function Navbar() {
             Open Studio
           </Link>
           <button
-            className="btn-ghost px-3 py-2 md:hidden"
+            className="btn-ghost grid h-9 w-9 place-items-center md:hidden"
             onClick={() => setOpen((o) => !o)}
             aria-label="Menu"
+            aria-expanded={open}
           >
-            <span className="block h-0.5 w-5 bg-white" />
-            <span className="mt-1 block h-0.5 w-5 bg-white" />
+            <span className="relative block h-3 w-5">
+              <span className={`absolute left-0 block h-0.5 w-5 bg-white transition-all duration-300 ${open ? 'top-1.5 rotate-45' : 'top-0'}`} />
+              <span className={`absolute left-0 top-1.5 block h-0.5 w-5 bg-white transition-all duration-300 ${open ? 'opacity-0' : 'opacity-100'}`} />
+              <span className={`absolute left-0 block h-0.5 w-5 bg-white transition-all duration-300 ${open ? 'top-1.5 -rotate-45' : 'top-3'}`} />
+            </span>
           </button>
         </div>
       </nav>
 
-      {open && (
-        <div className="glass border-t border-white/5 px-5 py-3 md:hidden">
-          {links.map((l) => (
-            <NavLink
-              key={l.to}
-              to={l.to}
-              className="block rounded-lg px-3 py-2.5 text-sm text-white/80 hover:bg-white/5"
-            >
-              {l.label}
-            </NavLink>
-          ))}
-        </div>
-      )}
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
+            className="glass overflow-hidden border-t border-white/5 md:hidden"
+          >
+            <div className="px-5 py-3">
+              {links.map((l) => (
+                <NavLink
+                  key={l.to}
+                  to={l.to}
+                  end={l.to === '/'}
+                  className={({ isActive }) =>
+                    `block rounded-lg px-3 py-2.5 text-sm transition-colors ${
+                      isActive ? 'bg-white/5 text-white' : 'text-white/80 hover:bg-white/5'
+                    }`
+                  }
+                >
+                  {l.label}
+                </NavLink>
+              ))}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </header>
   )
 }

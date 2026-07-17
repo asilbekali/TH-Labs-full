@@ -1,106 +1,46 @@
+import type { ReactNode } from 'react'
 import { Link } from 'react-router-dom'
-import { motion } from 'framer-motion'
 import PipelineDiagram from '../components/PipelineDiagram'
 import MetricsShowcase from '../components/MetricsShowcase'
 import LanguageMarquee from '../components/LanguageMarquee'
+import ScrollHero from '../components/ScrollHero'
 import FeatureCard from '../components/FeatureCard'
-import WaveBars from '../components/WaveBars'
 import Reveal from '../components/Reveal'
 
 const steps = [
   { n: '01', t: 'Transcribe', d: 'Source speech becomes text with timestamps that anchor every later stage.' },
-  { n: '02', t: 'Translate', d: 'Each line is translated into the target language and scored for length so the dub fits the timing.' },
+  { n: '02', t: 'Translate', d: 'Each line is translated and scored for length so the dub fits the original timing.' },
   { n: '03', t: 'Re-voice', d: 'The translation is spoken and cloned to the original speaker’s own voice.' },
-  { n: '04', t: 'Sync & mux', d: 'Audio is time-aligned, the original background is kept, and everything is muxed back — optional lip sync.' },
+  { n: '04', t: 'Sync & mux', d: 'Audio is time-aligned, the original background is kept, and everything is muxed back.' },
 ]
 
-const chips = ['Voice preserved', 'Background kept', '30+ languages', 'Optional lip sync']
+function Eyebrow({ children }: { children: ReactNode }) {
+  return (
+    <span className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-violet-300/80">
+      <span className="h-px w-6 bg-gradient-to-r from-violet-400 to-cyan-400" />
+      {children}
+    </span>
+  )
+}
 
 export default function Landing() {
   return (
     <div>
-      {/* ── Hero ─────────────────────────────────────────────────────── */}
-      <section className="mx-auto max-w-7xl px-5 pt-12 pb-10 sm:pt-16">
-        <div className="grid items-center gap-10 lg:grid-cols-[1.05fr_0.95fr]">
-          <div>
-            <motion.div
-              initial={{ opacity: 0, y: 12 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5 }}
-              className="chip inline-flex items-center gap-2 px-3 py-1.5 text-xs text-white/70"
-            >
-              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-violet-400" />
-              Cascaded ASR → NMT → TTS · voice preservation
-            </motion.div>
+      {/* ── Hero — cinematic scroll-morph (starts as a single line, assembles) ── */}
+      <ScrollHero />
 
-            <motion.h1
-              initial={{ opacity: 0, y: 16 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.6, delay: 0.05 }}
-              className="mt-5 text-4xl font-bold leading-[1.04] tracking-tight sm:text-6xl"
-            >
-              Dub any video.
-              <br />
-              Keep the <span className="gradient-text">original voice.</span>
-            </motion.h1>
-
-            <motion.p
-              initial={{ opacity: 0, y: 16 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.6, delay: 0.12 }}
-              className="mt-5 max-w-xl text-lg leading-relaxed text-white/60"
-            >
-              TH-Labs translates spoken video into 30+ languages while preserving
-              the speaker’s own voice, the original background, and the timing of
-              the performance — with optional lip sync.
-            </motion.p>
-
-            <motion.div
-              initial={{ opacity: 0, y: 16 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.6, delay: 0.19 }}
-              className="mt-7 flex flex-wrap items-center gap-3"
-            >
-              <Link to="/studio" className="btn-primary px-7 py-3.5 text-sm">
-                Try the Studio →
-              </Link>
-              <Link to="/research" className="btn-ghost px-6 py-3.5 text-sm">
-                Read the research
-              </Link>
-              <div className="ml-1 hidden items-center gap-3 text-white/50 sm:flex">
-                <WaveBars bars={16} className="h-8 w-24" />
-              </div>
-            </motion.div>
-
-            <div className="mt-8 flex flex-wrap gap-2">
-              {chips.map((c) => (
-                <span key={c} className="chip px-3 py-1.5 text-xs text-white/60">
-                  {c}
-                </span>
-              ))}
-            </div>
-          </div>
-
-          <motion.div
-            initial={{ opacity: 0, scale: 0.96 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ duration: 0.7, delay: 0.15 }}
-            className="relative"
-          >
-            <PipelineDiagram />
-            <div className="pointer-events-none absolute -inset-6 -z-10 rounded-[2rem] bg-violet-600/20 blur-3xl" />
-          </motion.div>
-        </div>
-
-        <div className="mt-10">
+      {/* ── Language marquee ─────────────────────────────────────────── */}
+      <section className="wrap pb-4">
+        <Reveal>
           <LanguageMarquee />
-        </div>
+        </Reveal>
       </section>
 
       {/* ── Features ─────────────────────────────────────────────────── */}
-      <section className="mx-auto max-w-7xl px-5 py-12">
+      <section className="wrap py-12">
         <Reveal>
-          <h2 className="max-w-2xl text-3xl font-bold tracking-tight sm:text-4xl">
+          <Eyebrow>Capabilities</Eyebrow>
+          <h2 className="mt-3 max-w-2xl text-3xl font-bold tracking-tight sm:text-4xl">
             Not just translated — <span className="gradient-text">re-voiced</span>.
           </h2>
           <p className="mt-3 max-w-2xl text-white/55">
@@ -138,13 +78,46 @@ export default function Landing() {
         </div>
       </section>
 
+      {/* ── How it works — the real pipeline ─────────────────────────── */}
+      <section className="wrap py-12">
+        <Reveal>
+          <Eyebrow>The pipeline</Eyebrow>
+          <h2 className="mt-3 text-3xl font-bold tracking-tight sm:text-4xl">
+            Four stages, one voice
+          </h2>
+          <p className="mt-3 max-w-2xl text-white/55">
+            A cascaded pipeline — each stage runs independently and chains
+            end-to-end, carrying the speaker’s identity and timing all the way through.
+          </p>
+        </Reveal>
+
+        <Reveal delay={0.05}>
+          <div className="mt-8">
+            <PipelineDiagram />
+          </div>
+        </Reveal>
+
+        <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {steps.map((s, i) => (
+            <Reveal key={s.n} delay={i * 0.08}>
+              <div className="card card-hover h-full p-6">
+                <div className="font-mono text-sm text-violet-300/80">{s.n}</div>
+                <h3 className="mt-3 text-lg font-semibold text-white">{s.t}</h3>
+                <p className="mt-2 text-sm leading-relaxed text-white/55">{s.d}</p>
+              </div>
+            </Reveal>
+          ))}
+        </div>
+      </section>
+
       {/* ── Metrics band — the single home for the research numbers ──── */}
-      <section className="mx-auto max-w-7xl px-5 py-12">
+      <section className="wrap py-12">
         <div className="card overflow-hidden p-7 sm:p-9">
           <Reveal>
             <div className="flex flex-wrap items-end justify-between gap-4">
               <div>
-                <h2 className="text-2xl font-bold tracking-tight sm:text-3xl">
+                <Eyebrow>Evaluation</Eyebrow>
+                <h2 className="mt-3 text-2xl font-bold tracking-tight sm:text-3xl">
                   Measured, not hand-waved.
                 </h2>
                 <p className="mt-2 max-w-xl text-white/55">
@@ -163,37 +136,14 @@ export default function Landing() {
         </div>
       </section>
 
-      {/* ── How it works ─────────────────────────────────────────────── */}
-      <section className="mx-auto max-w-7xl px-5 py-12">
-        <Reveal>
-          <h2 className="text-3xl font-bold tracking-tight sm:text-4xl">
-            Four stages, one voice
-          </h2>
-          <p className="mt-3 max-w-2xl text-white/55">
-            A cascaded pipeline — each stage runs independently and chains
-            end-to-end.
-          </p>
-        </Reveal>
-        <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {steps.map((s, i) => (
-            <Reveal key={s.n} delay={i * 0.08}>
-              <div className="card card-hover h-full p-6">
-                <div className="font-mono text-sm text-violet-300/80">{s.n}</div>
-                <h3 className="mt-3 text-lg font-semibold text-white">{s.t}</h3>
-                <p className="mt-2 text-sm leading-relaxed text-white/55">{s.d}</p>
-              </div>
-            </Reveal>
-          ))}
-        </div>
-      </section>
-
       {/* ── Ethics + CTA ─────────────────────────────────────────────── */}
-      <section className="mx-auto max-w-7xl px-5 py-12">
+      <section className="wrap py-12">
         <div className="grid gap-4 lg:grid-cols-[1.4fr_1fr]">
           <Reveal>
             <div className="card relative h-full overflow-hidden p-8 sm:p-10">
               <div className="pointer-events-none absolute -right-10 -top-10 h-40 w-40 rounded-full bg-cyan-400/10 blur-3xl" />
-              <h2 className="text-2xl font-bold tracking-tight sm:text-3xl">
+              <Eyebrow>Get started</Eyebrow>
+              <h2 className="mt-3 text-2xl font-bold tracking-tight sm:text-3xl">
                 Ready to hear it in another language?
               </h2>
               <p className="mt-3 max-w-md text-white/55">
