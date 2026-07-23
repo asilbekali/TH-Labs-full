@@ -18,7 +18,19 @@ model User {
   updatedAt          DateTime @default(now()) @updatedAt
 }
 
+model Admin {
+  id                 Int      @id @default(autoincrement())
+  email              String   @unique
+  name               String
+  password           String
+  role               Role     @default(ADMIN)
+  hashedRefreshToken String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @default(now()) @updatedAt
+}
+
 enum Role {
   USER
   ADMIN
+  SUPERADMIN
 }
