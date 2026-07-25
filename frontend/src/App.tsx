@@ -1,11 +1,9 @@
 import type { ReactNode } from 'react'
-import { Routes, Route, useLocation } from 'react-router-dom'
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import Navbar from './components/Navbar'
 import Footer from './components/Footer'
-import Landing from './pages/Landing'
 import Studio from './pages/Studio'
-import Research from './pages/Research'
 
 function Page({ children }: { children: ReactNode }) {
   return (
@@ -28,9 +26,9 @@ export default function App() {
       <div className="flex-1">
         <AnimatePresence mode="wait">
           <Routes location={location} key={location.pathname}>
-            <Route path="/" element={<Page><Landing /></Page>} />
-            <Route path="/studio" element={<Page><Studio /></Page>} />
-            <Route path="/research" element={<Page><Research /></Page>} />
+            <Route path="/" element={<Page><Studio /></Page>} />
+            {/* Studio is the whole app now — send any other path home. */}
+            <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
         </AnimatePresence>
       </div>

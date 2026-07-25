@@ -17,7 +17,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__, languages
@@ -161,7 +161,30 @@ def _safe_id() -> str:
     return uuid.uuid4().hex[:10]
 
 
-@app.get("/")
-def root() -> dict:
-    return {"service": settings.app_name, "version": __version__,
-            "docs": "/docs", "health": "/api/health"}
+# ── Serve the built frontend (single-origin deploy: Colab, HF Spaces, …) ──────
+# After `npm run build`, the SPA lives in frontend/dist. When present we serve it
+# straight from FastAPI so the whole app is ONE port (needed for a single tunnel
+# on Colab / a single container on Spaces). In local dev this dir is absent and
+# the Vite server serves the UI instead, proxying /api + /media back here.
+_FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+
+if _FRONTEND_DIST.is_dir():
+    _assets = _FRONTEND_DIST / "assets"
+    if _assets.is_dir():
+        app.mount("/assets", StaticFiles(directory=str(_assets)), name="assets")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def spa(full_path: str) -> FileResponse:
+        # Serve a real static file if it exists (favicon, vite.svg, …); otherwise
+        # hand back index.html so the client-side router takes over. /api and
+        # /media are registered earlier, so they win over this catch-all.
+        candidate = _FRONTEND_DIST / full_path
+        if full_path and candidate.is_file():
+            return FileResponse(candidate)
+        return FileResponse(_FRONTEND_DIST / "index.html")
+
+else:
+    @app.get("/")
+    def root() -> dict:
+        return {"service": settings.app_name, "version": __version__,
+                "docs": "/docs", "health": "/api/health"}
