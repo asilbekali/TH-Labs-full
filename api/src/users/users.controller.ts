@@ -42,6 +42,7 @@ export class UsersController {
 
   @Get('all-users')
   @ApiBearerAuth()
+  
   @UseGuards(JwtAuthGuard, RolesGuard)
   findAll() {
     return this.usersService.findAll();
