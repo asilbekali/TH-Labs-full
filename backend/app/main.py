@@ -37,6 +37,14 @@ async def lifespan(_app: FastAPI):
         def warm() -> None:
             try:
                 orch = manager.orchestrator
+                # Probe OmniVoice FIRST. available() does a real
+                # `from omnivoice import OmniVoice` the first time (it caches
+                # the result), which drags in transformers + torch and takes
+                # tens of seconds. /api/health calls available() on every
+                # stage, so without warming it here the first health request
+                # pays that cost inline — painfully obvious on a cold cloud
+                # container, where it can look like the app is hanging.
+                orch.tts.available()
                 if orch.stt.available():
                     orch.stt._load("small")     # the default (Balanced) model
                     if orch.stt._vad.available():
