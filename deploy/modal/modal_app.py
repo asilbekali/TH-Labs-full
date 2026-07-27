@@ -32,7 +32,14 @@ import modal
 
 APP_NAME = "th-labs-dubbing"
 REMOTE = "/app"                                  # where the repo lands in the image
-DATA_DIR = f"{REMOTE}/backend/data"              # matches Settings.data_dir
+
+# Media volume mount point. Deliberately OUTSIDE the copied repo: Modal refuses
+# to mount a Volume on a non-empty path, and the repo's own backend/data/ ships
+# .gitkeep files, so mounting there crash-loops the container with
+#   "cannot mount volume on non-empty path: /app/backend/data"
+# Settings.data_dir is configurable, so we point TH_LABS_DATA_DIR here instead
+# and let the app create uploads/ outputs/ assets/ inside it.
+DATA_DIR = "/data"
 
 # Repo root — used ONLY at build time, by the add_local_dir steps below.
 # Modal re-imports this module inside the container (to locate the function it
@@ -145,6 +152,7 @@ image = (
     .env({
         "PYTHONPATH": f"{REMOTE}/backend",     # so `app.main:app` imports
         "PYTHONUNBUFFERED": "1",
+        "TH_LABS_DATA_DIR": DATA_DIR,          # uploads/outputs on the Volume
         "TH_LABS_MODE": "auto",
         "TH_LABS_WHISPER_MODEL": "medium",     # paper setting; L4 handles it
         "TH_LABS_WHISPER_DEVICE": "cuda",
@@ -155,8 +163,10 @@ image = (
     # copy=True so the npm build below can see these files.
     .add_local_dir(
         str(REPO / "backend"), f"{REMOTE}/backend", copy=True,
-        ignore=["**/__pycache__", "**/data/uploads/*", "**/data/outputs/*",
-                "**/models/*", "**/.env"],
+        # data/ is excluded wholesale — it lives on the Volume at DATA_DIR, and
+        # copying it in only bloats the image. models/ likewise (weights are
+        # fetched by _download_models).
+        ignore=["**/__pycache__", "**/data/**", "**/models/**", "**/.env"],
     )
     .add_local_dir(
         str(REPO / "frontend"), f"{REMOTE}/frontend", copy=True,
