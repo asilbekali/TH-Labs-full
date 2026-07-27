@@ -8,6 +8,7 @@ import { LoggerModule } from './common/logger/logger.module';
 import { UsersModule } from './users/users.module';
 import { AuthModule } from './auth/auth.module';
 import { AdminModule } from './admin/admin.module';
+import { WaitListModule } from './wait-list/wait-list.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { AdminModule } from './admin/admin.module';
     UsersModule,
     AuthModule,
     AdminModule,
+    WaitListModule,
   ],
   controllers: [AppController],
   providers: [AppService],
