@@ -31,8 +31,9 @@ import { AuthResponseDto } from '../auth/dto/auth-response.dto';
 // create-user is public registration: creating a user account *is*
 // registering it, so it takes only name/email/password and the role is
 // always assigned automatically (defaults to USER). Everything else here
-// is self-service (get/update/delete your own account), except all-users
-// which is admin-only.
+// is self-service (get/update/delete your own account). all-users is a
+// public count, while all-users-data (full user list) is restricted to
+// ADMIN and SUPERADMIN.
 @Controller('users')
 export class UsersController {
   constructor(
@@ -41,10 +42,17 @@ export class UsersController {
   ) {}
 
   @Get('all-users')
-  @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard, RolesGuard)
   findAll() {
     return this.usersService.findAll();
+  }
+
+  @Get('all-users-data')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get every user (ADMIN and SUPERADMIN only)' })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN, Role.SUPERADMIN)
+  findAllUsers() {
+    return this.usersService.findAllUsers();
   }
 
   @Post('create-user')

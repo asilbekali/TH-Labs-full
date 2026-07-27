@@ -51,6 +51,10 @@ export class UsersService {
     return { usersCount };
   }
 
+  findAllUsers() {
+    return this.prisma.user.findMany({ select: PUBLIC_USER_SELECT });
+  }
+
   async findOne(id: number) {
     const user = await this.prisma.user.findUnique({
       where: { id },
