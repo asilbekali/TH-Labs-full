@@ -39,18 +39,21 @@ chmod 600 /srv/th-labs/.env
 
 ## 2. Let the server pull from GHCR
 
-Packages are private by default, matching the repository. If the repo is
-public, make the package public once — GitHub → Packages → `api` → Package
-settings → Change visibility — and nothing further is needed.
+A package inherits the visibility of its repository, and this repository is
+private — so the image is private too and the server has to authenticate.
 
-Otherwise create a classic PAT with only `read:packages`, and on the server:
+Create a classic PAT with `read:packages` and nothing else, then on the server:
 
 ```bash
 echo "<PAT>" | docker login ghcr.io -u asilbekali --password-stdin
 ```
 
-That writes `~/.docker/config.json` and persists across reboots. Use an account
-with no write access to anything else; this token only ever needs to read.
+That writes `~/.docker/config.json` and persists across reboots. This token only
+ever needs to read, so grant it nothing further.
+
+**Do not "fix" a pull failure by making the package public.** It is the quickest
+path and it publishes a built image of a private repository — source included,
+since the image carries `dist/` and `node_modules/`. Authenticate instead.
 
 ## 3. GitHub secrets
 
