@@ -194,7 +194,8 @@ class Orchestrator:
                         _build_speaker_ref, job.id, segments)
                     ok = await self._heartbeat(job, "tts", emit,
                         lambda: self.tts.synthesize(segments, ref_audio, ref_text,
-                                                    True, dubbed_audio, duration))
+                                                    True, dubbed_audio, duration,
+                                                    options.target_lang))
                     if ok:
                         tts_engine, voice_cloned, used_real, done = \
                             "OmniVoice", True, True, True

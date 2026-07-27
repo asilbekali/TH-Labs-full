@@ -26,6 +26,41 @@ from . import media
 
 SAMPLE_RATE = 24_000  # OmniVoice output sample rate
 
+# Slots shorter than this keep the model's own duration estimate — forcing a
+# sub-third-of-a-second target just makes the speech sound rushed.
+MIN_FITTED_SLOT = 0.35  # seconds
+
+# ── language configuration ────────────────────────────────────────────────
+# OmniVoice's `generate(language=...)` takes an ISO code ("uz") or an English
+# name ("Uzbek"); passing None runs "language-agnostic" mode, which its own
+# docs call measurably worse. It matters most for our targets: Uzbek text left
+# unlabelled can be voiced with a neighbouring language's phonetics, since the
+# model covers 644 languages and several are orthographically close.
+#
+# 31 of the app's 32 language codes are already valid OmniVoice codes, so the
+# default is to pass the code straight through. This table holds the
+# exceptions plus the three primary targets, spelled out deliberately:
+OMNIVOICE_LANG: dict[str, str] = {
+    "uz": "uz",    # Uzbek — NLLB emits uzn_Latn (Northern Uzbek, Latin).
+                   # "uzn" is also in OmniVoice's table if you want to pin the
+                   # narrower variant; "uz" is the generic and is what we send.
+    "ru": "ru",    # Russian — Cyrillic, matches NLLB's rus_Cyrl output.
+    "en": "en",    # English.
+    "ar": "arb",   # EXCEPTION: OmniVoice has no generic "ar", only variants
+                   # (arb/arz/ary/...). arb = Modern Standard Arabic.
+}
+
+
+def resolve_language(code: str | None) -> str | None:
+    """Map an app language code to an OmniVoice identifier.
+
+    Returns None for auto/unknown so the model falls back to its
+    language-agnostic mode rather than being fed a bogus code.
+    """
+    if not code or code == "auto":
+        return None
+    return OMNIVOICE_LANG.get(code, code)
+
 
 class OmniVoiceTTS:
     key = "tts"
@@ -77,15 +112,22 @@ class OmniVoiceTTS:
     # ── real synthesis ────────────────────────────────────────────────────
     def synthesize(self, segments: list[Segment], ref_audio: Path | None,
                    ref_text: str | None, voice_clone: bool,
-                   out_audio: Path, total_duration: float | None) -> bool:
+                   out_audio: Path, total_duration: float | None,
+                   target_lang: str | None = None) -> bool:
         """Synthesize each translated segment and lay it on a timeline that
-        matches the source timing, then write a 24 kHz WAV for the sync stage."""
+        matches the source timing, then write a 24 kHz WAV for the sync stage.
+
+        `target_lang` is the app language code (e.g. "uz"); it is mapped to an
+        OmniVoice identifier and passed per segment so the text is voiced with
+        the right phonetics instead of the model guessing.
+        """
         import numpy as np
         import soundfile as sf
 
         model = self._load()
         clone = bool(voice_clone and ref_audio and Path(ref_audio).exists())
         ref = str(ref_audio) if clone else None
+        language = resolve_language(target_lang)
 
         total = total_duration or (segments[-1].end if segments else 1.0)
         buf = np.zeros(int(total * SAMPLE_RATE) + SAMPLE_RATE, dtype=np.float32)
@@ -94,11 +136,21 @@ class OmniVoiceTTS:
             text = (seg.target_text or seg.source_text or "").strip()
             if not text:
                 continue
+            # Fit the clip to its source slot so dubbed segments don't overrun
+            # into the next one. OmniVoice generates to a target duration
+            # natively, which beats synthesising then time-stretching with
+            # ffmpeg (what the edge-tts path has to do). Very short slots are
+            # left to the model's own estimate rather than forcing a rush.
+            slot = seg.end - seg.start
+            kwargs: dict = {"text": text}
+            if language:
+                kwargs["language"] = language
+            if slot >= MIN_FITTED_SLOT:
+                kwargs["duration"] = slot
             if ref:
-                out = model.generate(text=text, ref_audio=ref,
-                                     ref_text=ref_text or "")
-            else:
-                out = model.generate(text=text)
+                kwargs["ref_audio"] = ref
+                kwargs["ref_text"] = ref_text or ""
+            out = model.generate(**kwargs)
             clip = np.asarray(out[0], dtype=np.float32).reshape(-1)
             start = int(max(0.0, seg.start) * SAMPLE_RATE)
             end = start + clip.shape[0]
