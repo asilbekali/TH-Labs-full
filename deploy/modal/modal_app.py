@@ -31,9 +31,16 @@ from pathlib import Path
 import modal
 
 APP_NAME = "th-labs-dubbing"
-REPO = Path(__file__).resolve().parents[2]      # repo root (local, at build time)
 REMOTE = "/app"                                  # where the repo lands in the image
 DATA_DIR = f"{REMOTE}/backend/data"              # matches Settings.data_dir
+
+# Repo root — used ONLY at build time, by the add_local_dir steps below.
+# Modal re-imports this module inside the container (to locate the function it
+# is running), where the file lives at /root/modal_app.py and therefore has no
+# parents[2]. Resolving it unguarded raises IndexError and kills the build, so
+# fall back to the in-image location, which is what those paths mean remotely.
+_HERE = Path(__file__).resolve()
+REPO = _HERE.parents[2] if len(_HERE.parents) > 2 else Path(REMOTE)
 
 app = modal.App(APP_NAME)
 
