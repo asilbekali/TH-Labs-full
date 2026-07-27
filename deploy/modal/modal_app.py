@@ -115,8 +115,17 @@ image = (
         ignore=["**/node_modules", "**/dist", "**/.vite"],
     )
     # Build the Studio UI -> frontend/dist, which FastAPI serves at "/".
+    #
+    # `npm ci` is tried first (fast, reproducible) but falls back to
+    # `npm install`: package-lock.json is generated on Windows and omits
+    # @emnapi/runtime, which npm needs on Linux for the wasm-fallback
+    # bindings. `npm ci` is strict about that mismatch and aborts; `npm
+    # install` resolves the missing platform packages. Regenerating the
+    # lockfile on Linux would let the `ci` path win again.
     .run_commands(
-        f"cd {REMOTE}/frontend && npm ci --no-audit --no-fund && npm run build"
+        f"cd {REMOTE}/frontend && "
+        f"(npm ci --no-audit --no-fund || npm install --no-audit --no-fund) && "
+        f"npm run build"
     )
     .run_function(_download_models)
 )
