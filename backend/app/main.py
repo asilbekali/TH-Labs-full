@@ -28,6 +28,8 @@ from .schemas import (DubOptions, HealthInfo, Quality, StageInfo)
 
 settings = get_settings()
 
+_UPLOAD_CHUNK = 1024 * 1024      # 1 MiB: streamed upload copy buffer
+
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
@@ -128,7 +130,15 @@ async def create_job(
     else:
         suffix = Path(file.filename or "upload.mp4").suffix or ".mp4"
         input_video = settings.uploads_dir / f"upload_{_safe_id()}{suffix}"
-        input_video.write_bytes(await file.read())
+        # Stream to disk in chunks. `await file.read()` with no argument pulls
+        # the WHOLE video into memory, so peak usage is ~2x the file size (the
+        # bytes object plus the write buffer) on top of several GB of resident
+        # models. On a cloud container that OOMs mid-upload, and the symptom is
+        # baffling: the request is cancelled with no POST ever reaching the
+        # access log. Chunked copying keeps memory flat regardless of size.
+        with input_video.open("wb") as out:
+            while chunk := await file.read(_UPLOAD_CHUNK):
+                out.write(chunk)
         filename = file.filename
 
     job = manager.create(options, input_video, scenario, filename,

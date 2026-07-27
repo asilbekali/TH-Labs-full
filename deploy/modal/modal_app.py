@@ -193,6 +193,12 @@ image = (
     image=image,
     gpu="L4",
     volumes={DATA_DIR: media},
+    # Whisper + NLLB + OmniVoice + Demucs keep several GB resident on the CPU
+    # side, and a dub also holds decoded audio and ffmpeg intermediates. Ask
+    # for explicit headroom so a long upload can't squeeze the container into
+    # an OOM — which surfaces as a request cancelled with no entry in the
+    # access log, rather than as an obvious error.
+    memory=16384,          # MiB, minimum guarantee
     max_containers=1,      # in-memory job store — see module docstring
     scaledown_window=300,  # stay warm 5 min after the last request
     timeout=3600,          # long videos: ASR+TTS on a 15-min clip takes a while
