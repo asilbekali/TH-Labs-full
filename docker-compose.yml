@@ -1,0 +1,78 @@
+# TH-LABS account API + its PostgreSQL database, locally.
+#
+#   cp .env.example .env     # then fill in the required values
+#   docker compose up --build
+#
+# This is the same service that runs at http://3.120.245.167/v1, so the auth
+# work can be developed against a local database instead of the shared server.
+#
+# Not included: the Studio (deploy/modal/ — Modal builds its own image and
+# needs a GPU) and the landing page (a separate repo, deployed to Vercel).
+
+name: th-labs
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-thlabs}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-thlabs}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    # Bound to loopback rather than 0.0.0.0 so the database is not exposed to
+    # anything else on the network.
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    healthcheck:
+      test:
+        ["CMD-SHELL",
+         "pg_isready -U ${POSTGRES_USER:-thlabs} -d ${POSTGRES_DB:-thlabs}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  api:
+    build:
+      context: ./api
+    depends_on:
+      db:
+        # Waits for pg_isready, not just for the container to exist, so the
+        # entrypoint's `prisma migrate deploy` cannot race the database.
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-thlabs}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-thlabs}?schema=public
+
+      # Deliberately no defaults. src/auth/auth.module.ts and auth.service.ts
+      # fall back to the literals 'dev-secret' and 'dev-refresh-secret' when
+      # these are unset, which would make every token forgeable by anyone
+      # reading the repo. Compose refuses to start instead of inheriting that.
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?set JWT_REFRESH_SECRET in .env}
+
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-15m}
+      JWT_REFRESH_EXPIRES_IN: ${JWT_REFRESH_EXPIRES_IN:-7d}
+      NODE_ENV: production
+      PORT: "3000"
+      # Only used to print the banner URL on boot; the server binds all
+      # interfaces regardless, which is what lets the port mapping reach it.
+      HOST: localhost
+    ports:
+      - "127.0.0.1:${API_PORT:-3000}:3000"
+    # PID 1 reaper, so Ctrl-C and `docker compose stop` terminate promptly.
+    init: true
+    healthcheck:
+      # GET /v1 is the app's own root route. Node 22 has global fetch, so this
+      # needs no curl in the image.
+      test:
+        ["CMD", "node", "-e",
+         "fetch('http://127.0.0.1:3000/v1').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+volumes:
+  db-data:

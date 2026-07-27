@@ -1,0 +1,24 @@
+# /etc/caddy/Caddyfile
+#
+# Naming the hosts is what makes Caddy request a certificate for them. It then
+# handles the ACME challenge, the HTTP->HTTPS redirect, and renewal by itself.
+#
+# Do NOT add a `redir https://{host}{uri}` catch-all on :80. Caddy's automatic
+# HTTPS already redirects, and it exempts /.well-known/acme-challenge/ so
+# Let's Encrypt can validate. A hand-written catch-all shadows that path, the
+# challenge gets a 308 to an endpoint with no certificate yet, validation
+# fails, and no certificate is ever issued — which is exactly the state this
+# server was found in.
+
+aytingchi.uz, www.aytingchi.uz {
+	reverse_proxy localhost:3000
+
+	encode gzip zstd
+
+	log {
+		output file /var/log/caddy/aytingchi.log {
+			roll_size 10MiB
+			roll_keep 5
+		}
+	}
+}

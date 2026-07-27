@@ -1,0 +1,75 @@
+# Production stack for the account API. Lives at /srv/th-labs on the server.
+#
+# Unlike the compose file at the repo root, this one never builds — it pulls a
+# published image from GHCR. The server does not need a checkout of this repo,
+# a toolchain, or Node; only this file and .env.
+#
+# Caddy is deliberately NOT in here. It runs as a systemd unit on the host and
+# terminates TLS for the whole box, so the API only ever binds loopback.
+
+name: th-labs
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-thlabs}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-thlabs}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        ["CMD-SHELL",
+         "pg_isready -U ${POSTGRES_USER:-thlabs} -d ${POSTGRES_DB:-thlabs}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+    # No ports mapping at all. The database is reachable over the compose
+    # network by the API and by nothing else; use `docker compose exec` for a
+    # psql session rather than opening a port.
+
+  api:
+    # Overridable so a rollback is a one-liner:
+    #   API_IMAGE=ghcr.io/asilbekali/th-labs-full/api:sha-<commit> docker compose up -d api
+    image: ${API_IMAGE:-ghcr.io/asilbekali/th-labs-full/api:latest}
+    pull_policy: always
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-thlabs}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-thlabs}?schema=public
+      # No defaults on purpose — the app falls back to the literals
+      # 'dev-secret' / 'dev-refresh-secret', which are in the public repo.
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:?set JWT_REFRESH_SECRET in .env}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-15m}
+      JWT_REFRESH_EXPIRES_IN: ${JWT_REFRESH_EXPIRES_IN:-7d}
+      NODE_ENV: production
+      PORT: "3000"
+      HOST: ${PUBLIC_HOST:-aytingchi.uz}
+    ports:
+      # Loopback only. Caddy on the host proxies to this; exposing 0.0.0.0
+      # would publish the API unencrypted alongside the TLS one.
+      - "127.0.0.1:3000:3000"
+    init: true
+    healthcheck:
+      test:
+        ["CMD", "node", "-e",
+         "fetch('http://127.0.0.1:3000/v1').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    logging:
+      # Container logs are unbounded by default and will eventually fill the
+      # disk on a small VPS.
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  db-data:
