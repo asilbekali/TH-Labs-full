@@ -50,30 +50,56 @@ media = modal.Volume.from_name(f"{APP_NAME}-media", create_if_missing=True)
 
 # ── build-time: pre-download every model so cold starts are fast ───────────
 def _download_models() -> None:
-    """Snapshotted into the image, so containers start with weights present."""
+    """Snapshotted into the image, so containers start with weights present.
+
+    Every prefetch is individually non-fatal. This step is a cold-start
+    optimisation, not a correctness requirement — anything missed here is
+    simply downloaded on first use at runtime. A broken *environment* should
+    fail earlier, at the import check right after the torch install, not after
+    several GB of downloads.
+    """
+    import gc
+
+    def step(label: str, fn) -> None:
+        try:
+            fn()
+            print(f"  ok    {label}")
+        except Exception as exc:
+            print(f"  SKIP  {label} -> {type(exc).__name__}: {exc}")
+        gc.collect()
+
     from huggingface_hub import snapshot_download
 
     # OmniVoice (~3.1 GB) and NLLB-200 (~2.4 GB): download only, don't load.
-    snapshot_download("k2-fsa/OmniVoice")
-    snapshot_download("facebook/nllb-200-distilled-600M")
+    step("OmniVoice weights", lambda: snapshot_download("k2-fsa/OmniVoice"))
+    step("NLLB-200 weights",
+         lambda: snapshot_download("facebook/nllb-200-distilled-600M"))
 
     # Whisper caches to ~/.cache/whisper. "medium" is the paper setting;
-    # "base"/"small" are pulled too so the Fast/Balanced quality tiers don't
-    # download mid-request.
-    import whisper
-    for name in ("base", "small", "medium"):
-        whisper.load_model(name, device="cpu")
+    # "base"/"small" back the Fast/Balanced quality tiers. Loaded one at a
+    # time and released, so the build container isn't holding all three.
+    def _whisper(name: str) -> None:
+        import whisper
+        m = whisper.load_model(name, device="cpu")
+        del m
 
-    # silero-VAD gates ASR to real speech.
-    from silero_vad import load_silero_vad
-    load_silero_vad()
+    for _name in ("base", "small", "medium"):
+        step(f"whisper {_name}", lambda n=_name: _whisper(n))
+
+    # silero-VAD gates ASR to real speech. Imports torchaudio, so this is also
+    # a de-facto check that the torch/torchaudio pair is sane.
+    def _vad() -> None:
+        from silero_vad import load_silero_vad
+        load_silero_vad()
+
+    step("silero-VAD", _vad)
 
     # Demucs background separation.
-    try:
+    def _demucs() -> None:
         from demucs.pretrained import get_model
         get_model("htdemucs")
-    except Exception as exc:      # non-fatal: stage degrades to simulation
-        print(f"demucs prefetch skipped: {exc}")
+
+    step("demucs htdemucs", _demucs)
 
 
 image = (
@@ -87,9 +113,24 @@ image = (
     # CUDA torch FIRST. torchaudio must exist before omnivoice is resolved —
     # without it the resolver backtracks to numba 0.53.1, which cannot build
     # on Python >=3.10. (Learned the hard way locally.)
-    .pip_install(
-        "torch", "torchaudio",
-        extra_index_url="https://download.pytorch.org/whl/cu128",
+    # torch + torchaudio from PyPI, with NO index override.
+    #
+    # The earlier `extra_index_url=".../cu128"` let pip satisfy torch from one
+    # index and torchaudio from the other; the two builds then disagreed about
+    # where the CUDA runtime lives and torchaudio's compiled extension died on
+    # import with `OSError: libcudart.so.12: cannot open shared object file`.
+    #
+    # On Linux the plain PyPI wheels are already CUDA builds (they pull the
+    # nvidia-*-cu12 runtime packages as dependencies), so resolving both from a
+    # single index is what guarantees a matched pair. Installing them in one
+    # call matters too — it lets pip solve them together.
+    .pip_install("torch", "torchaudio")
+    # Fail HERE rather than after ~6 GB of model downloads: torchaudio only
+    # loads its CUDA extension on import, so a mismatch is invisible until
+    # something imports it (silero-vad does).
+    .run_commands(
+        'python -c "import torch, torchaudio; '
+        "print('torch', torch.__version__, 'torchaudio', torchaudio.__version__)\""
     )
     # Core API + pipeline engines
     .pip_install(
