@@ -137,10 +137,16 @@ class OmniVoiceTTS:
             if not text:
                 continue
             # Fit the clip to its source slot so dubbed segments don't overrun
-            # into the next one. OmniVoice generates to a target duration
-            # natively, which beats synthesising then time-stretching with
-            # ffmpeg (what the edge-tts path has to do). Very short slots are
-            # left to the model's own estimate rather than forcing a rush.
+            # into the next one. OmniVoice targets the duration during
+            # generation, which beats synthesising then time-stretching with
+            # ffmpeg (what the edge-tts path has to do).
+            #
+            # Measured: it's a SOFT target. Asking it to compress is accurate
+            # (3.0 s requested -> 3.11 s), but it will not pad to fill a longer
+            # slot (5.0 s requested -> 4.53 s). That asymmetry suits dubbing:
+            # overruns are what break timing, and undershooting just leaves a
+            # short gap. Very short slots keep the model's own estimate rather
+            # than forcing a rush.
             slot = seg.end - seg.start
             kwargs: dict = {"text": text}
             if language:
