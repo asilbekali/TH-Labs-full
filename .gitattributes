@@ -1,0 +1,5 @@
+# These execute inside Linux containers. A CRLF shebang makes the kernel look
+# for an interpreter named "/bin/sh\r" and report it as missing, so pin them to
+# LF regardless of the checkout platform.
+*.sh text eol=lf
+docker-entrypoint.sh text eol=lf

@@ -1,0 +1,31 @@
+# Everything the build does not need. Keeping node_modules out matters most:
+# it would otherwise overwrite the Linux-native bcrypt binary with whatever was
+# compiled on the host.
+node_modules
+dist
+build
+coverage
+.nyc_output
+
+.git
+.gitignore
+.gitattributes
+
+.env
+.env.*
+!.env.example
+
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+.vscode
+.idea
+.DS_Store
+Thumbs.db
+
+test
+Dockerfile
+.dockerignore
+README.md

@@ -1,4 +1,17 @@
 {
   "extends": "./tsconfig.json",
-  "exclude": ["node_modules", "test", "dist", "**/*spec.ts"]
+  "compilerOptions": {
+    // Without this, tsc infers the common root from whatever .ts files the
+    // program happens to contain. prisma/seed.ts sits outside src/, so the
+    // inferred root was the package root and every emitted file gained a src/
+    // segment - dist/src/main.js instead of dist/main.js. That is why
+    // `node dist/main`, which package.json's start:prod runs, could not
+    // resolve. Pinning the root makes the layout independent of which files
+    // happen to be present.
+    "rootDir": "./src"
+  },
+  // prisma/seed.ts is outside rootDir and would raise TS6059, so it leaves the
+  // build program. It is not part of the server anyway: package.json runs it
+  // through ts-node, which reads tsconfig.json (no rootDir) and is unaffected.
+  "exclude": ["node_modules", "test", "dist", "**/*spec.ts", "prisma"]
 }
