@@ -1,0 +1,50 @@
+# A site block to ADD to the server's existing Caddy config.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+#  DO NOT overwrite /etc/caddy/Caddyfile with this file.
+#  That server also runs solpra.uz, which is live and holds a valid
+#  certificate. Replacing the Caddyfile deletes its site block and takes it
+#  offline. Append this, or import it — never substitute.
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Routing, one domain, two upstreams by path:
+#
+#   aytingchi.uz/v1/*   -> NestJS account API   (127.0.0.1:3000)
+#   aytingchi.uz/docs*  -> its Swagger UI
+#   aytingchi.uz/*      -> Next.js landing page (127.0.0.1:3001)
+#
+# The landing page does not reach the API through here — lib/backend.ts calls
+# it at http://api:3000/v1 over the Docker network. /v1 is published because
+# the Studio on Modal needs it for quota checks; if that stops being true,
+# both the /v1 and /docs handles can be deleted and the API goes internal.
+#
+# Naming the hosts is what makes Caddy request a certificate for them. It
+# serves the ACME challenge on :80 and handles renewal by itself, exactly as it
+# already does for solpra.uz. Nothing else is required — DNS for aytingchi.uz
+# and www.aytingchi.uz already resolves to this host.
+
+aytingchi.uz, www.aytingchi.uz {
+	# Longest-matching handle wins, independent of ordering.
+	handle /v1/* {
+		reverse_proxy localhost:3000
+	}
+
+	# Swagger. Publicly readable, matching how the old server ran; delete this
+	# block if the API surface should not be advertised.
+	handle /docs* {
+		reverse_proxy localhost:3000
+	}
+
+	handle {
+		reverse_proxy localhost:3001
+	}
+
+	encode gzip zstd
+
+	log {
+		output file /var/log/caddy/aytingchi.log {
+			roll_size 10MiB
+			roll_keep 5
+		}
+	}
+}

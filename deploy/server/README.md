@@ -84,15 +84,47 @@ which is no verification at all.
 
 ## 4. Caddy
 
-Copy [`Caddyfile`](./Caddyfile) to `/etc/caddy/Caddyfile`, then:
+> **This server also runs solpra.uz.** It is live and holds a valid
+> certificate. Do **not** overwrite `/etc/caddy/Caddyfile` — that deletes its
+> site block and takes it offline. Append, never substitute.
+>
+> For the same reason, do not install nginx here. Caddy already owns :80 and
+> :443; a second web server fighting for those ports is the likeliest way to
+> break solpra.uz.
+
+Back up first, then append [`aytingchi.caddy`](./aytingchi.caddy):
+
+```bash
+sudo cp /etc/caddy/Caddyfile /etc/caddy/Caddyfile.bak.$(date +%F)
+```
+
+```bash
+cat aytingchi.caddy | sudo tee -a /etc/caddy/Caddyfile > /dev/null
+```
+
+Check the result parses, and confirm solpra.uz is still in it, before reloading:
+
+```bash
+sudo caddy validate --config /etc/caddy/Caddyfile && grep -c solpra /etc/caddy/Caddyfile
+```
 
 ```bash
 sudo systemctl reload caddy && sudo journalctl -u caddy -f --no-pager
 ```
 
-Watch for the certificate to be obtained. If it does not appear, the cause is
-almost always a leftover `redir` catch-all on `:80` shadowing
-`/.well-known/acme-challenge/` — see the comment at the top of the Caddyfile.
+`reload` is deliberate — unlike `restart` it swaps config without dropping
+connections, so solpra.uz never blinks. Watch for the certificate to be
+obtained; it takes a few seconds. Then verify **both** hosts:
+
+```bash
+curl -sI https://solpra.uz | head -1 && curl -sI https://aytingchi.uz | head -1
+```
+
+If solpra.uz breaks at any point, roll straight back:
+
+```bash
+sudo cp /etc/caddy/Caddyfile.bak.$(date +%F) /etc/caddy/Caddyfile && sudo systemctl reload caddy
+```
 
 ## 5. First deploy
 
