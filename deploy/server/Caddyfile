@@ -1,5 +1,17 @@
 # /etc/caddy/Caddyfile
 #
+# One domain, two upstreams, split by path:
+#
+#   aytingchi.uz/v1/*   -> NestJS account API   (127.0.0.1:3000)
+#   aytingchi.uz/docs*  -> its Swagger UI
+#   aytingchi.uz/*      -> Next.js landing page (127.0.0.1:3001)
+#
+# The API is exposed publicly because the Studio on Modal has to reach it to
+# check a user's quota. The landing page does NOT need it public — lib/backend.ts
+# calls the API over the Docker network — so if the Studio ever stops needing
+# direct access, the /v1 and /docs handles can be dropped and the API becomes
+# entirely internal.
+#
 # Naming the hosts is what makes Caddy request a certificate for them. It then
 # handles the ACME challenge, the HTTP->HTTPS redirect, and renewal by itself.
 #
@@ -11,7 +23,21 @@
 # server was found in.
 
 aytingchi.uz, www.aytingchi.uz {
-	reverse_proxy localhost:3000
+	# Longest-matching handle wins, so these are evaluated before the catch-all
+	# below regardless of order.
+	handle /v1/* {
+		reverse_proxy localhost:3000
+	}
+
+	# Swagger. Publicly readable, which is how the current server already runs;
+	# comment this block out if the API surface should not be advertised.
+	handle /docs* {
+		reverse_proxy localhost:3000
+	}
+
+	handle {
+		reverse_proxy localhost:3001
+	}
 
 	encode gzip zstd
 

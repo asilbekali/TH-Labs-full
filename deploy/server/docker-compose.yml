@@ -76,6 +76,53 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # The landing page (ProLend repo). Image only — it is built by that repo's
+  # own workflow, so this stack never needs its source.
+  web:
+    image: ${WEB_IMAGE:-ghcr.io/asilbekali/prolend/web:latest}
+    pull_policy: always
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      # The compose service name, not a public URL. lib/backend.ts is the only
+      # thing that talks to the API, and it runs server-side, so this traffic
+      # never leaves the Docker network — no CORS, no TLS hop, and the API does
+      # not have to be internet-facing for the landing page to work.
+      BACKEND_API_URL: http://api:3000/v1
+      BACKEND_SERVICE_TOKEN: ${BACKEND_SERVICE_TOKEN:-}
+      # Server-side only. NEXT_PUBLIC_* values are absent here on purpose:
+      # `next build` inlines them, so they are build args in that repo's
+      # workflow and setting them at runtime would do nothing.
+      GOOGLE_AUTH_SECRET: ${GOOGLE_AUTH_SECRET:-}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      NODE_ENV: production
+      PORT: "3000"
+      HOSTNAME: 0.0.0.0
+    ports:
+      # 3001 on the host because the API already holds 3000. Caddy routes
+      # between them by path.
+      - "127.0.0.1:3001:3000"
+    init: true
+    healthcheck:
+      test:
+        ["CMD", "node", "-e",
+         "fetch('http://127.0.0.1:3000/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 volumes:
   db-data:
   api-logs:
