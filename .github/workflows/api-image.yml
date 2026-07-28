@@ -92,6 +92,16 @@ jobs:
           KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
         run: |
           set -euo pipefail
+
+          # The image is built and pushed regardless; only the rollout needs a
+          # server to talk to. Until the four secrets exist this exits clean
+          # rather than red, so a missing deploy target is reported as "not
+          # configured yet" instead of masquerading as a broken pipeline.
+          if [ -z "$SSH_HOST" ] || [ -z "$SSH_USER" ] || [ -z "$SSH_KEY" ] || [ -z "$KNOWN_HOSTS" ]; then
+            echo "::notice::Deploy secrets not configured - skipping rollout. The image was built and pushed to GHCR; see deploy/server/README.md."
+            exit 0
+          fi
+
           mkdir -p ~/.ssh
           printf '%s\n' "$SSH_KEY" > ~/.ssh/id_deploy
           chmod 600 ~/.ssh/id_deploy
