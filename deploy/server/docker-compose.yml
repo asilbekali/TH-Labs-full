@@ -4,10 +4,27 @@
 # published image from GHCR. The server does not need a checkout of this repo,
 # a toolchain, or Node; only this file and .env.
 #
-# Caddy is deliberately NOT in here. It runs as a systemd unit on the host and
-# terminates TLS for the whole box, so the API only ever binds loopback.
+# Caddy is deliberately NOT in here. TLS for the whole box is terminated by
+# solpro-caddy-1, which belongs to the separate stack in /opt/solpro. This is a
+# distinct compose project so the two can be started and stopped independently:
+# `docker compose down` here must never be able to take solpra.uz offline, and
+# the same in reverse.
+#
+# Nothing below publishes a host port. The services join solpro's network under
+# `thlabs-` aliases, Caddy reaches them by name exactly as it reaches
+# `solpra:4000`, and the only route in is through Caddy.
 
 name: th-labs
+
+networks:
+  # Created and owned by /opt/solpro. Declared external so this stack attaches
+  # to it and never attempts to create or remove it.
+  edge:
+    external: true
+    name: solpro_default
+  # Private to this stack: db is reachable here and nowhere else.
+  internal:
+    driver: bridge
 
 services:
   db:
@@ -26,6 +43,10 @@ services:
       timeout: 5s
       retries: 12
     restart: unless-stopped
+    networks:
+      # internal only — deliberately NOT on edge, so the database is
+      # unreachable from solpro's containers as well as from the internet.
+      - internal
     # No ports mapping at all. The database is reachable over the compose
     # network by the API and by nothing else; use `docker compose exec` for a
     # psql session rather than opening a port.
@@ -49,10 +70,12 @@ services:
       NODE_ENV: production
       PORT: "3000"
       HOST: ${PUBLIC_HOST:-aytingchi.uz}
-    ports:
-      # Loopback only. Caddy on the host proxies to this; exposing 0.0.0.0
-      # would publish the API unencrypted alongside the TLS one.
-      - "127.0.0.1:3000:3000"
+    networks:
+      internal:
+      edge:
+        # What Caddy proxies /v1/* and /docs* to. Prefixed so it cannot
+        # collide with solpro's own service names on the shared network.
+        aliases: [thlabs-api]
     volumes:
       # The app writes its own app/error/audit logs here. Without a volume they
       # live in the container's writable layer and are discarded on every
@@ -103,10 +126,10 @@ services:
       NODE_ENV: production
       PORT: "3000"
       HOSTNAME: 0.0.0.0
-    ports:
-      # 3001 on the host because the API already holds 3000. Caddy routes
-      # between them by path.
-      - "127.0.0.1:3001:3000"
+    networks:
+      internal:
+      edge:
+        aliases: [thlabs-web]
     init: true
     healthcheck:
       test:

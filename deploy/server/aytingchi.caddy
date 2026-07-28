@@ -1,50 +1,48 @@
-# A site block to ADD to the server's existing Caddy config.
+# A site block to ADD to /opt/solpro/Caddyfile on the server.
 #
 # ─────────────────────────────────────────────────────────────────────────────
-#  DO NOT overwrite /etc/caddy/Caddyfile with this file.
-#  That server also runs solpra.uz, which is live and holds a valid
-#  certificate. Replacing the Caddyfile deletes its site block and takes it
-#  offline. Append this, or import it — never substitute.
+#  That file is the live config for solpra.uz. Append this block; do not
+#  replace the file. It is bind-mounted read-only into solpro-caddy-1, so edit
+#  it on the host and reload — see deploy/server/README.md.
 # ─────────────────────────────────────────────────────────────────────────────
 #
-# Routing, one domain, two upstreams by path:
+# Upstreams are Docker service aliases, not host ports, matching how the
+# existing solpra.uz block reaches `solpra:4000`. The TH-LABS stack joins
+# solpro_default so Caddy can resolve these names, which means nothing of ours
+# publishes a host port — the only way in is through Caddy.
 #
-#   aytingchi.uz/v1/*   -> NestJS account API   (127.0.0.1:3000)
+# The aliases are prefixed `thlabs-` so they cannot collide with solpro's own
+# service names (solpra, caddy, postgres, backup) on the shared network.
+#
+#   aytingchi.uz/v1/*   -> NestJS account API   (thlabs-api:3000)
 #   aytingchi.uz/docs*  -> its Swagger UI
-#   aytingchi.uz/*      -> Next.js landing page (127.0.0.1:3001)
+#   aytingchi.uz/*      -> Next.js landing page (thlabs-web:3000)
 #
-# The landing page does not reach the API through here — lib/backend.ts calls
-# it at http://api:3000/v1 over the Docker network. /v1 is published because
-# the Studio on Modal needs it for quota checks; if that stops being true,
-# both the /v1 and /docs handles can be deleted and the API goes internal.
-#
-# Naming the hosts is what makes Caddy request a certificate for them. It
-# serves the ACME challenge on :80 and handles renewal by itself, exactly as it
-# already does for solpra.uz. Nothing else is required — DNS for aytingchi.uz
-# and www.aytingchi.uz already resolves to this host.
+# The landing page does not reach the API through Caddy — lib/backend.ts calls
+# it over the internal network. /v1 is published only because the Studio on
+# Modal needs it; drop both handles if that stops being true.
 
+# ── TH-LABS ───────────────────────────────────────────────────────────────
 aytingchi.uz, www.aytingchi.uz {
 	# Longest-matching handle wins, independent of ordering.
 	handle /v1/* {
-		reverse_proxy localhost:3000
+		reverse_proxy thlabs-api:3000
 	}
 
-	# Swagger. Publicly readable, matching how the old server ran; delete this
-	# block if the API surface should not be advertised.
+	# Swagger, publicly readable — matching how the old server ran. Delete
+	# this block if the API surface should not be advertised.
 	handle /docs* {
-		reverse_proxy localhost:3000
+		reverse_proxy thlabs-api:3000
 	}
 
 	handle {
-		reverse_proxy localhost:3001
+		reverse_proxy thlabs-web:3000
 	}
 
-	encode gzip zstd
-
-	log {
-		output file /var/log/caddy/aytingchi.log {
-			roll_size 10MiB
-			roll_keep 5
-		}
+	header {
+		X-Frame-Options "SAMEORIGIN"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 	}
 }

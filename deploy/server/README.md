@@ -84,47 +84,64 @@ which is no verification at all.
 
 ## 4. Caddy
 
-> **This server also runs solpra.uz.** It is live and holds a valid
-> certificate. Do **not** overwrite `/etc/caddy/Caddyfile` — that deletes its
-> site block and takes it offline. Append, never substitute.
+> **Caddy here is not a system service.** It is `solpro-caddy-1`, a
+> `caddy:2-alpine` container from the stack in `/opt/solpro`, and it is the
+> only thing on the box bound to :80 and :443. There is no
+> `/etc/caddy/Caddyfile` on the host — the config lives at
+> **`/opt/solpro/Caddyfile`**, bind-mounted read-only into the container.
 >
-> For the same reason, do not install nginx here. Caddy already owns :80 and
-> :443; a second web server fighting for those ports is the likeliest way to
-> break solpra.uz.
+> That same file serves **solpra.uz**, which is live. Append to it; never
+> replace it. And do not install nginx — Caddy already owns those ports, and a
+> second web server contending for them is the likeliest way to break solpra.
 
-Back up first, then append [`aytingchi.caddy`](./aytingchi.caddy):
-
-```bash
-sudo cp /etc/caddy/Caddyfile /etc/caddy/Caddyfile.bak.$(date +%F)
-```
+Back up, then append [`aytingchi.caddy`](./aytingchi.caddy):
 
 ```bash
-cat aytingchi.caddy | sudo tee -a /etc/caddy/Caddyfile > /dev/null
+cp /opt/solpro/Caddyfile /opt/solpro/Caddyfile.bak.$(date +%F)
 ```
 
-Check the result parses, and confirm solpra.uz is still in it, before reloading:
+Validate, and confirm solpra survived, **before** reloading:
 
 ```bash
-sudo caddy validate --config /etc/caddy/Caddyfile && grep -c solpra /etc/caddy/Caddyfile
+docker exec solpro-caddy-1 caddy validate --config /etc/caddy/Caddyfile && grep -c solpra.uz /opt/solpro/Caddyfile
 ```
+
+Then reload in place:
 
 ```bash
-sudo systemctl reload caddy && sudo journalctl -u caddy -f --no-pager
+docker exec solpro-caddy-1 caddy reload --config /etc/caddy/Caddyfile
 ```
 
-`reload` is deliberate — unlike `restart` it swaps config without dropping
-connections, so solpra.uz never blinks. Watch for the certificate to be
-obtained; it takes a few seconds. Then verify **both** hosts:
+`caddy reload` swaps the config inside the running container, so solpra.uz
+never drops a connection. `docker compose restart caddy` would briefly
+interrupt it, and `docker compose down` in `/opt/solpro` would take it offline
+outright — neither is needed for a config change.
+
+Watch the certificate arrive, then verify **both** hosts:
+
+```bash
+docker logs -f --tail 50 solpro-caddy-1
+```
 
 ```bash
 curl -sI https://solpra.uz | head -1 && curl -sI https://aytingchi.uz | head -1
 ```
 
-If solpra.uz breaks at any point, roll straight back:
+Roll back at any point with:
 
 ```bash
-sudo cp /etc/caddy/Caddyfile.bak.$(date +%F) /etc/caddy/Caddyfile && sudo systemctl reload caddy
+cp /opt/solpro/Caddyfile.bak.$(date +%F) /opt/solpro/Caddyfile && docker exec solpro-caddy-1 caddy reload --config /etc/caddy/Caddyfile
 ```
+
+### Joining the network
+
+This stack attaches to `solpro_default` as an external network and publishes no
+host ports, so Caddy reaches it by the `thlabs-api` / `thlabs-web` aliases the
+way it already reaches `solpra:4000`. It is a separate compose project, so
+stopping one stack never affects the other.
+
+If `docker compose up` fails with *network solpro_default not found*, the
+solpro stack is down — start it first.
 
 ## 5. First deploy
 
