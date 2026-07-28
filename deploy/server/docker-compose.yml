@@ -53,6 +53,11 @@ services:
       # Loopback only. Caddy on the host proxies to this; exposing 0.0.0.0
       # would publish the API unencrypted alongside the TLS one.
       - "127.0.0.1:3000:3000"
+    volumes:
+      # The app writes its own app/error/audit logs here. Without a volume they
+      # live in the container's writable layer and are discarded on every
+      # deploy, which would take the audit trail with them.
+      - api-logs:/app/logs
     init: true
     healthcheck:
       test:
@@ -73,3 +78,4 @@ services:
 
 volumes:
   db-data:
+  api-logs:

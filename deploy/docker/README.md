@@ -47,12 +47,17 @@ rather than part of startup, so no environment ever gets a predictable
 superuser by accident:
 
 ```bash
-docker compose exec api yarn prisma:seed
+docker compose exec -e SEED_ADMIN_EMAIL=you@example.com -e SEED_ADMIN_PASSWORD='<strong password>' api yarn prisma:seed
 ```
 
-Set `SEED_ADMIN_EMAIL` and `SEED_ADMIN_PASSWORD` in `.env` first — without
-them `prisma/seed.ts` falls back to `admin@thlabs.dev` / `Admin123!`, which is
-fine for a throwaway local database and nowhere else.
+The credentials go on the command, not in `.env`. Variables in `.env` are
+injected when the service starts, so a value added there after the fact never
+reaches `prisma:seed` — it would appear to work while `prisma/seed.ts` quietly
+fell back to `admin@thlabs.dev` / `Admin123!`. Passing them with `-e` makes the
+values explicit every time.
+
+The seed upserts, so re-running it with a new password rotates the account
+rather than failing.
 
 ## Everyday commands
 

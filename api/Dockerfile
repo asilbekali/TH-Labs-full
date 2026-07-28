@@ -32,11 +32,24 @@ RUN yarn install --frozen-lockfile
 
 # ── build: generate the Prisma client, then compile TypeScript ──────────────
 FROM deps AS build
-COPY prisma ./prisma
+# Only the schema, deliberately not the whole prisma/ directory.
+#
+# tsconfig.json sets no `rootDir` and tsconfig.build.json declares no
+# `include`, so tsc compiles every .ts file it finds and infers the common
+# root directory from that set. If prisma/seed.ts is on disk at this point the
+# inferred root becomes /app rather than /app/src, and the output lands at
+# dist/src/main.js instead of dist/main.js — which `node dist/main` then cannot
+# find. Restricting the build context to src/ keeps the inferred root correct.
+#
+# (The same trap applies to `yarn start:prod` outside Docker; the real fix is
+# `"rootDir": "./src"` in tsconfig.json.)
+COPY prisma/schema.prisma ./prisma/schema.prisma
 RUN yarn prisma generate
 COPY tsconfig.json tsconfig.build.json nest-cli.json ./
 COPY src ./src
 RUN yarn build
+# Fail here rather than at container start if the layout ever shifts again.
+RUN test -f dist/main.js
 
 
 # ── runtime ─────────────────────────────────────────────────────────────────
@@ -58,6 +71,12 @@ COPY --chown=node:node docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 # reported as "no such file or directory" against a file that plainly exists.
 RUN sed -i 's/\r$//' /usr/local/bin/docker-entrypoint.sh \
  && chmod +x /usr/local/bin/docker-entrypoint.sh
+
+# src/common/logger/logger.service.ts writes app.log, error.log and audit.log
+# to path.join(process.cwd(), 'logs') and mkdirs it during construction. /app is
+# root-owned, so the unprivileged runtime user cannot create it and Nest dies
+# in the injector with EACCES before it ever listens.
+RUN mkdir -p /app/logs && chown node:node /app/logs
 
 USER node
 EXPOSE 3000

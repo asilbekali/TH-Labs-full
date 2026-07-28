@@ -109,12 +109,18 @@ Verify from anywhere:
 curl https://aytingchi.uz/v1/users/all-users
 ```
 
-Create the SUPERADMIN once (set `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` in
-`.env` first — the defaults in `prisma/seed.ts` are `admin@thlabs.dev` /
-`Admin123!`, which must not be what ships here):
+Create the SUPERADMIN once. Pass the credentials on the command — **not** in
+`.env`, where they would be silently ignored and `prisma/seed.ts` would fall
+back to `admin@thlabs.dev` / `Admin123!`, which must never be what ships here:
 
 ```bash
-docker compose exec api yarn prisma:seed
+docker compose exec -e SEED_ADMIN_EMAIL=you@example.com -e SEED_ADMIN_PASSWORD='<strong password>' api yarn prisma:seed
+```
+
+Confirm it landed as intended before moving on — the fallback is silent:
+
+```bash
+docker compose exec -T db psql -U thlabs -d thlabs -tAc 'select email, role from "User";'
 ```
 
 After this, every push to `main` touching `api/**` deploys on its own.
