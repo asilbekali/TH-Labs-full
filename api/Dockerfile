@@ -32,23 +32,15 @@ RUN yarn install --frozen-lockfile
 
 # ── build: generate the Prisma client, then compile TypeScript ──────────────
 FROM deps AS build
-# Only the schema, deliberately not the whole prisma/ directory.
-#
-# tsconfig.json sets no `rootDir` and tsconfig.build.json declares no
-# `include`, so tsc compiles every .ts file it finds and infers the common
-# root directory from that set. If prisma/seed.ts is on disk at this point the
-# inferred root becomes /app rather than /app/src, and the output lands at
-# dist/src/main.js instead of dist/main.js — which `node dist/main` then cannot
-# find. Restricting the build context to src/ keeps the inferred root correct.
-#
-# (The same trap applies to `yarn start:prod` outside Docker; the real fix is
-# `"rootDir": "./src"` in tsconfig.json.)
-COPY prisma/schema.prisma ./prisma/schema.prisma
+COPY prisma ./prisma
 RUN yarn prisma generate
 COPY tsconfig.json tsconfig.build.json nest-cli.json ./
 COPY src ./src
 RUN yarn build
-# Fail here rather than at container start if the layout ever shifts again.
+# tsconfig.build.json pins rootDir to ./src, so the output layout no longer
+# depends on which .ts files happen to be in the program. This asserts that
+# held: without it the failure mode is an image that builds cleanly and then
+# exits at startup on MODULE_NOT_FOUND, which is a much worse place to find out.
 RUN test -f dist/main.js
 
 
