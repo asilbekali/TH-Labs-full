@@ -44,33 +44,36 @@ export default function LanguageSelect({
 
   return (
     <div ref={ref} className="relative">
-      <label className="mb-1.5 block text-xs font-medium text-white/50">{label}</label>
+      <label className="mb-1.5 block font-mono text-xs uppercase tracking-[0.14em] text-text-3">
+        {label}
+      </label>
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center justify-between rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-left text-sm transition-colors hover:border-white/25"
+        aria-expanded={open}
+        className="focus-ring flex w-full items-center justify-between rounded-xl border border-line bg-white/[0.03] px-4 py-3 text-left text-sm transition-colors hover:border-line-strong"
       >
         <span className="flex items-center gap-2.5">
           <span className="text-base">{selected?.flag ?? '🌐'}</span>
-          <span className="font-medium text-white">{selected?.name ?? 'Select…'}</span>
+          <span className="font-mono font-medium text-white">{selected?.name ?? 'Select…'}</span>
           {selected && 'native' in selected && (
-            <span className="text-white/40">· {(selected as Language).native}</span>
+            <span className="text-text-3">· {(selected as Language).native}</span>
           )}
         </span>
-        <svg viewBox="0 0 24 24" className={`h-4 w-4 text-white/40 transition-transform ${open ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" strokeWidth="2">
+        <svg viewBox="0 0 24 24" className={`h-4 w-4 text-text-3 transition-transform ${open ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" strokeWidth="2">
           <path d="M6 9l6 6 6-6" />
         </svg>
       </button>
 
       {open && (
-        <div className="absolute z-30 mt-2 w-full overflow-hidden rounded-xl border border-white/10 bg-ink-2/95 shadow-2xl backdrop-blur-xl">
-          <div className="border-b border-white/5 p-2">
+        <div className="z-cards absolute mt-2 w-full overflow-hidden rounded-xl border border-line bg-surface-2/95 shadow-2xl backdrop-blur-xl">
+          <div className="border-b border-line p-2">
             <input
               autoFocus
               value={q}
               onChange={(e) => setQ(e.target.value)}
               placeholder="Search languages…"
-              className="w-full rounded-lg bg-white/5 px-3 py-2 text-sm text-white outline-none placeholder:text-white/30"
+              className="w-full rounded-lg bg-white/5 px-3 py-2 text-sm text-white outline-none placeholder:text-text-3"
             />
           </div>
           <div className="max-h-64 overflow-y-auto p-1.5">
@@ -102,7 +105,7 @@ export default function LanguageSelect({
               />
             ))}
             {filtered.length === 0 && (
-              <div className="px-3 py-6 text-center text-sm text-white/40">
+              <div className="px-3 py-6 text-center text-sm text-text-3">
                 No matches
               </div>
             )}
@@ -131,12 +134,12 @@ function Row({
       type="button"
       onClick={onClick}
       className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm transition-colors ${
-        active ? 'bg-violet-500/15 text-white' : 'text-white/75 hover:bg-white/5'
+        active ? 'bg-accent-dim text-white' : 'text-text-2 hover:bg-white/5'
       }`}
     >
       <span className="text-base">{flag}</span>
-      <span className="font-medium">{name}</span>
-      <span className="ml-auto text-xs text-white/35">{native}</span>
+      <span className="font-mono font-medium">{name}</span>
+      <span className="ml-auto text-xs text-text-3">{native}</span>
     </button>
   )
 }

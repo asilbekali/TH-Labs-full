@@ -24,6 +24,38 @@ model User {
   hashedRefreshToken String?
   createdAt          DateTime @default(now())
   updatedAt          DateTime @default(now()) @updatedAt
+
+  handoffCodes HandoffCode[]
+}
+
+/// A single-use ticket that carries a session across an origin boundary.
+///
+/// The landing page (aytingchi.uz) and the Studio (*.modal.run) are different
+/// origins, so a cookie cannot be shared and the tokens themselves must not
+/// travel in the redirect URL — a URL lands in browser history, the address
+/// bar, and the destination's ingress logs, and the refresh token it would
+/// carry is good for JWT_REFRESH_EXPIRES_IN (7d by default) of re-minting.
+///
+/// So the redirect carries one of these instead: random, short-lived, and
+/// consumed on first use. A copy recovered from a log line is already dead.
+///
+/// `codeHash` — the SHA-256 of the code, never the code itself, so read access
+/// to this table does not yield anything redeemable. Same reasoning as storing
+/// password hashes; the lookup is by hash on the way in.
+model HandoffCode {
+  id        Int       @id @default(autoincrement())
+  codeHash  String    @unique
+  userId    Int
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  /// Set by the atomic claim in AuthService.exchangeHandoffCode. Non-null
+  /// means spent — rows are kept (not deleted) so a replay is distinguishable
+  /// from a code that never existed, and swept later by deleteExpiredCodes.
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([expiresAt])
+  @@index([userId])
 }
 
 model Admin {

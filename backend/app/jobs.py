@@ -57,6 +57,7 @@ class JobManager:
     # ── creation ──────────────────────────────────────────────────────────
     def create(self, options: DubOptions, input_video: Path,
                scenario: str, filename: str | None,
+               owner_id: int | None = None,
                force_simulate: bool = False) -> Job:
         job_id = uuid.uuid4().hex[:12]
         now = time.time()
@@ -65,7 +66,8 @@ class JobManager:
             for k, l in _STAGE_DEFS
         ]
         simulated = force_simulate or self._orch.is_simulated(options)
-        job = Job(id=job_id, options=options, filename=filename,
+        job = Job(id=job_id, owner_id=owner_id,
+                  options=options, filename=filename,
                   simulated=simulated,
                   stages=stages, result=JobResult(),
                   created_at=now, updated_at=now)
