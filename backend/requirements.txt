@@ -5,6 +5,10 @@ uvicorn[standard]>=0.29
 python-multipart>=0.0.9
 pydantic>=2.6
 pydantic-settings>=2.2
+# Verifies the HS256 tokens minted by the NestJS account API (app/auth.py).
+# Required, not optional: without it /api/jobs returns 503 rather than running
+# the GPU pipeline for anyone who asks.
+PyJWT>=2.8
 
 # ── Optional heavy ML stack (enables REAL inference) ──────────────────────
 # These are intentionally NOT installed by default. The pipeline imports them

@@ -7,15 +7,47 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 
 import { AppModule } from './app.module';
 
+// Browser origins allowed to call this API directly. The Studio needs it to
+// redeem a handoff code (POST /v1/auth/handoff/exchange) and to refresh, both
+// of which run in the browser from a different origin.
+//
+// The landing page is NOT in this list and does not need to be: its browser
+// code only ever talks to its own Next.js route handlers, which reach this API
+// server-side where CORS does not apply.
+//
+// Override with a comma-separated CORS_ORIGINS when an origin changes — the
+// Studio's Modal URL in particular is account-scoped and will differ per
+// deployment.
+const DEFAULT_CORS_ORIGINS = [
+  'https://isoqovjorabek2--th-labs-dubbing-web.modal.run',
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+  'http://localhost:4173',
+];
+
+function corsOrigins(): string[] {
+  const raw = process.env.CORS_ORIGINS?.trim();
+  if (!raw) return DEFAULT_CORS_ORIGINS;
+  return raw
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean);
+}
+
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
   const PORT = Number(process.env.PORT) || 3000;
   const HOST = process.env.HOST || 'localhost';
 
-  // Enable CORS
+  // An allowlist, not `origin: true`. Reflecting whatever Origin arrives —
+  // which is what `true` does — combined with credentials means any page on
+  // the internet can make credentialed cross-origin calls here and read the
+  // replies. Auth lives behind bearer tokens rather than cookies, so that was
+  // not immediately exploitable, but it removes a layer that costs nothing to
+  // keep.
   app.enableCors({
-    origin: true,
+    origin: corsOrigins(),
     credentials: true,
   });
 

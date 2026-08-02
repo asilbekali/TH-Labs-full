@@ -53,6 +53,12 @@ services:
 
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-15m}
       JWT_REFRESH_EXPIRES_IN: ${JWT_REFRESH_EXPIRES_IN:-7d}
+
+      # Browser origins allowed to call this API cross-origin — the Studio,
+      # which redeems handoff codes and refreshes from the browser. Empty
+      # falls back to the allowlist in src/main.ts.
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+
       NODE_ENV: production
       PORT: "3000"
       # Only used to print the banner URL on boot; the server binds all

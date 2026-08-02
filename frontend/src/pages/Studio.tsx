@@ -7,7 +7,9 @@ import StageTimeline from '../components/StageTimeline'
 import VideoCompare from '../components/VideoCompare'
 import SegmentTable from '../components/SegmentTable'
 import ResultMetrics from '../components/ResultMetrics'
-import { createJob, getHealth, getLanguages, pollJob, subscribeJob } from '../lib/api'
+import SignInRequired from '../components/SignInRequired'
+import { AuthRequiredError, createJob, getHealth, getLanguages, pollJob, subscribeJob } from '../lib/api'
+import { useSession } from '../lib/session-context'
 import type { Health, Job, Language } from '../lib/types'
 
 const QUALITIES = [
@@ -34,7 +36,12 @@ export default function Studio() {
   const [job, setJob] = useState<Job | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Set when a call comes back 401 past the point authFetch can refresh —
+  // i.e. the refresh token is gone or revoked too. Swaps the whole page for
+  // the sign-in prompt rather than leaving a Studio that cannot do anything.
+  const [expired, setExpired] = useState(false)
   const unsubRef = useRef<null | (() => void)>(null)
+  const { invalidate } = useSession()
 
   useEffect(() => {
     getLanguages().then(setLanguages).catch(() => {})
@@ -90,7 +97,12 @@ export default function Studio() {
       )
       unsubRef.current = stopSse
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to start job')
+      if (e instanceof AuthRequiredError) {
+        invalidate()
+        setExpired(true)
+      } else {
+        setError(e instanceof Error ? e.message : 'Failed to start job')
+      }
     } finally {
       setBusy(false)
     }
@@ -102,17 +114,23 @@ export default function Studio() {
     setError(null)
   }
 
+  if (expired) {
+    return (
+      <SignInRequired reason="Your session expired while you were away. Sign in again to keep dubbing." />
+    )
+  }
+
   return (
-    <div className="wrap pt-12 pb-8">
+    <div className="wrap pb-8 pt-4">
       <div className="mb-8">
-        <span className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-violet-300/80">
-          <span className="h-px w-6 bg-gradient-to-r from-violet-400 to-cyan-400" />
+        <span className="inline-flex items-center gap-2 font-mono text-xs uppercase tracking-[0.18em] text-text-3">
+          <span className="h-px w-6 bg-accent" />
           Dubbing Studio
         </span>
-        <h1 className="mt-3 text-3xl font-bold tracking-tight sm:text-4xl">
-          Dub a clip, <span className="gradient-text">keep the voice</span>
+        <h1 className="mt-3 text-3xl font-semibold tracking-tight sm:text-4xl">
+          Dub a clip, <span className="text-accent">keep the voice</span>
         </h1>
-        <p className="mt-2 max-w-2xl text-white/55">
+        <p className="mt-3 max-w-2xl text-text-2">
           Upload a clip or run the built-in sample, pick a target language, keep
           the original voice, and optionally sync the lips. Watch the pipeline
           run stage by stage.
@@ -125,7 +143,7 @@ export default function Studio() {
           <div className="space-y-3">
             <GroupLabel n="01">Source</GroupLabel>
             <Uploader file={file} onFile={setFile} disabled={running} />
-            <label className="flex cursor-pointer items-center gap-2.5 text-sm text-white/70">
+            <label className="flex cursor-pointer items-center gap-2.5 text-sm text-text-2">
               <input
                 type="checkbox"
                 checked={isSampleRun}
@@ -134,13 +152,13 @@ export default function Studio() {
                   setUseSample(e.target.checked)
                   if (e.target.checked) setFile(null)
                 }}
-                className="h-4 w-4 accent-violet-500"
+                className="h-4 w-4 accent-[var(--accent)]"
               />
               Use the built-in sample clip
             </label>
           </div>
 
-          <div className="space-y-3 border-t border-white/5 pt-5">
+          <div className="space-y-3 border-t border-line pt-5">
             <GroupLabel n="02">Languages</GroupLabel>
             <LanguageSelect
               label="Source language"
@@ -156,7 +174,7 @@ export default function Studio() {
               onChange={setTargetLang}
             />
             {sampleLangNote && (
-              <p className="rounded-lg border border-amber-400/20 bg-amber-400/[0.05] px-3 py-2 text-xs text-amber-200/80">
+              <p className="rounded-lg border border-warn/20 bg-warn/[0.05] px-3 py-2 text-xs text-warn/80">
                 The sample ships hand-authored translations for UZ, RU, ES, FR, DE.
                 Pick one of those to hear a real translation, or upload your own clip
                 for full NLLB translation.
@@ -164,7 +182,7 @@ export default function Studio() {
             )}
           </div>
 
-          <div className="space-y-2.5 border-t border-white/5 pt-5">
+          <div className="space-y-2.5 border-t border-line pt-5">
             <GroupLabel n="03">Options</GroupLabel>
             <OptionToggle
               checked={voiceClone}
@@ -183,30 +201,31 @@ export default function Studio() {
             <OptionToggle
               checked={lipSync}
               onChange={setLipSync}
-              accent="cyan"
               title="Lip sync (optional)"
               description="Reshape the speaker's mouth to match the translated speech (Wav2Lip)."
               icon={<path d="M3 12c3-3 15-3 18 0-3 4-15 4-18 0zM7 12h10" />}
             />
           </div>
 
-          <div className="space-y-3 border-t border-white/5 pt-5">
+          <div className="space-y-3 border-t border-line pt-5">
             <GroupLabel n="04">Quality</GroupLabel>
-            <div className="flex rounded-xl border border-white/10 bg-white/[0.02] p-1">
+            <div className="flex rounded-xl border border-line bg-white/[0.02] p-1">
               {QUALITIES.map((q) => (
                 <button
                   key={q.key}
                   onClick={() => setQuality(q.key)}
                   disabled={running}
-                  className={`flex-1 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
-                    quality === q.key ? 'bg-violet-500/20 text-white shadow-[inset_0_0_0_1px_rgba(168,85,247,0.4)]' : 'text-white/50 hover:text-white'
+                  className={`focus-ring flex-1 rounded-lg px-3 py-2 font-mono text-sm font-medium transition-colors ${
+                    quality === q.key
+                      ? 'bg-accent-dim text-white shadow-[inset_0_0_0_1px_var(--accent)]'
+                      : 'text-text-3 hover:text-white'
                   }`}
                 >
                   {q.label}
                 </button>
               ))}
             </div>
-            <p className="text-[11px] leading-relaxed text-white/40">
+            <p className="text-[11px] leading-relaxed text-text-3">
               {quality === 'fast' && 'Fastest — skips separation & voice cloning. Best for long videos.'}
               {quality === 'balanced' && 'Balanced — separation + voice cloning on.'}
               {quality === 'studio' && 'Highest fidelity — full pipeline. Best quality, slowest.'}
@@ -216,14 +235,14 @@ export default function Studio() {
           <button
             onClick={start}
             disabled={busy || running}
-            className="btn-primary w-full py-3.5 text-sm disabled:opacity-60"
+            className="btn-primary focus-ring w-full py-3.5 text-sm"
           >
             {busy ? 'Starting…' : running ? `Dubbing… ${overall}%` : 'Start dubbing →'}
           </button>
 
           {health && (
-            <p className="flex items-center justify-center gap-1.5 text-center text-[11px] text-white/35">
-              <span className={`h-1.5 w-1.5 rounded-full ${health.stages.some((s) => s.mode === 'real') ? 'bg-emerald-400' : 'bg-amber-400'}`} />
+            <p className="flex items-center justify-center gap-1.5 text-center font-mono text-[11px] text-text-3">
+              <span className={`h-1.5 w-1.5 rounded-full ${health.stages.some((s) => s.mode === 'real') ? 'bg-ok' : 'bg-warn'}`} />
               {health.stages.filter((s) => s.mode === 'real').length > 0
                 ? 'Pipeline online'
                 : 'Simulation mode'}
@@ -234,7 +253,7 @@ export default function Studio() {
         {/* ── Result / progress panel ──────────────────────────────── */}
         <div className="min-h-[30rem]">
           {error && (
-            <div className="mb-4 rounded-2xl border border-red-400/30 bg-red-500/10 px-5 py-4 text-sm text-red-200">
+            <div className="mb-4 rounded-xl border border-live/30 bg-live/10 px-5 py-4 text-sm text-live">
               {error}
             </div>
           )}
@@ -247,24 +266,24 @@ export default function Studio() {
               <div className="card flex flex-wrap items-center justify-between gap-3 p-5">
                 <div>
                   <div className="flex items-center gap-2">
-                    <span className="text-sm font-semibold text-white">
+                    <span className="font-mono text-sm font-medium text-white">
                       {running ? 'Running pipeline' : completed ? 'Dub complete' : failed ? 'Pipeline failed' : 'Queued'}
                     </span>
-                    <span className={`rounded-full px-2 py-0.5 text-[10px] uppercase tracking-wide ${job.simulated ? 'bg-amber-400/15 text-amber-300' : 'bg-emerald-400/15 text-emerald-300'}`}>
+                    <span className={`rounded-full px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide ${job.simulated ? 'bg-warn/15 text-warn' : 'bg-ok/15 text-ok'}`}>
                       {job.simulated ? 'simulation' : 'live inference'}
                     </span>
                   </div>
-                  <div className="mt-1 font-mono text-xs text-white/40">
+                  <div className="mt-1 font-mono text-xs text-text-3">
                     job {job.id} · {job.filename ?? 'sample'} · → {targetLang.toUpperCase()}
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
                   <div className="text-right">
-                    <div className="text-2xl font-bold text-white">{overall}%</div>
-                    <div className="text-[10px] text-white/40">overall</div>
+                    <div className="font-mono text-2xl font-semibold text-white">{overall}%</div>
+                    <div className="font-mono text-[10px] text-text-3">overall</div>
                   </div>
                   {(completed || failed) && (
-                    <button onClick={reset} className="btn-ghost px-4 py-2 text-sm">New dub</button>
+                    <button onClick={reset} className="btn-ghost focus-ring px-4 py-2 text-sm">New dub</button>
                   )}
                 </div>
               </div>
@@ -285,7 +304,7 @@ export default function Studio() {
                     <a
                       href={job.result.output_url}
                       download
-                      className="btn-primary inline-flex px-5 py-2.5 text-sm"
+                      className="btn-primary focus-ring inline-flex px-5 py-2.5 text-sm"
                     >
                       ↓ Download dubbed video
                     </a>
@@ -297,7 +316,9 @@ export default function Studio() {
 
               {/* stage timeline */}
               <div>
-                <h3 className="mb-3 text-sm font-semibold text-white/70">Pipeline stages</h3>
+                <h3 className="mb-3 font-mono text-xs uppercase tracking-[0.14em] text-text-3">
+                  Pipeline stages
+                </h3>
                 <StageTimeline stages={job.stages} />
               </div>
             </div>
@@ -308,31 +329,38 @@ export default function Studio() {
   )
 }
 
+// Step numbers use the pixel font, matching how the landing page numbers its
+// "how it works" steps.
 function GroupLabel({ n, children }: { n: string; children: React.ReactNode }) {
   return (
-    <div className="flex items-center gap-2">
-      <span className="font-mono text-[10px] text-violet-300/70">{n}</span>
-      <span className="text-xs font-semibold uppercase tracking-[0.14em] text-white/45">{children}</span>
+    <div className="flex items-center gap-2.5">
+      <span className="font-pixel text-[9px] text-accent">{n}</span>
+      <span className="font-mono text-xs uppercase tracking-[0.14em] text-text-3">{children}</span>
     </div>
   )
 }
 
 function EmptyState({ onSample }: { onSample: () => void }) {
   return (
-    <div className="card grid min-h-[30rem] place-items-center p-10 text-center">
-      <div>
-        <div className="mx-auto mb-5 h-16 w-16 rounded-2xl bg-gradient-to-br from-violet-500/25 to-cyan-400/10 p-4">
-          <svg viewBox="0 0 24 24" className="h-full w-full text-violet-200" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+    <div className="card relative grid min-h-[30rem] place-items-center overflow-hidden p-10 text-center">
+      {/* Dither field — the landing page's texture motif. */}
+      <div
+        aria-hidden="true"
+        className="dither-dots z-base pointer-events-none absolute inset-0 text-accent/20 [mask-image:radial-gradient(circle_at_50%_45%,black,transparent_70%)]"
+      />
+      <div className="z-content relative">
+        <div className="mx-auto mb-5 grid h-16 w-16 place-items-center rounded-xl border border-line bg-accent-dim p-4">
+          <svg viewBox="0 0 24 24" className="h-full w-full text-accent" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
             <path d="M3 12h3l2-6 3 15 3-12 2 5h4" />
           </svg>
         </div>
-        <h3 className="text-lg font-semibold text-white">Your dub will appear here</h3>
-        <p className="mx-auto mt-2 max-w-sm text-sm text-white/50">
+        <h3 className="text-lg font-medium text-white">Your dub will appear here</h3>
+        <p className="mx-auto mt-3 max-w-sm text-sm leading-relaxed text-text-2">
           Configure the pipeline on the left and hit <span className="text-white">Start dubbing</span>.
           Every stage — transcription, translation, voice cloning, sync — streams
           live.
         </p>
-        <button onClick={onSample} className="btn-ghost mt-6 px-5 py-2.5 text-sm">
+        <button onClick={onSample} className="btn-ghost focus-ring mt-6 px-5 py-2.5 text-sm">
           Load the sample clip
         </button>
       </div>

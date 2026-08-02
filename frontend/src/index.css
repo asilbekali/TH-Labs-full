@@ -1,47 +1,137 @@
 @import 'tailwindcss';
 
+/* Fonts are loaded from index.html, not with an @import here — a CSS @import
+   is render-blocking and cannot start until this stylesheet itself has been
+   fetched and parsed, which serialises two round-trips. The <link> tags there
+   are discovered by the preload scanner immediately. Three families, matching
+   the landing page's next/font setup role for role:
+     Inter          — body / long-form prose
+     JetBrains Mono — every heading, nav link, button, label, stat
+     Press Start 2P — the TH-LABS wordmark and step numbers, nothing else */
+
 /* ─────────────────────────────────────────────────────────────────────────
-   TH-Labs design tokens (Tailwind v4 CSS-first theme)
+   TH-LABS design tokens.
+
+   Kept deliberately in lockstep with the landing page's app/globals.css —
+   same names, same values. The Studio and the landing page are one product
+   across two codebases, and a user crosses from one to the other mid-session,
+   so a drift here shows up as the seam in that handoff. Change both or
+   neither.
+
+   This replaces the earlier palette (#05050a ink + a violet→fuchsia→cyan
+   `--grad-brand`), which was the previous brand. The current language is a
+   single violet accent on near-black, with colour reserved for state.
    ───────────────────────────────────────────────────────────────────────── */
-@theme {
+:root {
+  --bg: #050607;
+  --surface: #0a0c10;
+  --surface-2: #101318;
+  --line: rgba(255, 255, 255, 0.08);
+  --line-strong: rgba(255, 255, 255, 0.16);
+  --text: #ffffff;
+  --text-2: rgba(255, 255, 255, 0.62);
+  --text-3: rgba(255, 255, 255, 0.38);
+  --accent: #8b5cf6;
+  --accent-dim: rgba(139, 92, 246, 0.12);
+  --live: #ff3b30;
+
+  /* Pipeline state. The landing page is marketing and never needs these; the
+     Studio reports six stages that each succeed, warn, or fail, so it does.
+     Muted on purpose — they read as status, not as brand. */
+  --ok: #34d399;
+  --warn: #fbbf24;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-text: var(--text);
+  --color-text-2: var(--text-2);
+  --color-text-3: var(--text-3);
+  --color-accent: var(--accent);
+  --color-accent-dim: var(--accent-dim);
+  --color-live: var(--live);
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  /* Alias kept so anything still saying bg-ink resolves instead of silently
+     rendering transparent. */
+  --color-ink: var(--bg);
+
   --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI',
     Roboto, Helvetica, Arial, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', 'Fira Code', monospace;
-
-  --color-ink: #05050a;
-  --color-ink-2: #0a0a14;
-  --color-surface: #10101c;
-  --color-surface-2: #16162a;
-  --color-line: #23233a;
-
-  --color-violet: #8b5cf6;
-  --color-fuchsia: #d946ef;
-  --color-cyan: #22d3ee;
-  --color-accent: #a855f7;
-
-  --color-muted: #8b8ba7;
+  --font-pixel: 'Press Start 2P', ui-monospace, monospace;
 }
 
-:root {
-  color-scheme: dark;
-  --grad-brand: linear-gradient(120deg, #8b5cf6 0%, #d946ef 50%, #22d3ee 100%);
+/* ── Depth / z-index scale ───────────────────────────────────────────────
+   Mirrors the landing page's scale. Use ONLY these, never a bare z-40. */
+@utility z-base { z-index: 0; }
+@utility z-glow { z-index: 10; }
+@utility z-grid { z-index: 20; }
+@utility z-deco { z-index: 30; }
+@utility z-content { z-index: 40; }
+@utility z-cards { z-index: 50; }
+@utility z-nav { z-index: 60; }
+@utility z-cursor { z-index: 70; }
+@utility z-overlay { z-index: 80; }
+
+/* Safe-area padding for notched devices. */
+@utility pt-safe { padding-top: env(safe-area-inset-top); }
+@utility pb-safe { padding-bottom: env(safe-area-inset-bottom); }
+
+/* Halftone / dither dot field. `currentColor` drives intensity so a wrapper
+   can tint and mask it. */
+@utility dither-dots {
+  background-image: radial-gradient(currentColor 1px, transparent 1.4px);
+  background-size: 6px 6px;
 }
 
-* { border-color: var(--color-line); }
+html {
+  background: var(--bg);
+  scroll-behavior: smooth;
+}
 
-html { scroll-behavior: smooth; }
-
-/* On large / high-res displays, scale the whole rem-based design up so it
-   fills the screen and stays readable instead of floating in a narrow column.
-   Everything (type, spacing, radii, max-widths) is rem-based, so it grows
-   proportionally — cards keep their relationships and never collide. */
+/* On large / high-res displays, scale the rem-based design up so it fills the
+   screen instead of floating in a narrow column. */
 @media (min-width: 1920px) { html { font-size: 17px; } }
 @media (min-width: 2560px) { html { font-size: 19px; } }
 @media (min-width: 3440px) { html { font-size: 21px; } }
 
-/* Page container — centered, fluid padding, and a max-width that steps up on
-   wide screens. Replaces the fixed `max-w-7xl` so the layout adapts to any
-   display width. */
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-feature-settings: 'ss01';
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow-x: hidden;
+}
+
+/* Every heading is monospace, matching the landing page's voice. .font-pixel
+   on the wordmark still wins — utilities outrank element selectors. */
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-mono), ui-monospace, monospace;
+}
+
+::selection {
+  background: rgba(139, 92, 246, 0.3);
+  color: #fff;
+}
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: #23262d;
+  border-radius: 9999px;
+  border: 2px solid var(--bg);
+}
+::-webkit-scrollbar-thumb:hover { background: #333741; }
+
+/* Page container — centered, fluid padding, stepping up on wide screens. */
 .wrap {
   margin-inline: auto;
   max-width: 80rem;
@@ -51,154 +141,123 @@ html { scroll-behavior: smooth; }
 @media (min-width: 1920px) { .wrap { max-width: 100rem; } }
 @media (min-width: 2560px) { .wrap { max-width: 112rem; } }
 
-body {
-  margin: 0;
-  background: var(--color-ink);
-  color: #eef0f6;
-  font-family: var(--font-sans);
-  -webkit-font-smoothing: antialiased;
-  text-rendering: optimizeLegibility;
-  overflow-x: hidden;
-}
-
-/* Subtle site-wide backdrop: radial glows + fine grid */
-body::before {
-  content: '';
-  position: fixed;
-  inset: 0;
-  z-index: -2;
-  background:
-    radial-gradient(60rem 60rem at 12% -10%, rgba(139, 92, 246, 0.18), transparent 60%),
-    radial-gradient(50rem 50rem at 100% 0%, rgba(34, 211, 238, 0.12), transparent 55%),
-    radial-gradient(55rem 55rem at 50% 120%, rgba(217, 70, 239, 0.12), transparent 60%);
-}
-body::after {
-  content: '';
-  position: fixed;
-  inset: 0;
-  z-index: -2;
-  background-image:
-    linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
-  background-size: 46px 46px;
-  mask-image: radial-gradient(circle at 50% 30%, black, transparent 85%);
-}
-
-::selection { background: rgba(168, 85, 247, 0.35); }
-
-::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb {
-  background: #2a2a44;
-  border-radius: 9999px;
-  border: 2px solid var(--color-ink);
-}
-::-webkit-scrollbar-thumb:hover { background: #3a3a5c; }
-
-/* ── Reusable component classes ─────────────────────────────────────────── */
+/* ── Reusable component classes ──────────────────────────────────────────
+   Same names the Studio already used, restyled to the current language. The
+   gradient fills are gone: surfaces are flat, borders do the separating, and
+   the accent appears on hover and active state rather than at rest. */
 @layer components {
+  /* Was a violet→fuchsia→cyan gradient fill. The wordmark is now the pixel
+     font at full white, so this is only for the rare inline accent word. */
   .gradient-text {
-    background: var(--grad-brand);
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
+    color: var(--accent);
   }
 
   .glass {
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02));
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    backdrop-filter: blur(14px);
+    background: rgba(10, 12, 16, 0.72);
+    border: 1px solid var(--line);
+    backdrop-filter: blur(16px);
   }
 
   .card {
-    background: linear-gradient(180deg, rgba(22, 22, 42, 0.7), rgba(16, 16, 28, 0.7));
-    border: 1px solid var(--color-line);
-    border-radius: 1.25rem;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 0.875rem;
   }
 
   .card-hover {
-    transition: transform 0.3s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.3s, box-shadow 0.3s;
+    transition: border-color 0.25s ease, background-color 0.25s ease;
   }
   .card-hover:hover {
-    transform: translateY(-4px);
-    border-color: rgba(168, 85, 247, 0.5);
-    box-shadow: 0 20px 60px -20px rgba(139, 92, 246, 0.45);
+    border-color: var(--line-strong);
+    background: var(--surface-2);
   }
 
+  /* White pill, black label — the landing page's primary button. */
   .btn-primary {
-    position: relative;
-    background: var(--grad-brand);
-    background-size: 200% 200%;
-    color: white;
-    font-weight: 600;
+    background: #fff;
+    color: #000;
+    font-family: var(--font-mono), ui-monospace, monospace;
+    font-weight: 500;
     border-radius: 9999px;
-    box-shadow: 0 10px 40px -12px rgba(168, 85, 247, 0.7);
-    transition: transform 0.2s, box-shadow 0.3s, background-position 0.6s;
+    transition: box-shadow 0.25s ease, transform 0.15s ease, opacity 0.2s ease;
   }
-  .btn-primary:hover {
-    transform: translateY(-2px);
-    background-position: 100% 50%;
-    box-shadow: 0 16px 50px -12px rgba(168, 85, 247, 0.9);
+  .btn-primary:hover:not(:disabled) {
+    box-shadow: 0 0 24px rgba(139, 92, 246, 0.5);
   }
-  .btn-primary:active { transform: translateY(0); }
+  .btn-primary:active:not(:disabled) { transform: translateY(1px); }
+  .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
 
   .btn-ghost {
-    border: 1px solid var(--color-line);
+    border: 1px solid var(--line);
     border-radius: 9999px;
-    color: #d6d9e6;
+    color: var(--text-2);
+    font-family: var(--font-mono), ui-monospace, monospace;
     transition: border-color 0.2s, background 0.2s, color 0.2s;
   }
-  .btn-ghost:hover {
-    border-color: rgba(168, 85, 247, 0.6);
-    background: rgba(168, 85, 247, 0.08);
-    color: white;
+  .btn-ghost:hover:not(:disabled) {
+    border-color: var(--line-strong);
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text);
   }
+  .btn-ghost:disabled { opacity: 0.4; cursor: not-allowed; }
 
   .chip {
-    border: 1px solid var(--color-line);
+    border: 1px solid var(--line);
     background: rgba(255, 255, 255, 0.03);
     border-radius: 9999px;
+    font-family: var(--font-mono), ui-monospace, monospace;
+  }
+
+  /* Focus ring used across interactive elements. */
+  .focus-ring {
+    outline: none;
+  }
+  .focus-ring:focus-visible {
+    box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px rgba(255, 255, 255, 0.6);
   }
 }
 
-/* ── Keyframes ──────────────────────────────────────────────────────────── */
-@keyframes float {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-12px); }
+/* ── Keyframes ───────────────────────────────────────────────────────────
+   Carried over from the landing page so shared motion reads the same. */
+@keyframes wave-bar {
+  0%, 100% { transform: scaleY(0.25); }
+  50% { transform: scaleY(1); }
 }
-@keyframes pulse-glow {
-  0%, 100% { opacity: 0.6; }
-  50% { opacity: 1; }
-}
+.animate-wave-bar { animation: wave-bar 1.4s ease-in-out infinite; }
+
 @keyframes marquee {
   from { transform: translateX(0); }
   to { transform: translateX(-50%); }
 }
-@keyframes wave {
-  0%, 100% { transform: scaleY(0.35); }
-  50% { transform: scaleY(1); }
-}
-@keyframes dash {
-  to { stroke-dashoffset: -1000; }
-}
-@keyframes shimmer {
-  100% { transform: translateX(100%); }
-}
-@keyframes spin-slow { to { transform: rotate(360deg); } }
+.animate-marquee { animation: marquee var(--marquee-duration, 34s) linear infinite; }
 
-.animate-float { animation: float 6s ease-in-out infinite; }
-.animate-marquee { animation: marquee 40s linear infinite; }
-.animate-spin-slow { animation: spin-slow 18s linear infinite; }
-.flow-dash {
-  stroke-dasharray: 6 10;
-  animation: dash 24s linear infinite;
+@keyframes shimmer {
+  from { transform: translateX(-120%) skewX(-12deg); }
+  to { transform: translateX(220%) skewX(-12deg); }
 }
+.animate-shimmer { animation: shimmer 0.9s ease-out; }
+
+@keyframes float-bob {
+  0%, 100% { transform: translate3d(0, 0, 0); }
+  50% { transform: translate3d(0, var(--float-distance, -12px), 0); }
+}
+.animate-float {
+  animation: float-bob var(--float-duration, 7s) ease-in-out infinite;
+  animation-delay: var(--float-delay, 0s);
+}
+
+@keyframes spin-slow { to { transform: rotate(360deg); } }
+.animate-spin-slow { animation: spin-slow 44s linear infinite; }
+.animate-spin-slower { animation: spin-slow 90s linear infinite; }
 
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
-    animation-duration: 0.001ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.001ms !important;
-    scroll-behavior: auto !important;
+  .animate-wave-bar,
+  .animate-marquee,
+  .animate-shimmer,
+  .animate-float,
+  .animate-spin-slow,
+  .animate-spin-slower {
+    animation: none !important;
   }
+  html { scroll-behavior: auto; }
 }
