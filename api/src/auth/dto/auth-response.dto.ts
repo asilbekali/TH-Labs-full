@@ -14,10 +14,9 @@ export class AuthResponseDto {
   accessToken!: string;
 
   @ApiProperty({
-    description: 'Long-lived token used to obtain a new access token',
+    type: AuthUserDto,
+    description:
+      'The refresh token is delivered as an httpOnly cookie, not in this body.',
   })
-  refreshToken!: string;
-
-  @ApiProperty({ type: AuthUserDto })
   user!: AuthUserDto;
 }
