@@ -3,10 +3,24 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#07070d" />
-    <meta name="description" content="TH-Labs — identity-preserving AI video dubbing. Whisper ASR, NLLB translation, OmniVoice voice cloning, optional lip sync." />
-    <title>TH-Labs · AI Dubbing with Voice Preservation</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <!-- Matches the landing page's --bg (#050607) so the browser chrome does
+         not flash a different dark on the way in from there. -->
+    <meta name="theme-color" content="#050607" />
+    <meta name="description" content="TH-LABS — identity-preserving AI video dubbing. Whisper ASR, NLLB translation, OmniVoice voice cloning, optional lip sync." />
+
+    <!-- Same three families the landing page loads via next/font: Inter for
+         prose, JetBrains Mono for headings and UI, Press Start 2P for the
+         wordmark. Loaded here rather than with an @import in index.css so the
+         preload scanner can start them without waiting on the stylesheet. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Press+Start+2P&display=swap"
+    />
+
+    <title>TH-LABS · AI Dubbing with Voice Preservation</title>
   </head>
   <body>
     <div id="root"></div>

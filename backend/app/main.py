@@ -1,12 +1,17 @@
 """FastAPI application — the TH-Labs dubbing API.
 
 Endpoints
-    GET  /api/health            → mode + per-stage engine status
-    GET  /api/languages         → supported languages
+    GET  /api/health            → mode + per-stage engine status      (public)
+    GET  /api/languages         → supported languages                 (public)
+    GET  /api/session           → who the bearer token belongs to     (auth)
     POST /api/jobs              → create a dubbing job (upload or ?sample=1)
-    GET  /api/jobs/{id}         → job snapshot
-    GET  /api/jobs/{id}/events  → SSE live pipeline progress
+    GET  /api/jobs/{id}         → job snapshot                        (auth, owner)
+    GET  /api/jobs/{id}/events  → SSE live pipeline progress          (auth, owner)
     /media/...                  → served source & dubbed media
+
+Auth: everything under /api/jobs requires a bearer token issued by the NestJS
+account API — see app/auth.py. health and languages stay public so the landing
+page and uptime checks can read status without a session.
 """
 from __future__ import annotations
 
@@ -15,12 +20,13 @@ import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__, languages
+from .auth import StudioUser, require_user, require_user_sse
 from .config import get_settings
 from .jobs import manager
 from .pipeline import media
@@ -89,6 +95,17 @@ def get_languages() -> dict:
     return {"languages": languages.all_dicts()}
 
 
+@app.get("/api/session")
+def session(user: StudioUser = Depends(require_user)) -> dict:
+    """Echo the identity behind the bearer token.
+
+    The Studio calls this on boot to decide whether it has a live session, and
+    to render who is signed in. It is the cheapest possible authenticated
+    round-trip — no database, just the verified claims.
+    """
+    return {"user": {"id": user.id, "email": user.email, "role": user.role}}
+
+
 @app.post("/api/jobs")
 async def create_job(
     target_lang: str = Form(...),
@@ -99,6 +116,7 @@ async def create_job(
     quality: Quality = Form(Quality.balanced),
     sample: bool = Form(False),
     file: UploadFile | None = File(None),
+    user: StudioUser = Depends(require_user),
 ) -> dict:
     if not languages.get(target_lang):
         raise HTTPException(400, f"Unsupported target language: {target_lang}")
@@ -142,22 +160,36 @@ async def create_job(
         filename = file.filename
 
     job = manager.create(options, input_video, scenario, filename,
-                         force_simulate=force_simulate)
+                         owner_id=user.id, force_simulate=force_simulate)
     return {"id": job.id, "job": job.model_dump(mode="json")}
 
 
-@app.get("/api/jobs/{job_id}")
-def get_job(job_id: str) -> dict:
+def _owned_job(job_id: str, user: StudioUser):
+    """Fetch a job, or 404 unless it belongs to this user.
+
+    404 rather than 403 for someone else's job on purpose: job ids are random,
+    so "this exists but is not yours" is information the caller has no way to
+    obtain otherwise, and no reason to receive. Not-yours and not-real look
+    identical from outside.
+    """
     job = manager.get(job_id)
-    if not job:
+    if not job or job.owner_id != user.id:
         raise HTTPException(404, "Job not found")
+    return job
+
+
+@app.get("/api/jobs/{job_id}")
+def get_job(job_id: str, user: StudioUser = Depends(require_user)) -> dict:
+    job = _owned_job(job_id, user)
     return {"job": job.model_dump(mode="json")}
 
 
 @app.get("/api/jobs/{job_id}/events")
-async def job_events(job_id: str) -> StreamingResponse:
-    if not manager.get(job_id):
-        raise HTTPException(404, "Job not found")
+async def job_events(
+    job_id: str,
+    user: StudioUser = Depends(require_user_sse),
+) -> StreamingResponse:
+    _owned_job(job_id, user)
 
     async def stream():
         async for evt in manager.subscribe(job_id):

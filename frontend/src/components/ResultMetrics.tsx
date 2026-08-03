@@ -13,10 +13,10 @@ export default function ResultMetrics({ m }: { m: DubMetrics }) {
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
       {tiles.map((t) => (
-        <div key={t.label} className="card p-4">
-          <div className="text-xl font-bold text-white">{t.value}</div>
-          <div className="mt-1 text-xs font-medium text-white/65">{t.label}</div>
-          {t.hint && <div className="mt-0.5 text-[10px] text-white/35">{t.hint}</div>}
+        <div key={t.label} className="card card-hover p-4">
+          <div className="font-mono text-xl font-semibold text-white">{t.value}</div>
+          <div className="mt-1 text-xs text-text-2">{t.label}</div>
+          {t.hint && <div className="mt-0.5 font-mono text-[10px] text-text-3">{t.hint}</div>}
         </div>
       ))}
     </div>

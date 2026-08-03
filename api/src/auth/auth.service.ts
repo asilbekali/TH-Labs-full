@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { User } from '@prisma/client';
 import type { CookieOptions, Response } from 'express';
 import * as bcrypt from 'bcrypt';
+import { createHash, randomBytes } from 'crypto';
 
 import { PrismaService } from '../prisma/prisma.service';
 import { RefreshTokenService } from './refresh-token.service';
@@ -16,6 +17,20 @@ export const REFRESH_COOKIE = 'refresh_token';
 const REFRESH_COOKIE_PATH = '/v1/auth';
 
 type PublicUser = Pick<User, 'id' | 'email' | 'name' | 'role' | 'createdAt'>;
+
+// ── Cross-origin handoff ────────────────────────────────────────────────────
+// Sized so a code survives a redirect plus a slow first paint on the Studio,
+// and nothing more. The Studio redeems it during boot, so this is a ceiling on
+// network latency, not on how long a user might sit on a page.
+const HANDOFF_TTL_SECONDS = 60;
+
+// 32 bytes from the CSPRNG. base64url so it survives a query string untouched
+// (no %-encoding, so no chance of a double-decode mismatch on the way back).
+const HANDOFF_CODE_BYTES = 32;
+
+function hashHandoffCode(code: string): string {
+  return createHash('sha256').update(code).digest('hex');
+}
 
 @Injectable()
 export class AuthService {

@@ -28,13 +28,13 @@ function Panel({
 }) {
   return (
     <div className="card overflow-hidden p-0">
-      <div className="flex items-center justify-between border-b border-white/5 px-4 py-2.5">
-        <span className="flex items-center gap-2 text-sm font-medium text-white/80">
-          <span className={`h-2 w-2 rounded-full ${tone === 'brand' ? 'bg-violet-400' : 'bg-white/30'}`} />
+      <div className="flex items-center justify-between border-b border-line px-4 py-2.5">
+        <span className="flex items-center gap-2 font-mono text-sm font-medium text-white">
+          <span className={`h-2 w-2 rounded-full ${tone === 'brand' ? 'bg-accent' : 'bg-white/30'}`} />
           {label}
         </span>
         {badge && (
-          <span className={`rounded-full px-2 py-0.5 text-[10px] uppercase tracking-wide ${badge === 'live' ? 'bg-emerald-400/15 text-emerald-300' : 'bg-amber-400/15 text-amber-300'}`}>
+          <span className={`rounded-full px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide ${badge === 'live' ? 'bg-ok/15 text-ok' : 'bg-warn/15 text-warn'}`}>
             {badge}
           </span>
         )}
@@ -43,7 +43,7 @@ function Panel({
         {url ? (
           <video src={url} controls className="h-full w-full" preload="metadata" />
         ) : (
-          <div className="grid h-full place-items-center text-sm text-white/30">no media</div>
+          <div className="grid h-full place-items-center font-mono text-sm text-text-3">no media</div>
         )}
       </div>
     </div>
