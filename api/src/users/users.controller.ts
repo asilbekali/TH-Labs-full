@@ -8,6 +8,8 @@ import {
   Delete,
   UseGuards,
   Post,
+  Headers,
+  Res,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
@@ -15,6 +17,7 @@ import {
   ApiOperation,
 } from '@nestjs/swagger';
 import { Role } from '@prisma/client';
+import type { Response } from 'express';
 
 import type { AuthenticatedUser } from '../common/decorators/current-user.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -58,9 +61,13 @@ export class UsersController {
   @Post('create-user')
   @ApiOperation({ summary: 'Register a new user account' })
   @ApiCreatedResponse({ type: AuthResponseDto })
-  async create(@Body() createUserDto: CreateUserDto) {
+  async create(
+    @Body() createUserDto: CreateUserDto,
+    @Res({ passthrough: true }) res: Response,
+    @Headers('user-agent') userAgent?: string,
+  ) {
     const user = await this.usersService.create(createUserDto);
-    return this.authService.issueTokens(user);
+    return this.authService.issueTokens(user, res, userAgent);
   }
 
   @Get(':id')

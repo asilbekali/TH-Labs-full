@@ -4,6 +4,8 @@
 import { ValidationPipe, VersioningType } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import helmet from 'helmet';
+import cookieParser from 'cookie-parser';
 
 import { AppModule } from './app.module';
 
@@ -35,19 +37,26 @@ function corsOrigins(): string[] {
 }
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  // rawBody: true keeps the untouched request buffer on `req.rawBody`, which the
+  // Stripe webhook needs — signature verification silently fails on a body that
+  // the JSON parser has already re-serialized.
+  const app = await NestFactory.create(AppModule, { rawBody: true });
 
-  const PORT = Number(process.env.PORT) || 3000;
+  const PORT = Number(process.env.PORT) || 3001;
   const HOST = process.env.HOST || 'localhost';
 
-  // An allowlist, not `origin: true`. Reflecting whatever Origin arrives —
-  // which is what `true` does — combined with credentials means any page on
-  // the internet can make credentialed cross-origin calls here and read the
-  // replies. Auth lives behind bearer tokens rather than cookies, so that was
-  // not immediately exploitable, but it removes a layer that costs nothing to
-  // keep.
+  // Parse the httpOnly refresh cookie into req.cookies for the auth routes.
+  app.use(cookieParser());
+
+  // contentSecurityPolicy is disabled so the Swagger UI at /docs (inline
+  // scripts/styles) still loads; all other helmet protections stay on.
+  app.use(helmet({ contentSecurityPolicy: false }));
+
+  // CORS restricted to the app origin (APP_URL), with credentials so the
+  // refresh cookie flows.
+  const appUrl = process.env.APP_URL || 'http://localhost:5173';
   app.enableCors({
-    origin: corsOrigins(),
+    origin: appUrl,
     credentials: true,
   });
 

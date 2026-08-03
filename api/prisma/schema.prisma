@@ -21,41 +21,21 @@ model User {
   name               String
   password           String
   role               Role     @default(USER)
-  hashedRefreshToken String?
+
+  // ── Billing & credits (step 05, additive) ──────────────────────────────
+  credits            Int      @default(60) // cached balance; CreditEntry ledger is the truth
+  freeDubUsed        Boolean  @default(false) // the one free 2-minute dub
+  stripeCustomerId   String?  @unique
+
+  subscriptions      Subscription[]
+  payments           Payment[]
+  creditEntries      CreditEntry[]
+  refreshTokens      RefreshToken[]
+
   createdAt          DateTime @default(now())
   updatedAt          DateTime @default(now()) @updatedAt
 
-  handoffCodes HandoffCode[]
-}
-
-/// A single-use ticket that carries a session across an origin boundary.
-///
-/// The landing page (aytingchi.uz) and the Studio (*.modal.run) are different
-/// origins, so a cookie cannot be shared and the tokens themselves must not
-/// travel in the redirect URL — a URL lands in browser history, the address
-/// bar, and the destination's ingress logs, and the refresh token it would
-/// carry is good for JWT_REFRESH_EXPIRES_IN (7d by default) of re-minting.
-///
-/// So the redirect carries one of these instead: random, short-lived, and
-/// consumed on first use. A copy recovered from a log line is already dead.
-///
-/// `codeHash` — the SHA-256 of the code, never the code itself, so read access
-/// to this table does not yield anything redeemable. Same reasoning as storing
-/// password hashes; the lookup is by hash on the way in.
-model HandoffCode {
-  id        Int       @id @default(autoincrement())
-  codeHash  String    @unique
-  userId    Int
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  expiresAt DateTime
-  /// Set by the atomic claim in AuthService.exchangeHandoffCode. Non-null
-  /// means spent — rows are kept (not deleted) so a replay is distinguishable
-  /// from a code that never existed, and swept later by deleteExpiredCodes.
-  usedAt    DateTime?
-  createdAt DateTime  @default(now())
-
-  @@index([expiresAt])
-  @@index([userId])
+  @@index([email])
 }
 
 model Admin {
@@ -73,4 +53,141 @@ enum Role {
   USER
   ADMIN
   SUPERADMIN
+}
+
+// ── Billing enums (step 05) ───────────────────────────────────────────────
+enum PlanTier {
+  FREE
+  PRO
+  STUDIO
+}
+
+enum BillingCycle {
+  WEEKLY
+  MONTHLY
+  YEARLY
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  EXPIRED
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  REFUNDED
+}
+
+enum CreditReason {
+  SIGNUP_BONUS
+  SUBSCRIPTION_GRANT
+  PACK_PURCHASE
+  DUB_SPEND
+  REFUND
+  ADMIN_ADJUSTMENT
+}
+
+// Catalog of purchasable plans (seven rows: FREE + PRO/STUDIO × weekly/monthly/yearly).
+model Plan {
+  id             String       @id @default(cuid())
+  tier           PlanTier
+  cycle          BillingCycle
+  priceCents     Int
+  creditsGranted Int
+  grantDays      Int // 7 or 30
+  stripePriceId  String?      @unique
+  stripeLinkUrl  String?
+  active         Boolean      @default(true)
+
+  subscriptions  Subscription[]
+
+  @@unique([tier, cycle])
+}
+
+model Subscription {
+  id                   String             @id @default(cuid())
+  userId               Int
+  planId               String
+  status               SubscriptionStatus @default(ACTIVE)
+
+  stripeSubscriptionId String?            @unique
+  currentPeriodStart   DateTime
+  currentPeriodEnd     DateTime
+  cancelAtPeriodEnd    Boolean            @default(false)
+  lastGrantAt          DateTime?
+
+  user                 User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plan                 Plan               @relation(fields: [planId], references: [id])
+  payments             Payment[]
+
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+
+  @@index([userId, status])
+}
+
+model Payment {
+  id                    String        @id @default(cuid())
+  userId                Int
+  subscriptionId        String?
+
+  amountCents           Int
+  currency              String        @default("usd")
+  status                PaymentStatus @default(PENDING)
+  description           String
+
+  stripeSessionId       String?       @unique
+  stripePaymentIntentId String?       @unique
+  stripeInvoiceId       String?       @unique
+
+  user                  User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subscription          Subscription? @relation(fields: [subscriptionId], references: [id])
+
+  createdAt             DateTime      @default(now())
+
+  @@index([userId, createdAt])
+}
+
+// Append-only credit ledger. User.credits is a cached balance; if they ever
+// disagree, this table wins.
+model CreditEntry {
+  id        String       @id @default(cuid())
+  userId    Int
+  delta     Int // positive grant, negative spend
+  balance   Int // running balance after this entry
+  reason    CreditReason
+  refId     String? // jobId, paymentId, etc.
+  note      String?
+
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime     @default(now())
+
+  @@index([userId, createdAt])
+}
+
+// Opaque, rotated refresh tokens for the new cookie-based auth flow.
+model RefreshToken {
+  id        String    @id @default(cuid())
+  userId    Int
+  tokenHash String    @unique
+  expiresAt DateTime
+  revokedAt DateTime?
+  userAgent String?
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+}
+
+// Stripe webhook idempotency guard — one row per delivered event id.
+model WebhookEvent {
+  id            String   @id @default(cuid())
+  stripeEventId String   @unique
+  type          String
+  processedAt   DateTime @default(now())
 }

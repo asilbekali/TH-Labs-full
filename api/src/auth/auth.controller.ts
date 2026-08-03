@@ -1,9 +1,13 @@
 import {
   Body,
   Controller,
+  Get,
+  Headers,
   HttpCode,
   HttpStatus,
   Post,
+  Req,
+  Res,
   UseGuards,
 } from '@nestjs/common';
 import {
@@ -12,18 +16,20 @@ import {
   ApiOperation,
   ApiTags,
 } from '@nestjs/swagger';
+import type { Request, Response } from 'express';
 
-import { AuthService } from './auth.service';
+import { AuthService, REFRESH_COOKIE } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { AuthResponseDto } from './dto/auth-response.dto';
 import { ExchangeHandoffDto, HandoffCodeDto } from './dto/handoff.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
-import { JwtRefreshGuard } from '../common/guards/jwt-refresh.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../common/decorators/current-user.decorator';
 
-// Registration lives at POST /users/create-user — creating a user account
-// is registering it, there's no separate "register" step.
+// Access tokens live in the response body (client keeps them in memory);
+// the refresh token is an httpOnly cookie the browser sends back automatically.
+// Registration lives at POST /users/create-user — creating a user account is
+// registering it, there is no separate "register" step here.
 @ApiTags('auth')
 @Controller('auth')
 export class AuthController {
@@ -33,29 +39,47 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Login with email and password' })
   @ApiOkResponse({ type: AuthResponseDto })
-  login(@Body() dto: LoginDto) {
-    return this.authService.login(dto);
+  login(
+    @Body() dto: LoginDto,
+    @Res({ passthrough: true }) res: Response,
+    @Headers('user-agent') userAgent?: string,
+  ) {
+    return this.authService.login(dto, res, userAgent);
   }
 
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
-  @ApiBearerAuth()
-  @UseGuards(JwtRefreshGuard)
   @ApiOperation({
-    summary: 'Exchange a valid refresh token for a new token pair',
+    summary: 'Rotate the refresh cookie and return a new access token',
   })
   @ApiOkResponse({ type: AuthResponseDto })
-  refresh(@CurrentUser() user: AuthenticatedUser) {
-    return this.authService.refresh(user.id);
+  refresh(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+    @Headers('user-agent') userAgent?: string,
+  ) {
+    const raw = (req.cookies as Record<string, string> | undefined)?.[
+      REFRESH_COOKIE
+    ];
+    return this.authService.refresh(raw, res, userAgent);
   }
 
   @Post('logout')
   @HttpCode(HttpStatus.OK)
-  @ApiBearerAuth()
-  @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: 'Logout and revoke the refresh token' })
-  logout(@CurrentUser() user: AuthenticatedUser) {
-    return this.authService.logout(user.id);
+  logout(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
+    const raw = (req.cookies as Record<string, string> | undefined)?.[
+      REFRESH_COOKIE
+    ];
+    return this.authService.logout(raw, res);
+  }
+
+  @Get('me')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Current authenticated user' })
+  me(@CurrentUser() user: AuthenticatedUser) {
+    return this.authService.me(user.id);
   }
 
   // ── Cross-origin handoff ────────────────────────────────────────────────
