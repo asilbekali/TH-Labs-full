@@ -1,99 +1,232 @@
 @import 'tailwindcss';
 
+/* Drive Tailwind's `dark:` variant off our [data-theme="dark"] attribute
+   (set pre-paint by the inline script), not prefers-color-scheme. */
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+
 /* ─────────────────────────────────────────────────────────────────────────
-   TH-Labs design tokens (Tailwind v4 CSS-first theme)
+   Self-hosted brand faces — Inter (body) + JetBrains Mono (display/mono),
+   subset from th-labs.uz. No runtime web-font request. Inter is variable
+   (100–900); JetBrains Mono ships weight 400, declared over the 400–500 range
+   so `font-weight: 500` renders at its native weight without faux-bold.
    ───────────────────────────────────────────────────────────────────────── */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('/fonts/inter-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('/fonts/inter-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF,
+    U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020,
+    U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400 500;
+  font-display: swap;
+  src: url('/fonts/jetbrains-mono-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400 500;
+  font-display: swap;
+  src: url('/fonts/jetbrains-mono-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF,
+    U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020,
+    U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   TH-Labs — dual-theme design tokens (Tailwind v4, CSS-first)
+
+   The visual language is a soft, modern IoT/SaaS dashboard: lavender-tinted
+   light mode with pure-white cards and diffuse shadows, plus a deep violet
+   dark mode where depth comes from borders + elevation tints. Every color
+   below is a raw "R G B" channel triplet so Tailwind can apply /alpha; the
+   themes swap the triplets, the components never hardcode a hex.
+   ───────────────────────────────────────────────────────────────────────── */
+
 @theme {
   --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI',
     Roboto, Helvetica, Arial, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', 'Fira Code', monospace;
 
-  --color-ink: #05050a;
-  --color-ink-2: #0a0a14;
-  --color-surface: #10101c;
-  --color-surface-2: #16162a;
-  --color-line: #23233a;
+  /* Semantic colors — resolved from the channel triplets defined per theme.
+     Defined as plain colors (no <alpha-value>); Tailwind v4 applies /opacity
+     modifiers via color-mix() automatically. */
+  --color-canvas: rgb(var(--c-canvas));
+  --color-surface: rgb(var(--c-surface));
+  --color-raised: rgb(var(--c-raised));
+  --color-sunken: rgb(var(--c-sunken));
 
-  --color-violet: #8b5cf6;
-  --color-fuchsia: #d946ef;
-  --color-cyan: #22d3ee;
-  --color-accent: #a855f7;
+  --color-subtle: rgb(var(--c-border-subtle));
+  --color-strong: rgb(var(--c-border-strong));
 
-  --color-muted: #8b8ba7;
+  --color-primary: rgb(var(--c-text-primary));
+  --color-secondary: rgb(var(--c-text-secondary));
+  --color-muted: rgb(var(--c-text-muted));
+
+  --color-brand: rgb(var(--c-brand-500));
+  --color-brand-400: rgb(var(--c-brand-400));
+  --color-cyan: rgb(var(--c-accent-cyan));
+  --color-magenta: rgb(var(--c-accent-magenta));
+
+  --color-success: rgb(var(--c-success));
+  --color-warn: rgb(var(--c-warn));
+  --color-danger: rgb(var(--c-danger));
+  --color-info: rgb(var(--c-info));
+
+  /* Radii */
+  --radius-card: 1.25rem;      /* 20px */
+  --radius-control: 0.875rem;  /* 14px */
+  --radius-pill: 999px;
+
+  /* Motion */
+  --ease-entrance: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-:root {
+/* ── Light theme (default) ─────────────────────────────────────────────── */
+:root,
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  --c-canvas: 244 243 250;        /* faint lavender off-white */
+  --c-surface: 255 255 255;       /* pure white cards */
+  --c-raised: 255 255 255;
+  --c-sunken: 240 239 248;
+
+  --c-border-subtle: 232 230 243;
+  --c-border-strong: 214 210 231;
+
+  --c-text-primary: 24 22 41;     /* near-black violet */
+  --c-text-secondary: 92 88 115;
+  --c-text-muted: 142 138 163;
+
+  --c-brand-500: 124 92 246;
+  --c-brand-400: 146 122 250;
+  --c-accent-cyan: 12 165 199;
+  --c-accent-magenta: 200 55 224;
+
+  --c-success: 22 163 120;
+  --c-warn: 200 132 12;
+  --c-danger: 222 68 68;
+  --c-info: 46 120 240;
+
+  --grad-brand: linear-gradient(120deg, rgb(124 92 246) 0%, rgb(180 70 230) 50%, rgb(28 180 214) 100%);
+
+  --shadow-sm: 0 1px 2px rgb(60 50 110 / 0.06), 0 1px 3px rgb(60 50 110 / 0.05);
+  --shadow-md: 0 6px 16px -6px rgb(60 50 110 / 0.12), 0 2px 6px -2px rgb(60 50 110 / 0.08);
+  --shadow-lg: 0 24px 48px -20px rgb(60 50 110 / 0.22), 0 8px 20px -12px rgb(60 50 110 / 0.14);
+
+  /* surface treatments (used by component classes) */
+  --card-bg: rgb(255 255 255);
+  --card-shadow: var(--shadow-md);
+  --rail-bg: rgb(255 255 255 / 0.72);
+}
+
+/* ── Dark theme ────────────────────────────────────────────────────────── */
+:root[data-theme='dark'] {
   color-scheme: dark;
-  --grad-brand: linear-gradient(120deg, #8b5cf6 0%, #d946ef 50%, #22d3ee 100%);
-}
 
-* { border-color: var(--color-line); }
+  --c-canvas: 9 9 17;             /* near-black violet */
+  --c-surface: 20 20 33;
+  --c-raised: 27 27 44;
+  --c-sunken: 13 13 23;
+
+  --c-border-subtle: 41 39 62;
+  --c-border-strong: 62 58 92;
+
+  --c-text-primary: 238 240 246;
+  --c-text-secondary: 168 168 191;
+  --c-text-muted: 120 120 147;
+
+  --c-brand-500: 139 92 246;
+  --c-brand-400: 167 139 250;
+  --c-accent-cyan: 34 211 238;
+  --c-accent-magenta: 217 70 239;
+
+  --c-success: 52 211 153;
+  --c-warn: 251 191 36;
+  --c-danger: 248 113 113;
+  --c-info: 96 165 250;
+
+  --grad-brand: linear-gradient(120deg, rgb(139 92 246) 0%, rgb(217 70 239) 50%, rgb(34 211 238) 100%);
+
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-md: 0 8px 24px -12px rgb(0 0 0 / 0.55);
+  --shadow-lg: 0 30px 60px -24px rgb(0 0 0 / 0.7);
+
+  --card-bg: linear-gradient(180deg, rgb(27 27 44 / 0.9), rgb(20 20 33 / 0.9));
+  --card-shadow: var(--shadow-md), inset 0 1px 0 rgb(255 255 255 / 0.05);
+  --rail-bg: rgb(20 20 33 / 0.72);
+}
 
 html { scroll-behavior: smooth; }
 
-/* On large / high-res displays, scale the whole rem-based design up so it
-   fills the screen and stays readable instead of floating in a narrow column.
-   Everything (type, spacing, radii, max-widths) is rem-based, so it grows
-   proportionally — cards keep their relationships and never collide. */
+/* Scale the rem-based design up on very large displays so it fills the screen. */
 @media (min-width: 1920px) { html { font-size: 17px; } }
 @media (min-width: 2560px) { html { font-size: 19px; } }
 @media (min-width: 3440px) { html { font-size: 21px; } }
 
-/* Page container — centered, fluid padding, and a max-width that steps up on
-   wide screens. Replaces the fixed `max-w-7xl` so the layout adapts to any
-   display width. */
+/* Centered, fluid page container. */
 .wrap {
   margin-inline: auto;
-  max-width: 80rem;
-  padding-inline: clamp(1.25rem, 3vw, 4rem);
+  max-width: 84rem;
+  padding-inline: clamp(1.25rem, 3vw, 3.5rem);
 }
-@media (min-width: 1536px) { .wrap { max-width: 90rem; } }
-@media (min-width: 1920px) { .wrap { max-width: 100rem; } }
-@media (min-width: 2560px) { .wrap { max-width: 112rem; } }
+@media (min-width: 1536px) { .wrap { max-width: 92rem; } }
+@media (min-width: 1920px) { .wrap { max-width: 104rem; } }
+@media (min-width: 2560px) { .wrap { max-width: 116rem; } }
 
 body {
   margin: 0;
-  background: var(--color-ink);
-  color: #eef0f6;
+  background: rgb(var(--c-canvas));
+  color: rgb(var(--c-text-primary));
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   overflow-x: hidden;
+  transition: background-color 0.25s var(--ease-exit), color 0.25s var(--ease-exit);
 }
 
-/* Subtle site-wide backdrop: radial glows + fine grid */
+/* Soft, theme-aware ambient wash behind everything. */
 body::before {
   content: '';
   position: fixed;
   inset: 0;
   z-index: -2;
   background:
-    radial-gradient(60rem 60rem at 12% -10%, rgba(139, 92, 246, 0.18), transparent 60%),
-    radial-gradient(50rem 50rem at 100% 0%, rgba(34, 211, 238, 0.12), transparent 55%),
-    radial-gradient(55rem 55rem at 50% 120%, rgba(217, 70, 239, 0.12), transparent 60%);
-}
-body::after {
-  content: '';
-  position: fixed;
-  inset: 0;
-  z-index: -2;
-  background-image:
-    linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
-  background-size: 46px 46px;
-  mask-image: radial-gradient(circle at 50% 30%, black, transparent 85%);
+    radial-gradient(48rem 48rem at 8% -8%, rgb(var(--c-brand-500) / 0.14), transparent 60%),
+    radial-gradient(42rem 42rem at 100% 4%, rgb(var(--c-accent-cyan) / 0.10), transparent 55%),
+    radial-gradient(46rem 46rem at 50% 116%, rgb(var(--c-accent-magenta) / 0.08), transparent 60%);
+  transition: opacity 0.25s var(--ease-exit);
 }
 
-::selection { background: rgba(168, 85, 247, 0.35); }
+::selection { background: rgb(var(--c-brand-500) / 0.28); }
 
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
-  background: #2a2a44;
+  background: rgb(var(--c-border-strong));
   border-radius: 9999px;
-  border: 2px solid var(--color-ink);
+  border: 2px solid rgb(var(--c-canvas));
 }
-::-webkit-scrollbar-thumb:hover { background: #3a3a5c; }
 
 /* ── Reusable component classes ─────────────────────────────────────────── */
 @layer components {
@@ -105,60 +238,143 @@ body::after {
   }
 
   .glass {
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02));
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    backdrop-filter: blur(14px);
+    background: var(--rail-bg);
+    border: 1px solid rgb(var(--c-border-subtle));
+    backdrop-filter: blur(16px);
   }
 
+  /* Soft rounded surface card — the core bento primitive. */
   .card {
-    background: linear-gradient(180deg, rgba(22, 22, 42, 0.7), rgba(16, 16, 28, 0.7));
-    border: 1px solid var(--color-line);
-    border-radius: 1.25rem;
+    background: var(--card-bg);
+    border: 1px solid rgb(var(--c-border-subtle));
+    border-radius: var(--radius-card);
+    box-shadow: var(--card-shadow);
   }
 
   .card-hover {
-    transition: transform 0.3s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.3s, box-shadow 0.3s;
+    transition: transform 0.2s var(--ease-entrance), border-color 0.2s, box-shadow 0.2s;
+    will-change: transform;
   }
   .card-hover:hover {
-    transform: translateY(-4px);
-    border-color: rgba(168, 85, 247, 0.5);
-    box-shadow: 0 20px 60px -20px rgba(139, 92, 246, 0.45);
+    transform: translateY(-3px);
+    border-color: rgb(var(--c-brand-500) / 0.4);
+    box-shadow: var(--shadow-lg);
   }
 
   .btn-primary {
     position: relative;
     background: var(--grad-brand);
-    background-size: 200% 200%;
+    background-size: 180% 180%;
     color: white;
     font-weight: 600;
-    border-radius: 9999px;
-    box-shadow: 0 10px 40px -12px rgba(168, 85, 247, 0.7);
-    transition: transform 0.2s, box-shadow 0.3s, background-position 0.6s;
+    border-radius: var(--radius-pill);
+    box-shadow: 0 10px 30px -12px rgb(var(--c-brand-500) / 0.7);
+    transition: transform 0.2s, box-shadow 0.3s, background-position 0.5s;
   }
   .btn-primary:hover {
     transform: translateY(-2px);
     background-position: 100% 50%;
-    box-shadow: 0 16px 50px -12px rgba(168, 85, 247, 0.9);
+    box-shadow: 0 16px 40px -12px rgb(var(--c-brand-500) / 0.85);
   }
   .btn-primary:active { transform: translateY(0); }
 
   .btn-ghost {
-    border: 1px solid var(--color-line);
-    border-radius: 9999px;
-    color: #d6d9e6;
+    border: 1px solid rgb(var(--c-border-strong));
+    border-radius: var(--radius-pill);
+    color: rgb(var(--c-text-secondary));
+    background: rgb(var(--c-surface) / 0.4);
     transition: border-color 0.2s, background 0.2s, color 0.2s;
   }
   .btn-ghost:hover {
-    border-color: rgba(168, 85, 247, 0.6);
-    background: rgba(168, 85, 247, 0.08);
-    color: white;
+    border-color: rgb(var(--c-brand-500) / 0.55);
+    background: rgb(var(--c-brand-500) / 0.08);
+    color: rgb(var(--c-text-primary));
   }
 
   .chip {
-    border: 1px solid var(--color-line);
-    background: rgba(255, 255, 255, 0.03);
-    border-radius: 9999px;
+    border: 1px solid rgb(var(--c-border-subtle));
+    background: rgb(var(--c-surface));
+    border-radius: var(--radius-pill);
+    box-shadow: var(--shadow-sm);
   }
+
+  /* Icon-in-tinted-circle motif used across cards and chips. */
+  .icon-tile {
+    display: grid;
+    place-items: center;
+    border-radius: var(--radius-control);
+  }
+
+  /* Visible keyboard focus ring in the brand color. */
+  .focusable:focus-visible {
+    outline: 2px solid rgb(var(--c-brand-400));
+    outline-offset: 2px;
+  }
+
+  /* Internal-scroll columns in the fixed shell hide their scrollbars (§2). */
+  .no-scrollbar { scrollbar-width: none; }
+  .no-scrollbar::-webkit-scrollbar { display: none; width: 0; height: 0; }
+
+  /* Deterministic template thumbnail: the gradient is set inline via
+     background-image (so background-position/size stay ours); on card hover the
+     gradient drifts across ~2s for a subtle live-preview shimmer (01 §D). */
+  .thumb-grad {
+    background-size: 200% 200%;
+    background-position: 0% 50%;
+    transition: background-position 2s var(--ease-entrance);
+  }
+  .group:hover .thumb-grad { background-position: 100% 50%; }
+
+  /* Credit-calculator range slider (04) — a brand thumb on a sunken track, with
+     a tall (44px) touch area from the input's own height. */
+  .calc-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    background: transparent;
+  }
+  .calc-slider::-webkit-slider-runnable-track {
+    height: 6px;
+    border-radius: 999px;
+    background: rgb(var(--c-sunken));
+    box-shadow: inset 0 0 0 1px rgb(var(--c-border-strong));
+  }
+  .calc-slider::-moz-range-track {
+    height: 6px;
+    border-radius: 999px;
+    background: rgb(var(--c-sunken));
+    box-shadow: inset 0 0 0 1px rgb(var(--c-border-strong));
+  }
+  .calc-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 20px;
+    height: 20px;
+    margin-top: -7px;
+    border-radius: 999px;
+    background: rgb(var(--c-brand-500));
+    border: 2px solid #fff;
+    box-shadow: 0 2px 6px rgb(var(--c-brand-500) / 0.5);
+    cursor: pointer;
+  }
+  .calc-slider::-moz-range-thumb {
+    width: 20px;
+    height: 20px;
+    border-radius: 999px;
+    background: rgb(var(--c-brand-500));
+    border: 2px solid #fff;
+    box-shadow: 0 2px 6px rgb(var(--c-brand-500) / 0.5);
+    cursor: pointer;
+  }
+  .calc-slider:focus-visible::-webkit-slider-thumb {
+    outline: 2px solid rgb(var(--c-brand-400));
+    outline-offset: 2px;
+  }
+}
+
+/* Lock the document on the fixed-height desktop shell (§2). Scoped to lg so the
+   mobile scrolling document (§11) is never affected. */
+@media (min-width: 1024px) {
+  body[data-shell='fixed'] { overflow: hidden; }
 }
 
 /* ── Keyframes ──────────────────────────────────────────────────────────── */
@@ -166,32 +382,34 @@ body::after {
   0%, 100% { transform: translateY(0); }
   50% { transform: translateY(-12px); }
 }
-@keyframes pulse-glow {
-  0%, 100% { opacity: 0.6; }
-  50% { opacity: 1; }
-}
-@keyframes marquee {
-  from { transform: translateX(0); }
-  to { transform: translateX(-50%); }
-}
 @keyframes wave {
   0%, 100% { transform: scaleY(0.35); }
   50% { transform: scaleY(1); }
-}
-@keyframes dash {
-  to { stroke-dashoffset: -1000; }
 }
 @keyframes shimmer {
   100% { transform: translateX(100%); }
 }
 @keyframes spin-slow { to { transform: rotate(360deg); } }
+@keyframes soft-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.85; transform: scale(1.06); }
+}
 
 .animate-float { animation: float 6s ease-in-out infinite; }
-.animate-marquee { animation: marquee 40s linear infinite; }
-.animate-spin-slow { animation: spin-slow 18s linear infinite; }
-.flow-dash {
-  stroke-dasharray: 6 10;
-  animation: dash 24s linear infinite;
+.animate-spin-slow { animation: spin-slow 1.4s linear infinite; }
+.animate-soft-pulse { animation: soft-pulse 1.8s ease-in-out infinite; }
+
+.shimmer {
+  position: relative;
+  overflow: hidden;
+}
+.shimmer::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgb(var(--c-text-primary) / 0.06), transparent);
+  animation: shimmer 1.6s infinite;
 }
 
 @media (prefers-reduced-motion: reduce) {

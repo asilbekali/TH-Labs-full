@@ -18,12 +18,24 @@ export default function LanguageSelect({
   const [q, setQ] = useState('')
   const ref = useRef<HTMLDivElement>(null)
 
+  // The list is empty only during the initial fetch — Studio falls back to a
+  // bundled language list on failure, so an empty array here means "still
+  // loading", never "unavailable". Show a skeleton trigger until it fills.
+  const loading = languages.length === 0
+
   useEffect(() => {
     const onDoc = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
     }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false)
+    }
     document.addEventListener('mousedown', onDoc)
-    return () => document.removeEventListener('mousedown', onDoc)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDoc)
+      window.removeEventListener('keydown', onKey)
+    }
   }, [])
 
   const selected = useMemo(() => {
@@ -44,33 +56,44 @@ export default function LanguageSelect({
 
   return (
     <div ref={ref} className="relative">
-      <label className="mb-1.5 block text-xs font-medium text-white/50">{label}</label>
+      <label className="mb-1.5 block text-xs font-medium text-muted">{label}</label>
       <button
         type="button"
-        onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center justify-between rounded-xl border border-white/10 bg-white/[0.03] px-4 py-3 text-left text-sm transition-colors hover:border-white/25"
+        disabled={loading}
+        aria-busy={loading}
+        onClick={() => !loading && setOpen((o) => !o)}
+        className={`focusable flex w-full items-center justify-between rounded-2xl border border-subtle bg-sunken px-4 py-3 text-left text-sm transition-colors ${
+          loading ? 'cursor-default' : 'hover:border-brand/50'
+        }`}
       >
-        <span className="flex items-center gap-2.5">
-          <span className="text-base">{selected?.flag ?? '🌐'}</span>
-          <span className="font-medium text-white">{selected?.name ?? 'Select…'}</span>
-          {selected && 'native' in selected && (
-            <span className="text-white/40">· {(selected as Language).native}</span>
-          )}
-        </span>
-        <svg viewBox="0 0 24 24" className={`h-4 w-4 text-white/40 transition-transform ${open ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" strokeWidth="2">
+        {loading ? (
+          <span className="flex items-center gap-2.5">
+            <span className="shimmer h-4 w-4 shrink-0 rounded-full bg-strong/50" />
+            <span className="shimmer h-3 w-24 rounded bg-strong/50" />
+          </span>
+        ) : (
+          <span className="flex items-center gap-2.5">
+            <span className="text-base">{selected?.flag ?? '🌐'}</span>
+            <span className="font-medium text-primary">{selected?.name ?? 'Select…'}</span>
+            {selected && 'native' in selected && (
+              <span className="text-muted">· {(selected as Language).native}</span>
+            )}
+          </span>
+        )}
+        <svg viewBox="0 0 24 24" className={`h-4 w-4 shrink-0 text-muted transition-transform ${open ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" strokeWidth="2">
           <path d="M6 9l6 6 6-6" />
         </svg>
       </button>
 
-      {open && (
-        <div className="absolute z-30 mt-2 w-full overflow-hidden rounded-xl border border-white/10 bg-ink-2/95 shadow-2xl backdrop-blur-xl">
-          <div className="border-b border-white/5 p-2">
+      {open && !loading && (
+        <div className="card absolute z-30 mt-2 w-full overflow-hidden p-0">
+          <div className="border-b border-subtle p-2">
             <input
               autoFocus
               value={q}
               onChange={(e) => setQ(e.target.value)}
               placeholder="Search languages…"
-              className="w-full rounded-lg bg-white/5 px-3 py-2 text-sm text-white outline-none placeholder:text-white/30"
+              className="w-full rounded-lg bg-sunken px-3 py-2 text-sm text-primary outline-none placeholder:text-muted"
             />
           </div>
           <div className="max-h-64 overflow-y-auto p-1.5">
@@ -102,9 +125,7 @@ export default function LanguageSelect({
               />
             ))}
             {filtered.length === 0 && (
-              <div className="px-3 py-6 text-center text-sm text-white/40">
-                No matches
-              </div>
+              <div className="px-3 py-6 text-center text-sm text-muted">No matches</div>
             )}
           </div>
         </div>
@@ -131,12 +152,12 @@ function Row({
       type="button"
       onClick={onClick}
       className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm transition-colors ${
-        active ? 'bg-violet-500/15 text-white' : 'text-white/75 hover:bg-white/5'
+        active ? 'bg-brand/12 text-primary' : 'text-secondary hover:bg-sunken'
       }`}
     >
       <span className="text-base">{flag}</span>
       <span className="font-medium">{name}</span>
-      <span className="ml-auto text-xs text-white/35">{native}</span>
+      <span className="ml-auto text-xs text-muted">{native}</span>
     </button>
   )
 }

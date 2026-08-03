@@ -14,9 +14,9 @@ export default function ResultMetrics({ m }: { m: DubMetrics }) {
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
       {tiles.map((t) => (
         <div key={t.label} className="card p-4">
-          <div className="text-xl font-bold text-white">{t.value}</div>
-          <div className="mt-1 text-xs font-medium text-white/65">{t.label}</div>
-          {t.hint && <div className="mt-0.5 text-[10px] text-white/35">{t.hint}</div>}
+          <div className="text-xl font-bold text-primary">{t.value}</div>
+          <div className="mt-1 text-xs font-medium text-secondary">{t.label}</div>
+          {t.hint && <div className="mt-0.5 text-[10px] text-muted">{t.hint}</div>}
         </div>
       ))}
     </div>

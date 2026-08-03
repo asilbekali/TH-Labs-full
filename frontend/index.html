@@ -4,8 +4,36 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#07070d" />
+    <meta name="theme-color" content="#f4f3fa" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#090911" media="(prefers-color-scheme: dark)" />
     <meta name="description" content="TH-Labs — identity-preserving AI video dubbing. Whisper ASR, NLLB translation, OmniVoice voice cloning, optional lip sync." />
+
+    <!-- Apply the theme before first paint to avoid a flash. Uses the stored
+         choice, else the OS preference, defaulting to light. -->
+    <script>
+      (function () {
+        try {
+          var stored = localStorage.getItem('th-labs.theme')
+          var theme =
+            stored === 'light' || stored === 'dark'
+              ? stored
+              : window.matchMedia('(prefers-color-scheme: dark)').matches
+                ? 'dark'
+                : 'light'
+          document.documentElement.setAttribute('data-theme', theme)
+          document.documentElement.style.colorScheme = theme
+        } catch (e) {
+          document.documentElement.setAttribute('data-theme', 'light')
+        }
+      })()
+    </script>
+
+    <!-- TH-Labs brand typography: Inter (body) + JetBrains Mono (display/mono),
+         self-hosted (subset from th-labs.uz). @font-face lives in src/index.css;
+         no runtime web-font request is made. Preload the primary Latin subsets. -->
+    <link rel="preload" as="font" type="font/woff2" href="/fonts/inter-latin.woff2" crossorigin />
+    <link rel="preload" as="font" type="font/woff2" href="/fonts/jetbrains-mono-latin.woff2" crossorigin />
+
     <title>TH-Labs · AI Dubbing with Voice Preservation</title>
   </head>
   <body>
