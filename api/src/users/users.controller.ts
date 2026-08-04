@@ -8,7 +8,7 @@ import {
   Delete,
   UseGuards,
   Post,
-  Headers,
+  Req,
   Res,
 } from '@nestjs/common';
 import {
@@ -17,7 +17,7 @@ import {
   ApiOperation,
 } from '@nestjs/swagger';
 import { Role } from '@prisma/client';
-import type { Response } from 'express';
+import type { Request, Response } from 'express';
 
 import type { AuthenticatedUser } from '../common/decorators/current-user.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -64,10 +64,10 @@ export class UsersController {
   async create(
     @Body() createUserDto: CreateUserDto,
     @Res({ passthrough: true }) res: Response,
-    @Headers('user-agent') userAgent?: string,
+    @Req() req: Request,
   ) {
     const user = await this.usersService.create(createUserDto);
-    return this.authService.issueTokens(user, res, userAgent);
+    return this.authService.issueTokens(user, res, req.headers['user-agent']);
   }
 
   @Get(':id')
