@@ -14,16 +14,31 @@
 # The aliases are prefixed `thlabs-` so they cannot collide with solpro's own
 # service names (solpra, caddy, postgres, backup) on the shared network.
 #
-#   aytingchi.uz/v1/*   -> NestJS account API   (thlabs-api:3000)
-#   aytingchi.uz/docs*  -> its Swagger UI
-#   aytingchi.uz/*      -> Next.js landing page (thlabs-web:3000)
+#   /v1/*   -> NestJS account API   (thlabs-api:3000)
+#   /docs*  -> its Swagger UI
+#   /*      -> Next.js landing page (thlabs-web:3000)
 #
 # The landing page does not reach the API through Caddy — lib/backend.ts calls
-# it over the internal network. /v1 is published only because the Studio on
-# Modal needs it; drop both handles if that stops being true.
+# it over the internal network. /v1 is published because the Studio on Modal
+# needs it, and that is now load-bearing rather than incidental: the Studio is
+# a different origin with no session of its own, so it reaches this API from
+# the BROWSER to redeem its one-time handoff code (POST /v1/auth/handoff/
+# exchange) and to refresh afterwards. Remove this handle and a user who signs
+# in on the landing page arrives at a Studio that cannot log them in.
+#
+# Because those calls are cross-origin, the API's CORS allowlist must name the
+# Studio's origin — see CORS_ORIGINS in docker-compose.yml and the defaults in
+# api/src/main.ts.
+#
+# Two domains, one block. th-labs.uz and aytingchi.uz serve identical content —
+# deliberately no redirect between them, so both are equally live. Caddy issues
+# a certificate per hostname on its own; the only prerequisite is that all four
+# names already resolve to this server, or the ACME challenge fails for the ones
+# that do not. Keeping them in a single block rather than two is what stops the
+# handle blocks and headers below from drifting apart.
 
 # ── TH-LABS ───────────────────────────────────────────────────────────────
-aytingchi.uz, www.aytingchi.uz {
+aytingchi.uz, www.aytingchi.uz, th-labs.uz, www.th-labs.uz {
 	# Longest-matching handle wins, independent of ordering.
 	handle /v1/* {
 		reverse_proxy thlabs-api:3000

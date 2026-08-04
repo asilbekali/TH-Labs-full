@@ -117,15 +117,20 @@ never drops a connection. `docker compose restart caddy` would briefly
 interrupt it, and `docker compose down` in `/opt/solpro` would take it offline
 outright — neither is needed for a config change.
 
-Watch the certificate arrive, then verify **both** hosts:
+Watch the certificates arrive, then verify **every** host — solpra included, to
+prove the shared config still serves it:
 
 ```bash
 docker logs -f --tail 50 solpro-caddy-1
 ```
 
 ```bash
-curl -sI https://solpra.uz | head -1 && curl -sI https://aytingchi.uz | head -1
+for h in solpra.uz aytingchi.uz th-labs.uz; do printf '%s ' "$h"; curl -sI "https://$h" | head -1; done
 ```
+
+`aytingchi.uz` and `th-labs.uz` are one site block serving identical content, so
+they should return the same status. Each gets its own certificate, which Caddy
+requests on first reload — expect a few seconds before the second one answers.
 
 Roll back at any point with:
 

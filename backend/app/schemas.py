@@ -83,6 +83,10 @@ class JobResult(BaseModel):
 
 class Job(BaseModel):
     id: str
+    # User id from the verified JWT (`sub`). Jobs carry the uploaded video and
+    # its transcript, so reads are scoped to the owner — see _owned_job in
+    # main.py. Optional only so a Job built by older code still validates.
+    owner_id: Optional[int] = None
     status: JobStatus = JobStatus.queued
     options: DubOptions
     filename: Optional[str] = None

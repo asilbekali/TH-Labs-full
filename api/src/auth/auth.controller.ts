@@ -21,6 +21,7 @@ import type { Request, Response } from 'express';
 import { AuthService, REFRESH_COOKIE } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { AuthResponseDto } from './dto/auth-response.dto';
+import { ExchangeHandoffDto, HandoffCodeDto } from './dto/handoff.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../common/decorators/current-user.decorator';
@@ -79,5 +80,44 @@ export class AuthController {
   @ApiOperation({ summary: 'Current authenticated user' })
   me(@CurrentUser() user: AuthenticatedUser) {
     return this.authService.me(user.id);
+  }
+
+  // ── Cross-origin handoff ────────────────────────────────────────────────
+  // The landing page and the Studio are on different origins, so a session
+  // cannot follow the user in a cookie. These two endpoints move it without
+  // ever putting a token in a URL: mint here, redeem there.
+
+  @Post('handoff')
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard)
+  @ApiOperation({
+    summary: 'Mint a single-use code that carries this session to the Studio',
+    description:
+      'Called server-to-server by the landing page with the access token it ' +
+      'just issued. The code goes in the redirect URL; the tokens do not.',
+  })
+  @ApiOkResponse({ type: HandoffCodeDto })
+  handoff(@CurrentUser() user: AuthenticatedUser) {
+    return this.authService.createHandoffCode(user.id);
+  }
+
+  @Post('handoff/exchange')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Redeem a handoff code for an access token + refresh cookie',
+    description:
+      'Public by necessity — the code IS the credential. Valid for 60s and ' +
+      'exactly one redemption, so a copy recovered from a log is already ' +
+      'dead. Sets the same rotated httpOnly refresh cookie a login would, so ' +
+      "the caller must use credentials:'include' or it cannot refresh later.",
+  })
+  @ApiOkResponse({ type: AuthResponseDto })
+  exchangeHandoff(
+    @Body() dto: ExchangeHandoffDto,
+    @Res({ passthrough: true }) res: Response,
+    @Headers('user-agent') userAgent?: string,
+  ) {
+    return this.authService.exchangeHandoffCode(dto.code, res, userAgent);
   }
 }

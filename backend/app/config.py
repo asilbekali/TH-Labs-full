@@ -27,7 +27,25 @@ class Settings(BaseSettings):
     # "real"  → require real models.
     mode: str = "auto"
 
-    # CORS — the Vite dev server origins
+    # ── Auth ──────────────────────────────────────────────────────────────
+    # Shared HS256 secret, verified against tokens minted by the NestJS
+    # account API. Must be byte-identical to JWT_SECRET there. Empty by
+    # default and NOT given a dev fallback on purpose: a literal committed
+    # here would let anyone forge a token for any user (see app/auth.py,
+    # which fails closed instead of verifying against a known string).
+    jwt_secret: str = ""
+
+    # Where to send a visitor who arrives without a session. This is the
+    # landing page, which owns sign-in; the Studio has no login form of its
+    # own and deliberately does not grow one.
+    landing_url: str = "https://th-labs.uz"
+
+    # CORS — browser origins allowed to call this API.
+    # The deployed Studio is served by THIS app (main.py mounts frontend/dist),
+    # so in production the calls are same-origin and never consult this list;
+    # it exists for the Vite dev server, which serves the UI on :5173 and
+    # proxies here. Add a real origin only if the Studio is ever hosted apart
+    # from its API.
     cors_origins: list[str] = [
         "http://localhost:5173",
         "http://127.0.0.1:5173",

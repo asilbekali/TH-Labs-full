@@ -33,6 +33,25 @@ import modal
 APP_NAME = "th-labs-dubbing"
 REMOTE = "/app"                                  # where the repo lands in the image
 
+# ── The other half of the product ──────────────────────────────────────────
+# The Studio has no sign-in of its own. Accounts live on the landing page, and
+# the NestJS account API behind it mints the tokens this app verifies. Both
+# URLs are baked into the UI bundle at build time (VITE_* below), so changing
+# either one needs a redeploy, not just a restart.
+LANDING_URL = "https://th-labs.uz"
+ACCOUNT_API_URL = f"{LANDING_URL}/v1"
+
+# Shared HS256 signing secret, holding one key: TH_LABS_JWT_SECRET, byte-equal
+# to JWT_SECRET on the account API. Create it once with:
+#
+#     modal secret create th-labs-jwt TH_LABS_JWT_SECRET=<the same value>
+#
+# Deliberately a Modal Secret rather than an .env() entry — .env values are
+# baked into the image layer and readable by anyone who can pull it, and this
+# value forges tokens for any user. Deploy fails loudly if it is missing,
+# matching how docker-compose.yml refuses to start without JWT_SECRET.
+jwt_secret = modal.Secret.from_name("th-labs-jwt")
+
 # Media volume mount point. Deliberately OUTSIDE the copied repo: Modal refuses
 # to mount a Volume on a non-empty path, and the repo's own backend/data/ ships
 # .gitkeep files, so mounting there crash-loops the container with
@@ -143,6 +162,9 @@ image = (
     .pip_install(
         "fastapi>=0.110", "uvicorn[standard]>=0.29", "python-multipart>=0.0.9",
         "pydantic>=2.6", "pydantic-settings>=2.2",
+        # Verifies the bearer tokens minted by the NestJS account API. Without
+        # it every /api/jobs call 503s — see backend/app/auth.py.
+        "PyJWT>=2.8",
         "openai-whisper", "sentencepiece", "edge-tts", "soundfile",
         "silero-vad", "demucs", "huggingface_hub",
     )
@@ -159,6 +181,17 @@ image = (
         "TH_LABS_OMNIVOICE_DEVICE": "cuda:0",  # voice cloning on GPU
         "TH_LABS_SEPARATION_DEVICE": "cuda",   # Demucs on GPU (24 GB fits it)
         "TH_LABS_CLONE_DEVICE": "cuda",        # OpenVoice fallback, if present
+
+        # Where a signed-out visitor is sent to sign in. Also baked into the
+        # UI bundle below via VITE_LANDING_URL.
+        "TH_LABS_LANDING_URL": LANDING_URL,
+
+        # Read by Vite during the `npm run build` step further down. Vite
+        # inlines VITE_* at build time, so these must be set on the image
+        # BEFORE that command runs — which is why they live here rather than
+        # on the function.
+        "VITE_ACCOUNT_API_URL": ACCOUNT_API_URL,
+        "VITE_LANDING_URL": LANDING_URL,
     })
     # copy=True so the npm build below can see these files.
     .add_local_dir(
@@ -193,6 +226,9 @@ image = (
     image=image,
     gpu="L4",
     volumes={DATA_DIR: media},
+    # Supplies TH_LABS_JWT_SECRET at runtime; without it every authenticated
+    # route returns 503 rather than running the pipeline for anonymous callers.
+    secrets=[jwt_secret],
     # Whisper + NLLB + OmniVoice + Demucs keep several GB resident on the CPU
     # side, and a dub also holds decoded audio and ffmpeg intermediates. Ask
     # for explicit headroom so a long upload can't squeeze the container into
