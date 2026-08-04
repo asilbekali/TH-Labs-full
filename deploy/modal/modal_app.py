@@ -182,15 +182,27 @@ image = (
         "TH_LABS_SEPARATION_DEVICE": "cuda",   # Demucs on GPU (24 GB fits it)
         "TH_LABS_CLONE_DEVICE": "cuda",        # OpenVoice fallback, if present
 
-        # Where a signed-out visitor is sent to sign in. Also baked into the
-        # UI bundle below via VITE_LANDING_URL.
+        # Where a signed-out visitor is sent to sign in.
         "TH_LABS_LANDING_URL": LANDING_URL,
 
         # Read by Vite during the `npm run build` step further down. Vite
         # inlines VITE_* at build time, so these must be set on the image
         # BEFORE that command runs — which is why they live here rather than
         # on the function.
-        "VITE_ACCOUNT_API_URL": ACCOUNT_API_URL,
+        #
+        # The name must match frontend/src/lib/http.ts EXACTLY. It reads
+        # `import.meta.env.VITE_ACCOUNT_API` and falls back to a relative
+        # '/v1' when that is unset — and a relative path resolves against the
+        # STUDIO's own origin, where /v1 is not the account API but the SPA
+        # catch-all. The symptom is silent: sign-in POSTs to modal.run/v1/...,
+        # gets 405 from the catch-all, and the form just never logs you in.
+        # This was previously spelled VITE_ACCOUNT_API_URL and did exactly
+        # that. If you rename it here, rename it there in the same commit.
+        "VITE_ACCOUNT_API": ACCOUNT_API_URL,
+
+        # Currently read by nothing in the frontend — kept because the Studio
+        # needs somewhere to send a signed-out visitor and this is the value
+        # it would use. Grep before relying on it.
         "VITE_LANDING_URL": LANDING_URL,
     })
     # copy=True so the npm build below can see these files.

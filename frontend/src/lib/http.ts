@@ -12,6 +12,28 @@
 // the local override reliably beats the production default baked into auth-api.
 const BASE: string = import.meta.env.VITE_ACCOUNT_API ?? '/v1'
 
+// The relative fallback is correct ONLY in dev, where vite.config.ts proxies
+// /v1 to the NestJS API on :3001. In production the Studio is served from its
+// own origin (*.modal.run) where /v1 is not the account API at all — it falls
+// through to the SPA catch-all, which answers a POST with 405. Nothing throws,
+// so sign-in simply never completes and the form looks like it ignored you.
+//
+// That is exactly what a VITE_ACCOUNT_API/VITE_ACCOUNT_API_URL name mismatch
+// in deploy/modal/modal_app.py caused. Say so loudly rather than let the next
+// one be diagnosed from a screenshot.
+if (
+  BASE.startsWith('/') &&
+  typeof window !== 'undefined' &&
+  !/^(localhost|127\.0\.0\.1|\[::1\])$/.test(window.location.hostname)
+) {
+  console.error(
+    `[auth] VITE_ACCOUNT_API is unset, so the account API resolves to ` +
+      `"${window.location.origin}${BASE}" — this origin, not the account API. ` +
+      `Sign-in and every /v1 call will fail. Set VITE_ACCOUNT_API at BUILD time ` +
+      `(Vite inlines it) to e.g. https://th-labs.uz/v1`,
+  )
+}
+
 let accessToken: string | null = null
 
 // Callbacks the auth context registers so the http layer can push a silently
