@@ -1,263 +1,422 @@
 @import 'tailwindcss';
 
-/* Fonts are loaded from index.html, not with an @import here — a CSS @import
-   is render-blocking and cannot start until this stylesheet itself has been
-   fetched and parsed, which serialises two round-trips. The <link> tags there
-   are discovered by the preload scanner immediately. Three families, matching
-   the landing page's next/font setup role for role:
-     Inter          — body / long-form prose
-     JetBrains Mono — every heading, nav link, button, label, stat
-     Press Start 2P — the TH-LABS wordmark and step numbers, nothing else */
+/* Drive Tailwind's `dark:` variant off our [data-theme="dark"] attribute
+   (set pre-paint by the inline script), not prefers-color-scheme. */
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
 
 /* ─────────────────────────────────────────────────────────────────────────
-   TH-LABS design tokens.
-
-   Kept deliberately in lockstep with the landing page's app/globals.css —
-   same names, same values. The Studio and the landing page are one product
-   across two codebases, and a user crosses from one to the other mid-session,
-   so a drift here shows up as the seam in that handoff. Change both or
-   neither.
-
-   This replaces the earlier palette (#05050a ink + a violet→fuchsia→cyan
-   `--grad-brand`), which was the previous brand. The current language is a
-   single violet accent on near-black, with colour reserved for state.
+   Self-hosted brand faces — Inter (body) + JetBrains Mono (display/mono),
+   subset from th-labs.uz. No runtime web-font request. Inter is variable
+   (100–900); JetBrains Mono ships weight 400, declared over the 400–500 range
+   so `font-weight: 500` renders at its native weight without faux-bold.
    ───────────────────────────────────────────────────────────────────────── */
-:root {
-  --bg: #050607;
-  --surface: #0a0c10;
-  --surface-2: #101318;
-  --line: rgba(255, 255, 255, 0.08);
-  --line-strong: rgba(255, 255, 255, 0.16);
-  --text: #ffffff;
-  --text-2: rgba(255, 255, 255, 0.62);
-  --text-3: rgba(255, 255, 255, 0.38);
-  --accent: #8b5cf6;
-  --accent-dim: rgba(139, 92, 246, 0.12);
-  --live: #ff3b30;
-
-  /* Pipeline state. The landing page is marketing and never needs these; the
-     Studio reports six stages that each succeed, warn, or fail, so it does.
-     Muted on purpose — they read as status, not as brand. */
-  --ok: #34d399;
-  --warn: #fbbf24;
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('/fonts/inter-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('/fonts/inter-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF,
+    U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020,
+    U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400 500;
+  font-display: swap;
+  src: url('/fonts/jetbrains-mono-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400 500;
+  font-display: swap;
+  src: url('/fonts/jetbrains-mono-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF,
+    U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020,
+    U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
 }
 
-@theme inline {
-  --color-bg: var(--bg);
-  --color-surface: var(--surface);
-  --color-surface-2: var(--surface-2);
-  --color-line: var(--line);
-  --color-line-strong: var(--line-strong);
-  --color-text: var(--text);
-  --color-text-2: var(--text-2);
-  --color-text-3: var(--text-3);
-  --color-accent: var(--accent);
-  --color-accent-dim: var(--accent-dim);
-  --color-live: var(--live);
-  --color-ok: var(--ok);
-  --color-warn: var(--warn);
-  /* Alias kept so anything still saying bg-ink resolves instead of silently
-     rendering transparent. */
-  --color-ink: var(--bg);
+/* ─────────────────────────────────────────────────────────────────────────
+   TH-Labs — dual-theme design tokens (Tailwind v4, CSS-first)
 
+   The visual language is a soft, modern IoT/SaaS dashboard: lavender-tinted
+   light mode with pure-white cards and diffuse shadows, plus a deep violet
+   dark mode where depth comes from borders + elevation tints. Every color
+   below is a raw "R G B" channel triplet so Tailwind can apply /alpha; the
+   themes swap the triplets, the components never hardcode a hex.
+   ───────────────────────────────────────────────────────────────────────── */
+
+@theme {
   --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI',
     Roboto, Helvetica, Arial, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', 'Fira Code', monospace;
-  --font-pixel: 'Press Start 2P', ui-monospace, monospace;
+
+  /* Semantic colors — resolved from the channel triplets defined per theme.
+     Defined as plain colors (no <alpha-value>); Tailwind v4 applies /opacity
+     modifiers via color-mix() automatically. */
+  --color-canvas: rgb(var(--c-canvas));
+  --color-surface: rgb(var(--c-surface));
+  --color-raised: rgb(var(--c-raised));
+  --color-sunken: rgb(var(--c-sunken));
+
+  --color-subtle: rgb(var(--c-border-subtle));
+  --color-strong: rgb(var(--c-border-strong));
+
+  --color-primary: rgb(var(--c-text-primary));
+  --color-secondary: rgb(var(--c-text-secondary));
+  --color-muted: rgb(var(--c-text-muted));
+
+  --color-brand: rgb(var(--c-brand-500));
+  --color-brand-400: rgb(var(--c-brand-400));
+  --color-cyan: rgb(var(--c-accent-cyan));
+  --color-magenta: rgb(var(--c-accent-magenta));
+
+  --color-success: rgb(var(--c-success));
+  --color-warn: rgb(var(--c-warn));
+  --color-danger: rgb(var(--c-danger));
+  --color-info: rgb(var(--c-info));
+
+  /* Radii */
+  --radius-card: 1.25rem;      /* 20px */
+  --radius-control: 0.875rem;  /* 14px */
+  --radius-pill: 999px;
+
+  /* Motion */
+  --ease-entrance: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* ── Depth / z-index scale ───────────────────────────────────────────────
-   Mirrors the landing page's scale. Use ONLY these, never a bare z-40. */
-@utility z-base { z-index: 0; }
-@utility z-glow { z-index: 10; }
-@utility z-grid { z-index: 20; }
-@utility z-deco { z-index: 30; }
-@utility z-content { z-index: 40; }
-@utility z-cards { z-index: 50; }
-@utility z-nav { z-index: 60; }
-@utility z-cursor { z-index: 70; }
-@utility z-overlay { z-index: 80; }
+/* ── Light theme (default) ─────────────────────────────────────────────── */
+:root,
+:root[data-theme='light'] {
+  color-scheme: light;
 
-/* Safe-area padding for notched devices. */
-@utility pt-safe { padding-top: env(safe-area-inset-top); }
-@utility pb-safe { padding-bottom: env(safe-area-inset-bottom); }
+  --c-canvas: 244 243 250;        /* faint lavender off-white */
+  --c-surface: 255 255 255;       /* pure white cards */
+  --c-raised: 255 255 255;
+  --c-sunken: 240 239 248;
 
-/* Halftone / dither dot field. `currentColor` drives intensity so a wrapper
-   can tint and mask it. */
-@utility dither-dots {
-  background-image: radial-gradient(currentColor 1px, transparent 1.4px);
-  background-size: 6px 6px;
+  --c-border-subtle: 232 230 243;
+  --c-border-strong: 214 210 231;
+
+  --c-text-primary: 24 22 41;     /* near-black violet */
+  --c-text-secondary: 92 88 115;
+  --c-text-muted: 142 138 163;
+
+  --c-brand-500: 124 92 246;
+  --c-brand-400: 146 122 250;
+  --c-accent-cyan: 12 165 199;
+  --c-accent-magenta: 200 55 224;
+
+  --c-success: 22 163 120;
+  --c-warn: 200 132 12;
+  --c-danger: 222 68 68;
+  --c-info: 46 120 240;
+
+  --grad-brand: linear-gradient(120deg, rgb(124 92 246) 0%, rgb(180 70 230) 50%, rgb(28 180 214) 100%);
+
+  --shadow-sm: 0 1px 2px rgb(60 50 110 / 0.06), 0 1px 3px rgb(60 50 110 / 0.05);
+  --shadow-md: 0 6px 16px -6px rgb(60 50 110 / 0.12), 0 2px 6px -2px rgb(60 50 110 / 0.08);
+  --shadow-lg: 0 24px 48px -20px rgb(60 50 110 / 0.22), 0 8px 20px -12px rgb(60 50 110 / 0.14);
+
+  /* surface treatments (used by component classes) */
+  --card-bg: rgb(255 255 255);
+  --card-shadow: var(--shadow-md);
+  --rail-bg: rgb(255 255 255 / 0.72);
 }
 
-html {
-  background: var(--bg);
-  scroll-behavior: smooth;
+/* ── Dark theme ────────────────────────────────────────────────────────── */
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --c-canvas: 9 9 17;             /* near-black violet */
+  --c-surface: 20 20 33;
+  --c-raised: 27 27 44;
+  --c-sunken: 13 13 23;
+
+  --c-border-subtle: 41 39 62;
+  --c-border-strong: 62 58 92;
+
+  --c-text-primary: 238 240 246;
+  --c-text-secondary: 168 168 191;
+  --c-text-muted: 120 120 147;
+
+  --c-brand-500: 139 92 246;
+  --c-brand-400: 167 139 250;
+  --c-accent-cyan: 34 211 238;
+  --c-accent-magenta: 217 70 239;
+
+  --c-success: 52 211 153;
+  --c-warn: 251 191 36;
+  --c-danger: 248 113 113;
+  --c-info: 96 165 250;
+
+  --grad-brand: linear-gradient(120deg, rgb(139 92 246) 0%, rgb(217 70 239) 50%, rgb(34 211 238) 100%);
+
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-md: 0 8px 24px -12px rgb(0 0 0 / 0.55);
+  --shadow-lg: 0 30px 60px -24px rgb(0 0 0 / 0.7);
+
+  --card-bg: linear-gradient(180deg, rgb(27 27 44 / 0.9), rgb(20 20 33 / 0.9));
+  --card-shadow: var(--shadow-md), inset 0 1px 0 rgb(255 255 255 / 0.05);
+  --rail-bg: rgb(20 20 33 / 0.72);
 }
 
-/* On large / high-res displays, scale the rem-based design up so it fills the
-   screen instead of floating in a narrow column. */
+html { scroll-behavior: smooth; }
+
+/* Scale the rem-based design up on very large displays so it fills the screen. */
 @media (min-width: 1920px) { html { font-size: 17px; } }
 @media (min-width: 2560px) { html { font-size: 19px; } }
 @media (min-width: 3440px) { html { font-size: 21px; } }
 
+/* Centered, fluid page container. */
+.wrap {
+  margin-inline: auto;
+  max-width: 84rem;
+  padding-inline: clamp(1.25rem, 3vw, 3.5rem);
+}
+@media (min-width: 1536px) { .wrap { max-width: 92rem; } }
+@media (min-width: 1920px) { .wrap { max-width: 104rem; } }
+@media (min-width: 2560px) { .wrap { max-width: 116rem; } }
+
 body {
   margin: 0;
-  background: var(--bg);
-  color: var(--text);
+  background: rgb(var(--c-canvas));
+  color: rgb(var(--c-text-primary));
   font-family: var(--font-sans);
-  font-feature-settings: 'ss01';
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
   overflow-x: hidden;
+  transition: background-color 0.25s var(--ease-exit), color 0.25s var(--ease-exit);
 }
 
-/* Every heading is monospace, matching the landing page's voice. .font-pixel
-   on the wordmark still wins — utilities outrank element selectors. */
-h1, h2, h3, h4, h5, h6 {
-  font-family: var(--font-mono), ui-monospace, monospace;
+/* Soft, theme-aware ambient wash behind everything. */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  background:
+    radial-gradient(48rem 48rem at 8% -8%, rgb(var(--c-brand-500) / 0.14), transparent 60%),
+    radial-gradient(42rem 42rem at 100% 4%, rgb(var(--c-accent-cyan) / 0.10), transparent 55%),
+    radial-gradient(46rem 46rem at 50% 116%, rgb(var(--c-accent-magenta) / 0.08), transparent 60%);
+  transition: opacity 0.25s var(--ease-exit);
 }
 
-::selection {
-  background: rgba(139, 92, 246, 0.3);
-  color: #fff;
-}
+::selection { background: rgb(var(--c-brand-500) / 0.28); }
 
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
-  background: #23262d;
+  background: rgb(var(--c-border-strong));
   border-radius: 9999px;
-  border: 2px solid var(--bg);
+  border: 2px solid rgb(var(--c-canvas));
 }
-::-webkit-scrollbar-thumb:hover { background: #333741; }
 
-/* Page container — centered, fluid padding, stepping up on wide screens. */
-.wrap {
-  margin-inline: auto;
-  max-width: 80rem;
-  padding-inline: clamp(1.25rem, 3vw, 4rem);
-}
-@media (min-width: 1536px) { .wrap { max-width: 90rem; } }
-@media (min-width: 1920px) { .wrap { max-width: 100rem; } }
-@media (min-width: 2560px) { .wrap { max-width: 112rem; } }
-
-/* ── Reusable component classes ──────────────────────────────────────────
-   Same names the Studio already used, restyled to the current language. The
-   gradient fills are gone: surfaces are flat, borders do the separating, and
-   the accent appears on hover and active state rather than at rest. */
+/* ── Reusable component classes ─────────────────────────────────────────── */
 @layer components {
-  /* Was a violet→fuchsia→cyan gradient fill. The wordmark is now the pixel
-     font at full white, so this is only for the rare inline accent word. */
   .gradient-text {
-    color: var(--accent);
+    background: var(--grad-brand);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
   }
 
   .glass {
-    background: rgba(10, 12, 16, 0.72);
-    border: 1px solid var(--line);
+    background: var(--rail-bg);
+    border: 1px solid rgb(var(--c-border-subtle));
     backdrop-filter: blur(16px);
   }
 
+  /* Soft rounded surface card — the core bento primitive. */
   .card {
-    background: var(--surface);
-    border: 1px solid var(--line);
-    border-radius: 0.875rem;
+    background: var(--card-bg);
+    border: 1px solid rgb(var(--c-border-subtle));
+    border-radius: var(--radius-card);
+    box-shadow: var(--card-shadow);
   }
 
   .card-hover {
-    transition: border-color 0.25s ease, background-color 0.25s ease;
+    transition: transform 0.2s var(--ease-entrance), border-color 0.2s, box-shadow 0.2s;
+    will-change: transform;
   }
   .card-hover:hover {
-    border-color: var(--line-strong);
-    background: var(--surface-2);
+    transform: translateY(-3px);
+    border-color: rgb(var(--c-brand-500) / 0.4);
+    box-shadow: var(--shadow-lg);
   }
 
-  /* White pill, black label — the landing page's primary button. */
   .btn-primary {
-    background: #fff;
-    color: #000;
-    font-family: var(--font-mono), ui-monospace, monospace;
-    font-weight: 500;
-    border-radius: 9999px;
-    transition: box-shadow 0.25s ease, transform 0.15s ease, opacity 0.2s ease;
+    position: relative;
+    background: var(--grad-brand);
+    background-size: 180% 180%;
+    color: white;
+    font-weight: 600;
+    border-radius: var(--radius-pill);
+    box-shadow: 0 10px 30px -12px rgb(var(--c-brand-500) / 0.7);
+    transition: transform 0.2s, box-shadow 0.3s, background-position 0.5s;
   }
-  .btn-primary:hover:not(:disabled) {
-    box-shadow: 0 0 24px rgba(139, 92, 246, 0.5);
+  .btn-primary:hover {
+    transform: translateY(-2px);
+    background-position: 100% 50%;
+    box-shadow: 0 16px 40px -12px rgb(var(--c-brand-500) / 0.85);
   }
-  .btn-primary:active:not(:disabled) { transform: translateY(1px); }
-  .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-primary:active { transform: translateY(0); }
 
   .btn-ghost {
-    border: 1px solid var(--line);
-    border-radius: 9999px;
-    color: var(--text-2);
-    font-family: var(--font-mono), ui-monospace, monospace;
+    border: 1px solid rgb(var(--c-border-strong));
+    border-radius: var(--radius-pill);
+    color: rgb(var(--c-text-secondary));
+    background: rgb(var(--c-surface) / 0.4);
     transition: border-color 0.2s, background 0.2s, color 0.2s;
   }
-  .btn-ghost:hover:not(:disabled) {
-    border-color: var(--line-strong);
-    background: rgba(255, 255, 255, 0.04);
-    color: var(--text);
+  .btn-ghost:hover {
+    border-color: rgb(var(--c-brand-500) / 0.55);
+    background: rgb(var(--c-brand-500) / 0.08);
+    color: rgb(var(--c-text-primary));
   }
-  .btn-ghost:disabled { opacity: 0.4; cursor: not-allowed; }
 
   .chip {
-    border: 1px solid var(--line);
-    background: rgba(255, 255, 255, 0.03);
-    border-radius: 9999px;
-    font-family: var(--font-mono), ui-monospace, monospace;
+    border: 1px solid rgb(var(--c-border-subtle));
+    background: rgb(var(--c-surface));
+    border-radius: var(--radius-pill);
+    box-shadow: var(--shadow-sm);
   }
 
-  /* Focus ring used across interactive elements. */
-  .focus-ring {
-    outline: none;
+  /* Icon-in-tinted-circle motif used across cards and chips. */
+  .icon-tile {
+    display: grid;
+    place-items: center;
+    border-radius: var(--radius-control);
   }
-  .focus-ring:focus-visible {
-    box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px rgba(255, 255, 255, 0.6);
+
+  /* Visible keyboard focus ring in the brand color. */
+  .focusable:focus-visible {
+    outline: 2px solid rgb(var(--c-brand-400));
+    outline-offset: 2px;
+  }
+
+  /* Internal-scroll columns in the fixed shell hide their scrollbars (§2). */
+  .no-scrollbar { scrollbar-width: none; }
+  .no-scrollbar::-webkit-scrollbar { display: none; width: 0; height: 0; }
+
+  /* Deterministic template thumbnail: the gradient is set inline via
+     background-image (so background-position/size stay ours); on card hover the
+     gradient drifts across ~2s for a subtle live-preview shimmer (01 §D). */
+  .thumb-grad {
+    background-size: 200% 200%;
+    background-position: 0% 50%;
+    transition: background-position 2s var(--ease-entrance);
+  }
+  .group:hover .thumb-grad { background-position: 100% 50%; }
+
+  /* Credit-calculator range slider (04) — a brand thumb on a sunken track, with
+     a tall (44px) touch area from the input's own height. */
+  .calc-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    background: transparent;
+  }
+  .calc-slider::-webkit-slider-runnable-track {
+    height: 6px;
+    border-radius: 999px;
+    background: rgb(var(--c-sunken));
+    box-shadow: inset 0 0 0 1px rgb(var(--c-border-strong));
+  }
+  .calc-slider::-moz-range-track {
+    height: 6px;
+    border-radius: 999px;
+    background: rgb(var(--c-sunken));
+    box-shadow: inset 0 0 0 1px rgb(var(--c-border-strong));
+  }
+  .calc-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 20px;
+    height: 20px;
+    margin-top: -7px;
+    border-radius: 999px;
+    background: rgb(var(--c-brand-500));
+    border: 2px solid #fff;
+    box-shadow: 0 2px 6px rgb(var(--c-brand-500) / 0.5);
+    cursor: pointer;
+  }
+  .calc-slider::-moz-range-thumb {
+    width: 20px;
+    height: 20px;
+    border-radius: 999px;
+    background: rgb(var(--c-brand-500));
+    border: 2px solid #fff;
+    box-shadow: 0 2px 6px rgb(var(--c-brand-500) / 0.5);
+    cursor: pointer;
+  }
+  .calc-slider:focus-visible::-webkit-slider-thumb {
+    outline: 2px solid rgb(var(--c-brand-400));
+    outline-offset: 2px;
   }
 }
 
-/* ── Keyframes ───────────────────────────────────────────────────────────
-   Carried over from the landing page so shared motion reads the same. */
-@keyframes wave-bar {
-  0%, 100% { transform: scaleY(0.25); }
+/* Lock the document on the fixed-height desktop shell (§2). Scoped to lg so the
+   mobile scrolling document (§11) is never affected. */
+@media (min-width: 1024px) {
+  body[data-shell='fixed'] { overflow: hidden; }
+}
+
+/* ── Keyframes ──────────────────────────────────────────────────────────── */
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-12px); }
+}
+@keyframes wave {
+  0%, 100% { transform: scaleY(0.35); }
   50% { transform: scaleY(1); }
 }
-.animate-wave-bar { animation: wave-bar 1.4s ease-in-out infinite; }
-
-@keyframes marquee {
-  from { transform: translateX(0); }
-  to { transform: translateX(-50%); }
-}
-.animate-marquee { animation: marquee var(--marquee-duration, 34s) linear infinite; }
-
 @keyframes shimmer {
-  from { transform: translateX(-120%) skewX(-12deg); }
-  to { transform: translateX(220%) skewX(-12deg); }
+  100% { transform: translateX(100%); }
 }
-.animate-shimmer { animation: shimmer 0.9s ease-out; }
-
-@keyframes float-bob {
-  0%, 100% { transform: translate3d(0, 0, 0); }
-  50% { transform: translate3d(0, var(--float-distance, -12px), 0); }
-}
-.animate-float {
-  animation: float-bob var(--float-duration, 7s) ease-in-out infinite;
-  animation-delay: var(--float-delay, 0s);
-}
-
 @keyframes spin-slow { to { transform: rotate(360deg); } }
-.animate-spin-slow { animation: spin-slow 44s linear infinite; }
-.animate-spin-slower { animation: spin-slow 90s linear infinite; }
+@keyframes soft-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.85; transform: scale(1.06); }
+}
+
+.animate-float { animation: float 6s ease-in-out infinite; }
+.animate-spin-slow { animation: spin-slow 1.4s linear infinite; }
+.animate-soft-pulse { animation: soft-pulse 1.8s ease-in-out infinite; }
+
+.shimmer {
+  position: relative;
+  overflow: hidden;
+}
+.shimmer::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgb(var(--c-text-primary) / 0.06), transparent);
+  animation: shimmer 1.6s infinite;
+}
 
 @media (prefers-reduced-motion: reduce) {
-  .animate-wave-bar,
-  .animate-marquee,
-  .animate-shimmer,
-  .animate-float,
-  .animate-spin-slow,
-  .animate-spin-slower {
-    animation: none !important;
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
   }
-  html { scroll-behavior: auto; }
 }

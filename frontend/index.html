@@ -3,37 +3,38 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <!-- Matches the landing page's --bg (#050607) so the browser chrome does
-         not flash a different dark on the way in from there. -->
-    <meta name="theme-color" content="#050607" />
-    <meta name="description" content="TH-LABS — identity-preserving AI video dubbing. Whisper ASR, NLLB translation, OmniVoice voice cloning, optional lip sync." />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f4f3fa" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#090911" media="(prefers-color-scheme: dark)" />
+    <meta name="description" content="TH-Labs — identity-preserving AI video dubbing. Whisper ASR, NLLB translation, OmniVoice voice cloning, optional lip sync." />
 
-    <!-- This page is entered as  /?code=<one-time handoff code>  and the code
-         is a credential until React strips it on mount. The font <link>s below
-         are fetched by the preload scanner BEFORE that happens, so without an
-         explicit policy the only thing keeping the code out of Google's
-         referer logs is the browser default. Current engines default to
-         strict-origin-when-cross-origin and would send just the origin, but an
-         older one defaulting to no-referrer-when-downgrade sends the full URL,
-         query included, on an https->https request.
-         Stated here so it does not depend on the user agent's opinion. Matches
-         the header Caddy sets for the landing page, so both halves of the
-         product behave the same. -->
-    <meta name="referrer" content="strict-origin-when-cross-origin" />
+    <!-- Apply the theme before first paint to avoid a flash. Uses the stored
+         choice, else the OS preference, defaulting to light. -->
+    <script>
+      (function () {
+        try {
+          var stored = localStorage.getItem('th-labs.theme')
+          var theme =
+            stored === 'light' || stored === 'dark'
+              ? stored
+              : window.matchMedia('(prefers-color-scheme: dark)').matches
+                ? 'dark'
+                : 'light'
+          document.documentElement.setAttribute('data-theme', theme)
+          document.documentElement.style.colorScheme = theme
+        } catch (e) {
+          document.documentElement.setAttribute('data-theme', 'light')
+        }
+      })()
+    </script>
 
-    <!-- Same three families the landing page loads via next/font: Inter for
-         prose, JetBrains Mono for headings and UI, Press Start 2P for the
-         wordmark. Loaded here rather than with an @import in index.css so the
-         preload scanner can start them without waiting on the stylesheet. -->
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      rel="stylesheet"
-      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&family=Press+Start+2P&display=swap"
-    />
+    <!-- TH-Labs brand typography: Inter (body) + JetBrains Mono (display/mono),
+         self-hosted (subset from th-labs.uz). @font-face lives in src/index.css;
+         no runtime web-font request is made. Preload the primary Latin subsets. -->
+    <link rel="preload" as="font" type="font/woff2" href="/fonts/inter-latin.woff2" crossorigin />
+    <link rel="preload" as="font" type="font/woff2" href="/fonts/jetbrains-mono-latin.woff2" crossorigin />
 
-    <title>TH-LABS · AI Dubbing with Voice Preservation</title>
+    <title>TH-Labs · AI Dubbing with Voice Preservation</title>
   </head>
   <body>
     <div id="root"></div>

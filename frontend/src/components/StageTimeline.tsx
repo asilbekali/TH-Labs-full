@@ -1,4 +1,6 @@
+import { motion } from 'framer-motion'
 import type { StageState } from '../lib/types'
+import LogoLoader from './brand/LogoLoader'
 
 const ICONS: Record<string, React.ReactNode> = {
   asr: <><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3" /></>,
@@ -9,21 +11,18 @@ const ICONS: Record<string, React.ReactNode> = {
   sync: <path d="M12 3l2 5 5 2-5 2-2 5-2-5-5-2 5-2z" />,
 }
 
-// Running is the only state that gets the brand accent; done/failed use the
-// semantic status tokens, and inert states stay on the neutral line/text ramp.
-// That keeps a glance at the timeline reading as "where is it now".
 function statusStyle(s: StageState['status']) {
   switch (s) {
     case 'running':
-      return { ring: 'border-accent/50 bg-accent-dim', dot: 'bg-accent animate-pulse', text: 'text-accent' }
+      return { ring: 'border-brand/50 bg-brand/[0.08]', dot: 'bg-brand animate-pulse', text: 'text-brand' }
     case 'done':
-      return { ring: 'border-ok/30 bg-ok/[0.05]', dot: 'bg-ok', text: 'text-ok' }
+      return { ring: 'border-success/40 bg-success/[0.06]', dot: 'bg-success', text: 'text-success' }
     case 'failed':
-      return { ring: 'border-live/50 bg-live/10', dot: 'bg-live', text: 'text-live' }
+      return { ring: 'border-danger/50 bg-danger/10', dot: 'bg-danger', text: 'text-danger' }
     case 'skipped':
-      return { ring: 'border-line bg-white/[0.02]', dot: 'bg-white/25', text: 'text-text-3' }
+      return { ring: 'border-subtle bg-sunken', dot: 'bg-muted', text: 'text-muted' }
     default:
-      return { ring: 'border-line bg-white/[0.02]', dot: 'bg-white/20', text: 'text-text-3' }
+      return { ring: 'border-subtle bg-sunken', dot: 'bg-muted', text: 'text-muted' }
   }
 }
 
@@ -34,45 +33,54 @@ export default function StageTimeline({ stages }: { stages: StageState[] }) {
         const s = statusStyle(st.status)
         const engineMode = (st.detail?.engine_mode as string) ?? undefined
         return (
-          <div key={st.key} className={`rounded-xl border p-4 transition-colors ${s.ring}`}>
+          <div key={st.key} className={`rounded-2xl border p-4 transition-colors ${s.ring}`}>
             <div className="flex items-center gap-3">
-              <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-white/5 ${s.text}`}>
+              <motion.span
+                animate={st.status === 'running' ? { scale: [1, 1.06, 1] } : { scale: 1 }}
+                transition={st.status === 'running' ? { duration: 1.8, repeat: Infinity, ease: 'easeInOut' } : {}}
+                className={`icon-tile h-10 w-10 shrink-0 bg-surface ${s.text}`}
+              >
                 {st.status === 'running' ? (
-                  <svg viewBox="0 0 24 24" className="h-5 w-5 animate-spin-slow" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M21 12a9 9 0 1 1-6.2-8.5" strokeLinecap="round" />
+                  <LogoLoader size="sm" label="Stage running" />
+                ) : st.status === 'done' ? (
+                  <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M20 6 9 17l-5-5" />
                   </svg>
                 ) : (
                   <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
                     {ICONS[st.key]}
                   </svg>
                 )}
-              </span>
+              </motion.span>
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
-                  <span className="font-mono text-sm font-medium text-white">{st.label}</span>
+                  <span className="text-sm font-semibold text-primary">{st.label}</span>
                   {engineMode && (
-                    <span className={`rounded px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wide ${engineMode === 'real' ? 'bg-ok/15 text-ok' : 'bg-white/8 text-text-3'}`}>
+                    <span className={`rounded px-1.5 py-0.5 text-[9px] uppercase tracking-wide ${engineMode === 'real' ? 'bg-success/15 text-success' : 'bg-sunken text-muted'}`}>
                       {engineMode}
                     </span>
                   )}
-                  <span className={`ml-auto flex items-center gap-1.5 font-mono text-xs ${s.text}`}>
+                  <span className={`ml-auto flex items-center gap-1.5 text-xs ${s.text}`}>
                     <span className={`h-1.5 w-1.5 rounded-full ${s.dot}`} />
                     {st.status}
                   </span>
                 </div>
-                <div className="mt-1 truncate text-xs text-text-2">
+                <div className="mt-1 truncate text-xs text-muted">
                   {primaryLine(st)}
                   {st.duration_ms != null && st.status === 'done' && (
-                    <span className="ml-2 font-mono text-text-3">{(st.duration_ms / 1000).toFixed(1)}s</span>
+                    <span className="ml-2 font-mono text-muted">{(st.duration_ms / 1000).toFixed(1)}s</span>
                   )}
                 </div>
               </div>
             </div>
             {st.status !== 'skipped' && (
-              <div className="mt-3 h-1 overflow-hidden rounded-full bg-white/8">
+              <div className="mt-3 h-1 overflow-hidden rounded-full bg-sunken">
                 <div
-                  className={`h-full rounded-full transition-all duration-500 ${st.status === 'failed' ? 'bg-live' : 'bg-accent'}`}
-                  style={{ width: `${Math.round(st.progress * 100)}%` }}
+                  className={`h-full rounded-full transition-all duration-500 ${st.status === 'failed' ? 'bg-danger' : ''}`}
+                  style={{
+                    width: `${Math.round(st.progress * 100)}%`,
+                    background: st.status === 'failed' ? undefined : 'var(--grad-brand)',
+                  }}
                 />
               </div>
             )}
@@ -83,8 +91,6 @@ export default function StageTimeline({ stages }: { stages: StageState[] }) {
   )
 }
 
-// Prefer a custom status message ("No speech detected"), then a meaningful
-// detail line (segments / VAD info), and only fall back to "Done"/"Working…".
 function primaryLine(st: StageState): string {
   const generic = st.message === 'Done' || st.message === 'Working…' || !st.message
   if (!generic) return st.message

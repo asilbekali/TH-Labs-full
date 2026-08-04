@@ -12,6 +12,8 @@ export default defineConfig({
     proxy: {
       '/api': { target: 'http://127.0.0.1:8000', changeOrigin: true },
       '/media': { target: 'http://127.0.0.1:8000', changeOrigin: true },
+      // The NestJS account API (login/logout/register) runs on :3001 under /v1.
+      '/v1': { target: 'http://127.0.0.1:3001', changeOrigin: true },
     },
   },
 })
