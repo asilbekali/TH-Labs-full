@@ -7,6 +7,7 @@ import type { ReactNode } from 'react'
 import * as authApi from './auth-api'
 import type { AccountUser } from './auth-api'
 import {
+  apiUrl,
   bootstrapSession,
   registerAuthHandlers,
   setAccessToken,
@@ -31,14 +32,26 @@ interface AuthContextValue {
 const AuthContext = createContext<AuthContextValue | null>(null)
 
 // ── Session handoff from the landing page ──────────────────────────────────
-// The marketing/landing site may sign the user in and redirect here, handing an
-// access token over in the URL fragment (never the query string, so tokens are
-// not sent to servers or leaked via Referer). We consume it once to seed the
-// in-memory token, then strip it from the URL. Refresh still relies on the
-// httpOnly cookie the shared API set at login — the fragment's refresh token
-// (if any) is ignored under the cookie model.
+// The landing site signs the user in and redirects here. What it actually
+// sends is a single-use code:
+//
+//   /?code=<43 base64url chars>   → POST /v1/auth/handoff/exchange
+//
+// The code carries no identity, dies after ~60s or one redemption, and the
+// exchange sets the same httpOnly refresh cookie a login would. That is the
+// path that matters — see readHandoffCode below.
+//
+// A token may ALSO arrive in the fragment, which is supported for a caller
+// that has an access token already and no way to mint a code:
 //   #th_session=<base64url(JSON {accessToken, user})>        (preferred)
 //   #access_token=<jwt>                                      (user from the JWT)
+//
+// Fragment ONLY, deliberately. Reading a token from the query string as well
+// would mean a crafted link — /?access_token=<attacker's jwt> — silently signs
+// a visitor into someone else's account, and unlike the fragment the query is
+// sent to the server and can leak through Referer. The strip list below still
+// covers the query so a stray token gets cleaned out of the URL rather than
+// honoured.
 const HANDOFF_KEYS = ['th_session', 'access_token', 'refresh_token']
 
 function b64urlDecode(input: string): string {
@@ -57,11 +70,48 @@ function parseJwt(token: string): Record<string, unknown> | null {
   }
 }
 
+/**
+ * Take the one-time handoff code out of the query string.
+ *
+ * Removed from the URL as it is read, whether or not redemption later
+ * succeeds: the code is single-use, so a failed attempt has burned it too and
+ * leaving it visible would only invite a confusing retry.
+ */
+function readHandoffCode(): string | null {
+  if (typeof window === 'undefined') return null
+  const url = new URL(window.location.href)
+  const code = url.searchParams.get('code')
+  if (!code) return null
+  url.searchParams.delete('code')
+  window.history.replaceState(null, '', url.pathname + url.search + url.hash)
+  return code
+}
+
+/** Redeem a handoff code for an access token + the httpOnly refresh cookie. */
+async function redeemHandoffCode(code: string): Promise<Session | null> {
+  try {
+    const r = await fetch(apiUrl('/auth/handoff/exchange'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      // Required: the response carries Set-Cookie for the refresh token, and
+      // without this the browser discards it and every later refresh fails.
+      credentials: 'include',
+      body: JSON.stringify({ code }),
+    })
+    if (!r.ok) return null
+    const data = (await r.json()) as { accessToken?: string; user?: AccountUser }
+    if (!data.accessToken || !data.user) return null
+    return { accessToken: data.accessToken, user: data.user }
+  } catch {
+    return null // network / CORS
+  }
+}
+
 function readHandoff(): Session | null {
   if (typeof window === 'undefined') return null
   const hash = new URLSearchParams(window.location.hash.replace(/^#/, ''))
-  const query = new URLSearchParams(window.location.search)
-  const get = (k: string) => hash.get(k) ?? query.get(k)
+  // Fragment only — see the note on HANDOFF_KEYS.
+  const get = (k: string) => hash.get(k)
 
   try {
     const session = get('th_session')
@@ -138,21 +188,45 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     })
   }, [])
 
-  // Bootstrap: consume any landing-page handoff, then try the refresh cookie.
+  // Bootstrap: redeem a landing-page handoff code, else consume a fragment
+  // token, else fall back to the refresh cookie.
+  //
+  // Both URL reads happen synchronously here, before any await, because they
+  // mutate the address bar and the code is single-use — React StrictMode
+  // double-invokes this effect in development, and a second pass must find the
+  // URL already clean rather than race a redemption that is still in flight.
   useEffect(() => {
     let cancelled = false
-    const handoff = readHandoff()
-    stripHandoffFromUrl()
-    if (handoff) apply(handoff)
 
-    bootstrapSession()
-      .then((s) => {
+    const code = readHandoffCode()
+    const fragment = readHandoff()
+    stripHandoffFromUrl()
+
+    // Seed immediately so the first paint is signed-in when a fragment token
+    // was supplied; a code still has to make a round trip.
+    if (fragment) apply(fragment)
+
+    void (async () => {
+      try {
+        if (code) {
+          const redeemed = await redeemHandoffCode(code)
+          if (cancelled) return
+          if (redeemed) {
+            apply(redeemed)
+            return
+          }
+          // Expired, already spent, or unreachable — fall through; a valid
+          // cookie from an earlier visit should not be discarded because this
+          // particular handoff failed.
+        }
+
+        const s = await bootstrapSession()
         if (cancelled) return
         if (s) apply({ accessToken: s.accessToken, user: s.user as AccountUser })
-      })
-      .finally(() => {
+      } finally {
         if (!cancelled) setReady(true)
-      })
+      }
+    })()
 
     return () => {
       cancelled = true

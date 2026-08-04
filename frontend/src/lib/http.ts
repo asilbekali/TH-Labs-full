@@ -99,16 +99,23 @@ async function readError(r: Response, fallback: string): Promise<string> {
   return fallback
 }
 
-// Authenticated fetch with one silent-refresh retry on 401.
-export async function authFetch(
-  path: string,
+// Authenticated fetch against an already-complete URL, with one silent-refresh
+// retry on 401.
+//
+// Exists separately from authFetch because there are TWO backends: the account
+// API at BASE (/v1, NestJS) and the dubbing API the Studio is served from
+// (/api, FastAPI). Both verify the same bearer token — backend/app/auth.py
+// checks it against the shared JWT_SECRET — but only the first lives under
+// BASE, so routing /api/jobs through authFetch would request /v1/api/jobs.
+export async function authFetchUrl(
+  url: string,
   init: RequestInit = {},
   _retry = true,
 ): Promise<Response> {
   const headers = new Headers(init.headers)
   if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`)
 
-  const res = await fetch(`${BASE}${path}`, {
+  const res = await fetch(url, {
     ...init,
     headers,
     credentials: 'include',
@@ -120,9 +127,17 @@ export async function authFetch(
       onCleared?.()
       return res
     }
-    return authFetch(path, init, false)
+    return authFetchUrl(url, init, false)
   }
   return res
+}
+
+// Authenticated fetch against the account API (paths are relative to BASE).
+export function authFetch(
+  path: string,
+  init: RequestInit = {},
+): Promise<Response> {
+  return authFetchUrl(`${BASE}${path}`, init)
 }
 
 // authFetch + JSON parsing + NestJS-style error extraction.

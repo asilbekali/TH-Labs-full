@@ -1,5 +1,13 @@
 // Thin API client. Uses relative URLs so the Vite proxy (dev) and a reverse
 // proxy (prod) both resolve to the FastAPI backend.
+//
+// Everything under /api/jobs is AUTHENTICATED — the pipeline runs on a GPU and
+// a job holds the user's uploaded video and its transcript, so
+// backend/app/auth.py verifies the same bearer token the account API issues and
+// scopes each job to its owner. Those calls go through authFetchUrl, which
+// attaches the token and transparently refreshes it; /health, /languages and
+// the mock-backed catalog routes stay public and use plain fetch.
+import { authFetchUrl, getAccessToken } from "./http";
 import type { Health, Job, JobEvent, Language, StageInfo } from "./types";
 import { TEMPLATES, RESUMABLE } from "../mocks/templates";
 import type { Template, ResumableJob } from "../mocks/templates";
@@ -235,6 +243,17 @@ export interface CreateJobInput {
   file?: File | null;
 }
 
+/**
+ * The session expired or was revoked mid-flight and could not be refreshed.
+ * Callers surface this as "sign in again" rather than a generic failure.
+ */
+export class AuthRequiredError extends Error {
+  constructor() {
+    super("Your session has expired. Sign in again to continue.");
+    this.name = "AuthRequiredError";
+  }
+}
+
 export async function createJob(input: CreateJobInput): Promise<Job> {
   const fd = new FormData();
   fd.append("target_lang", input.target_lang);
@@ -246,7 +265,8 @@ export async function createJob(input: CreateJobInput): Promise<Job> {
   fd.append("sample", String(input.sample ?? false));
   if (input.file) fd.append("file", input.file);
 
-  const r = await fetch(`${BASE}/jobs`, { method: "POST", body: fd });
+  const r = await authFetchUrl(`${BASE}/jobs`, { method: "POST", body: fd });
+  if (r.status === 401) throw new AuthRequiredError();
   if (!r.ok) {
     const msg = await r.text().catch(() => "");
     throw new Error(`job creation failed: ${r.status} ${msg}`);
@@ -255,7 +275,8 @@ export async function createJob(input: CreateJobInput): Promise<Job> {
 }
 
 export async function getJob(jobId: string): Promise<Job> {
-  const r = await fetch(`${BASE}/jobs/${jobId}`);
+  const r = await authFetchUrl(`${BASE}/jobs/${jobId}`);
+  if (r.status === 401) throw new AuthRequiredError();
   if (!r.ok) throw new Error("job fetch failed");
   return (await r.json()).job;
 }
@@ -290,7 +311,17 @@ export function subscribeJob(
   onEvent: (evt: JobEvent) => void,
   onError?: () => void,
 ): () => void {
-  const es = new EventSource(`${BASE}/jobs/${jobId}/events`);
+  // EventSource cannot set headers — the browser API takes a URL and nothing
+  // else — so the SSE route also accepts ?access_token= (see
+  // backend/app/auth.py:require_user_sse). Only the short-lived access token
+  // goes here, never anything longer-lived, and the request is same-origin.
+  // Safe to read synchronously: callers subscribe immediately after createJob,
+  // which has just refreshed the token through authFetchUrl.
+  const token = getAccessToken();
+  const es = new EventSource(
+    `${BASE}/jobs/${jobId}/events` +
+      (token ? `?access_token=${encodeURIComponent(token)}` : ""),
+  );
   es.onmessage = (e) => {
     try {
       const evt: JobEvent = JSON.parse(e.data);
