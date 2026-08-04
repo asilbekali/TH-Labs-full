@@ -2,7 +2,6 @@ import {
   Body,
   Controller,
   Get,
-  Headers,
   HttpCode,
   HttpStatus,
   Post,
@@ -42,9 +41,9 @@ export class AuthController {
   login(
     @Body() dto: LoginDto,
     @Res({ passthrough: true }) res: Response,
-    @Headers('user-agent') userAgent?: string,
+    @Req() req: Request,
   ) {
-    return this.authService.login(dto, res, userAgent);
+    return this.authService.login(dto, res, req.headers['user-agent']);
   }
 
   @Post('refresh')
@@ -56,12 +55,11 @@ export class AuthController {
   refresh(
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
-    @Headers('user-agent') userAgent?: string,
   ) {
     const raw = (req.cookies as Record<string, string> | undefined)?.[
       REFRESH_COOKIE
     ];
-    return this.authService.refresh(raw, res, userAgent);
+    return this.authService.refresh(raw, res, req.headers['user-agent']);
   }
 
   @Post('logout')
@@ -116,8 +114,12 @@ export class AuthController {
   exchangeHandoff(
     @Body() dto: ExchangeHandoffDto,
     @Res({ passthrough: true }) res: Response,
-    @Headers('user-agent') userAgent?: string,
+    @Req() req: Request,
   ) {
-    return this.authService.exchangeHandoffCode(dto.code, res, userAgent);
+    return this.authService.exchangeHandoffCode(
+      dto.code,
+      res,
+      req.headers['user-agent'],
+    );
   }
 }
