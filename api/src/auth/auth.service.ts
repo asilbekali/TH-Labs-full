@@ -101,6 +101,84 @@ export class AuthService {
     return this.publicUser(user);
   }
 
+  // ── Cross-origin handoff ────────────────────────────────────────────────
+  // The refresh token is an httpOnly cookie scoped to this origin, so it
+  // cannot follow a user to the Studio on *.modal.run. These two endpoints
+  // move the session there without a token ever appearing in a URL.
+
+  /**
+   * Mint a single-use code that carries this session to another origin.
+   *
+   * Called server-to-server by the landing page with the access token it just
+   * received, so the browser is handed the code INSTEAD of anything reusable.
+   * Only the hash is stored; the raw code is returned once, here.
+   */
+  async createHandoffCode(userId: number) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new UnauthorizedException('Invalid session');
+
+    const code = randomBytes(HANDOFF_CODE_BYTES).toString('base64url');
+    const expiresAt = new Date(Date.now() + HANDOFF_TTL_SECONDS * 1000);
+
+    await this.prisma.handoffCode.create({
+      data: { codeHash: hashHandoffCode(code), userId, expiresAt },
+    });
+
+    // Opportunistic sweep of rows that can no longer be redeemed. Cheap (the
+    // expiresAt index covers it) and avoids needing a scheduled job.
+    await this.deleteExpiredCodes();
+
+    return { code, expiresIn: HANDOFF_TTL_SECONDS };
+  }
+
+  /**
+   * Redeem a handoff code. Public endpoint — the code itself is the only
+   * credential, which is why it must be unguessable, short-lived and
+   * single-use.
+   *
+   * Goes through issueTokens, so redemption sets the same rotated httpOnly
+   * refresh cookie a normal login would and returns only the access token in
+   * the body. The Studio must therefore call this with credentials:'include',
+   * or the Set-Cookie is discarded and it will have no way to refresh.
+   */
+  async exchangeHandoffCode(code: string, res: Response, userAgent?: string) {
+    // The claim and the validity check are ONE statement on purpose. Reading
+    // the row, deciding it is usable, then marking it used would let two
+    // requests arriving together both pass; `usedAt: null` inside the WHERE
+    // makes the database the arbiter, so exactly one UPDATE can match.
+    const claimed = await this.prisma.handoffCode.updateMany({
+      where: {
+        codeHash: hashHandoffCode(code),
+        usedAt: null,
+        expiresAt: { gt: new Date() },
+      },
+      data: { usedAt: new Date() },
+    });
+
+    // One message for every failure — unknown, expired and already-spent are
+    // indistinguishable to the caller, so this cannot be used to probe which
+    // codes existed.
+    if (claimed.count !== 1) {
+      throw new UnauthorizedException('Invalid or expired handoff code');
+    }
+
+    const record = await this.prisma.handoffCode.findUnique({
+      where: { codeHash: hashHandoffCode(code) },
+      include: { user: true },
+    });
+    if (!record) {
+      throw new UnauthorizedException('Invalid or expired handoff code');
+    }
+
+    return this.issueTokens(record.user, res, userAgent);
+  }
+
+  async deleteExpiredCodes() {
+    return this.prisma.handoffCode.deleteMany({
+      where: { expiresAt: { lt: new Date() } },
+    });
+  }
+
   // Issue a fresh access token + refresh cookie for an already-authenticated
   // user. Shared by login and by registration (users/create-user).
   async issueTokens(user: PublicUser, res: Response, userAgent?: string) {

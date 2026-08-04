@@ -31,6 +31,7 @@ model User {
   payments           Payment[]
   creditEntries      CreditEntry[]
   refreshTokens      RefreshToken[]
+  handoffCodes       HandoffCode[]
 
   createdAt          DateTime @default(now())
   updatedAt          DateTime @default(now()) @updatedAt
@@ -181,6 +182,39 @@ model RefreshToken {
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   createdAt DateTime  @default(now())
 
+  @@index([userId])
+}
+
+/// A single-use ticket that carries a session across an origin boundary.
+///
+/// The landing page (th-labs.uz) and the Studio (*.modal.run) are different
+/// origins, so the session cannot simply follow the user and the tokens
+/// themselves must not travel in the redirect URL — a URL lands in browser
+/// history, the address bar, and the destination's ingress logs.
+///
+/// So the redirect carries one of these instead: random, short-lived, and
+/// consumed on first use. A copy recovered from a log line is already dead.
+///
+/// `codeHash` — the SHA-256 of the code, never the code itself, so read access
+/// to this table does not yield anything redeemable.
+///
+/// NOTE: this model was dropped by the billing/auth merge (PR #13) while the
+/// migration that creates the table and the controller routes that use it both
+/// survived, which is what broke the build. The table already exists in every
+/// deployed database; do not add a second migration for it.
+model HandoffCode {
+  id        Int       @id @default(autoincrement())
+  codeHash  String    @unique
+  userId    Int
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  /// Set by the atomic claim in AuthService.exchangeHandoffCode. Non-null
+  /// means spent — rows are kept so a replay is distinguishable from a code
+  /// that never existed, and swept later by deleteExpiredCodes.
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([expiresAt])
   @@index([userId])
 }
 

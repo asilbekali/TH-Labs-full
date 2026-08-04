@@ -105,13 +105,19 @@ export class AuthController {
   @Post('handoff/exchange')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({
-    summary: 'Redeem a handoff code for a token pair',
+    summary: 'Redeem a handoff code for an access token + refresh cookie',
     description:
       'Public by necessity — the code IS the credential. Valid for 60s and ' +
-      'exactly one redemption, so a copy recovered from a log is already dead.',
+      'exactly one redemption, so a copy recovered from a log is already ' +
+      'dead. Sets the same rotated httpOnly refresh cookie a login would, so ' +
+      "the caller must use credentials:'include' or it cannot refresh later.",
   })
   @ApiOkResponse({ type: AuthResponseDto })
-  exchangeHandoff(@Body() dto: ExchangeHandoffDto) {
-    return this.authService.exchangeHandoffCode(dto.code);
+  exchangeHandoff(
+    @Body() dto: ExchangeHandoffDto,
+    @Res({ passthrough: true }) res: Response,
+    @Headers('user-agent') userAgent?: string,
+  ) {
+    return this.authService.exchangeHandoffCode(dto.code, res, userAgent);
   }
 }

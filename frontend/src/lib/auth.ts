@@ -8,21 +8,27 @@
 //
 // Boot sequence:
 //   1. If ?code= is present, POST it to the account API's exchange endpoint.
-//      It is valid for ~60s and exactly one redemption.
-//   2. Strip ?code= from the address bar immediately, before React paints, so
-//      the spent code does not linger in history or get copy-pasted around.
-//   3. Keep the access token in memory only. Persist the refresh token so a
-//      page reload does not bounce the user back to the landing page.
+//      Valid ~60s and exactly one redemption.
+//   2. Strip ?code= from the address bar immediately, so a spent code does not
+//      linger in history or get copy-pasted around.
+//   3. Otherwise try to resume: POST /auth/refresh and let the cookie speak.
 //
-// On the refresh token in localStorage: it is readable by any script running
-// on this origin, which is the standing weakness of a browser-held session on
-// a third-party origin. It is a deliberate trade, not an oversight — the
-// alternative is losing the session on every reload. The exposure is bounded
-// by the Studio shipping no third-party scripts (check index.html before
-// adding one) and by refresh tokens being revocable server-side via logout,
-// which clears hashedRefreshToken. Serving the Studio from the landing page's
-// own origin would remove the trade entirely by allowing an HttpOnly cookie;
-// that is the real fix if the two ever converge.
+// ── Where the refresh token lives ──────────────────────────────────────────
+// Nowhere this code can see it. The account API sets it as an httpOnly,
+// Secure, SameSite=None cookie scoped to /v1/auth on th-labs.uz, so it is
+// unreadable from JavaScript and immune to XSS on this origin. Every call that
+// needs it therefore uses credentials:'include' and sends NO Authorization
+// header — the browser attaches the cookie itself.
+//
+// This replaces an earlier version that kept the refresh token in
+// localStorage. That was a deliberate trade at the time (a JWT refresh token
+// had to live somewhere for a reload to survive); the cookie redesign in the
+// account API removed the need for it entirely.
+//
+// The cost is that from this origin the cookie is third-party. Safari blocks
+// those outright and Chrome is winding them down, so refresh can fail for
+// reasons that have nothing to do with the session being invalid. That is what
+// the silent resume below is for.
 
 export interface SessionUser {
   id: number
@@ -41,59 +47,47 @@ const ACCOUNT_API =
 export const LANDING_URL =
   import.meta.env.VITE_LANDING_URL?.replace(/\/$/, '') || 'https://th-labs.uz'
 
-const REFRESH_KEY = 'th-labs.refresh'
+// Set before bouncing to the landing page for a silent re-handoff, so a failure
+// over there cannot ping-pong the user back and forth. sessionStorage rather
+// than localStorage: the guard should last exactly one browsing session.
+const RESUME_FLAG = 'th-labs.resume-attempted'
 
-// In memory on purpose — never written to storage. Short-lived (15m) and
-// re-derivable from the refresh token, so persisting it would add exposure
-// without buying anything.
+// In memory only — never persisted. Short-lived (15m) and re-derivable from the
+// cookie, so writing it anywhere would add exposure and buy nothing.
 let accessToken: string | null = null
 
 export function getAccessToken(): string | null {
   return accessToken
 }
 
-function readRefreshToken(): string | null {
-  try {
-    return window.localStorage.getItem(REFRESH_KEY)
-  } catch {
-    return null // private mode / storage disabled
-  }
-}
-
-function writeRefreshToken(token: string | null): void {
-  try {
-    if (token) window.localStorage.setItem(REFRESH_KEY, token)
-    else window.localStorage.removeItem(REFRESH_KEY)
-  } catch {
-    /* storage disabled — session simply won't survive a reload */
-  }
-}
-
-interface TokenPair {
+/** Shape of a successful login / refresh / exchange under the cookie design. */
+interface AuthPayload {
   accessToken: string
-  refreshToken: string
   user: SessionUser
 }
 
-function storeTokens(pair: TokenPair): SessionUser {
-  accessToken = pair.accessToken
-  writeRefreshToken(pair.refreshToken)
-  return pair.user
+function store(payload: AuthPayload): SessionUser {
+  accessToken = payload.accessToken
+  try {
+    // A working session means the resume path is not stuck; let a future
+    // failure try it again.
+    window.sessionStorage.removeItem(RESUME_FLAG)
+  } catch {
+    /* storage disabled */
+  }
+  return payload.user
 }
 
 export function clearSession(): void {
   accessToken = null
-  writeRefreshToken(null)
-  // Drop the memoised boot too, or a later initSession() would hand back the
-  // user we just signed out.
   sessionInit = null
 }
 
 /**
  * Pull ?code= out of the URL and remove it from the address bar.
  *
- * The strip happens whether or not the redemption later succeeds — a code is
- * single-use, so a failed attempt has burned it too and leaving it in the URL
+ * The strip happens whether or not redemption later succeeds — a code is
+ * single-use, so a failed attempt has burned it too, and leaving it in the URL
  * would only invite a confusing retry.
  */
 function takeHandoffCode(): string | null {
@@ -116,37 +110,64 @@ async function exchangeCode(code: string): Promise<SessionUser | null> {
     const r = await fetch(`${ACCOUNT_API}/auth/handoff/exchange`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      // Required: the response carries Set-Cookie for the refresh token, and
+      // without this the browser discards it and every later refresh fails.
+      credentials: 'include',
       body: JSON.stringify({ code }),
     })
     if (!r.ok) return null
-    return storeTokens((await r.json()) as TokenPair)
+    return store((await r.json()) as AuthPayload)
   } catch {
     return null // network / CORS
   }
 }
 
-/** Trade the stored refresh token for a fresh pair. */
+/** Mint a new access token from the httpOnly refresh cookie. */
 async function refreshSession(): Promise<SessionUser | null> {
-  const refreshToken = readRefreshToken()
-  if (!refreshToken) return null
-
   try {
     const r = await fetch(`${ACCOUNT_API}/auth/refresh`, {
       method: 'POST',
-      // The refresh endpoint reads the REFRESH token as the bearer credential
-      // (jwt-refresh.strategy.ts), which is why this is not the access token.
-      headers: { Authorization: `Bearer ${refreshToken}` },
+      // No Authorization header on purpose — the refresh token is the cookie,
+      // and this is the only thing that sends it.
+      credentials: 'include',
     })
-    if (!r.ok) {
-      // Expired or revoked (a logout elsewhere nulls hashedRefreshToken).
-      // Drop it so we stop retrying with a token that can never work.
-      clearSession()
-      return null
-    }
-    return storeTokens((await r.json()) as TokenPair)
+    if (!r.ok) return null
+    return store((await r.json()) as AuthPayload)
   } catch {
-    return null // network blip — keep the token and let the next call retry
+    return null
   }
+}
+
+/**
+ * Bounce to the landing page so it can mint a fresh code and send us back.
+ *
+ * Reached when refresh fails, which on this origin usually means the browser
+ * refused to send a third-party cookie rather than that the user is signed
+ * out. The landing page is first-party to that same cookie, so it can still
+ * see the session and redirect straight back with a new code — no sign-in
+ * prompt, no typing.
+ *
+ * Guarded by a one-shot flag: if the landing page cannot resume either, it
+ * shows its sign-in form, and coming back here without a session must not
+ * bounce the user out again.
+ *
+ * Returns true if a navigation was started, in which case the caller should
+ * stop — the page is going away.
+ */
+function attemptSilentResume(): boolean {
+  let alreadyTried = false
+  try {
+    alreadyTried = window.sessionStorage.getItem(RESUME_FLAG) === '1'
+    if (!alreadyTried) window.sessionStorage.setItem(RESUME_FLAG, '1')
+  } catch {
+    // Storage disabled — no way to guard against a loop, so do not start one.
+    return false
+  }
+  if (alreadyTried) return false
+
+  // `studio=1` asks the landing page to resume rather than render marketing.
+  window.location.replace(`${LANDING_URL}/?studio=1`)
+  return true
 }
 
 async function establishSession(): Promise<SessionUser | null> {
@@ -154,11 +175,20 @@ async function establishSession(): Promise<SessionUser | null> {
   if (code) {
     const user = await exchangeCode(code)
     if (user) return user
-    // Code was expired, already spent, or the API was unreachable. Fall
-    // through — a still-valid refresh token from an earlier visit should not
-    // be discarded just because this particular handoff failed.
+    // Expired, already spent, or the API was unreachable. Fall through — a
+    // still-valid cookie from an earlier visit should not be discarded just
+    // because this particular handoff failed.
   }
-  return refreshSession()
+
+  const resumed = await refreshSession()
+  if (resumed) return resumed
+
+  // No session here. Before showing the gate, give the landing page a chance
+  // to hand us one back silently. If it navigates, this promise never settles
+  // in any way that matters — the page is unloading.
+  if (!code && attemptSilentResume()) return null
+
+  return null
 }
 
 // The in-flight (or settled) boot. See initSession.
@@ -166,19 +196,15 @@ let sessionInit: Promise<SessionUser | null> | null = null
 
 /**
  * Establish a session at boot: redeem an incoming code, else resume from the
- * stored refresh token. Returns null when the visitor is signed out.
+ * refresh cookie. Returns null when the visitor is signed out.
  *
  * Memoised, and that is load-bearing rather than an optimisation. Boot is not
  * idempotent — takeHandoffCode() removes ?code= from the URL, and the code is
  * single-use — so a second concurrent call sees a URL with no code and falls
- * through to the refresh path, where localStorage is still empty because the
- * first call's exchange has not resolved yet. It then resolves null, and a
- * caller that trusts the later answer renders a signed-out Studio for a user
- * who just signed in successfully.
- *
- * React StrictMode makes that the norm, not a rare race: it deliberately
- * double-invokes effects in development. Handing every caller the SAME promise
- * means the redemption happens once and everyone sees its result.
+ * through to the refresh path, resolving null while the first call is still
+ * redeeming. React StrictMode double-invokes effects in development, making
+ * that the norm rather than a rare race. Handing every caller the SAME promise
+ * means redemption happens once and everyone sees its result.
  */
 export function initSession(): Promise<SessionUser | null> {
   if (!sessionInit) sessionInit = establishSession()
@@ -186,19 +212,23 @@ export function initSession(): Promise<SessionUser | null> {
 }
 
 export async function signOut(): Promise<void> {
-  const token = accessToken
-  clearSession()
-  if (!token) return
+  accessToken = null
+  sessionInit = null
   try {
-    // Best effort: revokes hashedRefreshToken server-side so the refresh token
-    // we just dropped cannot be replayed if a copy leaked. A failure here
-    // still leaves the browser signed out.
+    // Revokes the refresh token server-side and clears the cookie. Needs
+    // credentials so the server can see which token to revoke.
     await fetch(`${ACCOUNT_API}/auth/logout`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
+      credentials: 'include',
     })
   } catch {
-    /* ignore */
+    /* ignore — the browser is signed out either way */
+  }
+  try {
+    // A deliberate sign-out should not immediately trigger a silent resume.
+    window.sessionStorage.setItem(RESUME_FLAG, '1')
+  } catch {
+    /* storage disabled */
   }
 }
 
@@ -207,8 +237,7 @@ export async function signOut(): Promise<void> {
  *
  * Purely a scheduling hint for the proactive refresh below — the server still
  * verifies every token properly, so a forged `exp` here buys nothing beyond a
- * wasted refresh. Returns null for anything unparseable, which callers treat
- * as "assume expired".
+ * wasted refresh. Returns null for anything unparseable, treated as expired.
  */
 function tokenExpiry(token: string): number | null {
   try {
@@ -224,19 +253,17 @@ function tokenExpiry(token: string): number | null {
 }
 
 // Refresh this far ahead of expiry rather than waiting for a 401. Covers clock
-// skew between the browser and the API plus the round-trip itself.
+// skew between browser and API plus the round-trip itself.
 const REFRESH_MARGIN_MS = 60_000
 
 /**
  * Refresh the access token if it is expired or about to be.
  *
  * This matters more than the 401-retry below, because of what the Studio
- * sends: access tokens last 15 minutes, and a user who lands here spends that
- * easily on picking languages and choosing a file before pressing Start. If
- * the first sign that the token died is a 401 on POST /api/jobs, the browser
- * has already uploaded the entire video — and the retry uploads it a second
- * time. Checking `exp` first means the token is renewed with a tiny request
- * before the big one starts.
+ * sends: access tokens last 15 minutes, and a user easily spends that picking
+ * languages and choosing a file before pressing Start. If the first sign that
+ * the token died is a 401 on POST /api/jobs, the browser has already uploaded
+ * the entire video — and the retry uploads it a second time.
  */
 async function ensureFreshToken(): Promise<void> {
   if (!accessToken) {
@@ -253,8 +280,7 @@ async function ensureFreshToken(): Promise<void> {
  * fetch() with the access token attached.
  *
  * Refreshes ahead of expiry, and still retries once on a 401 — the proactive
- * check cannot catch a token revoked server-side (a logout elsewhere) or a
- * large clock skew.
+ * check cannot catch a token revoked server-side (a logout elsewhere).
  */
 export async function authFetch(
   input: string,
@@ -276,8 +302,7 @@ export async function authFetch(
 
   const user = await refreshSession()
   if (!user) return res // still signed out — hand back the original 401
-  res = await call(accessToken)
-  return res
+  return call(accessToken)
 }
 
 /**
@@ -285,11 +310,11 @@ export async function authFetch(
  *
  * EventSource takes a URL and nothing else — it cannot send an Authorization
  * header — so the SSE route accepts ?access_token= as well (see
- * backend/app/auth.py). Only the short-lived access token goes here, never the
- * refresh token, and the request is same-origin.
+ * backend/app/auth.py). Only the short-lived access token goes here, never
+ * anything longer-lived, and the request is same-origin.
  *
- * Safe to read the token synchronously: every caller subscribes immediately
- * after createJob(), which has just refreshed it through authFetch.
+ * Safe to read synchronously: every caller subscribes immediately after
+ * createJob(), which has just refreshed it through authFetch.
  */
 export function withAccessToken(url: string): string {
   if (!accessToken) return url

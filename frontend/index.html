@@ -9,6 +9,19 @@
     <meta name="theme-color" content="#050607" />
     <meta name="description" content="TH-LABS — identity-preserving AI video dubbing. Whisper ASR, NLLB translation, OmniVoice voice cloning, optional lip sync." />
 
+    <!-- This page is entered as  /?code=<one-time handoff code>  and the code
+         is a credential until React strips it on mount. The font <link>s below
+         are fetched by the preload scanner BEFORE that happens, so without an
+         explicit policy the only thing keeping the code out of Google's
+         referer logs is the browser default. Current engines default to
+         strict-origin-when-cross-origin and would send just the origin, but an
+         older one defaulting to no-referrer-when-downgrade sends the full URL,
+         query included, on an https->https request.
+         Stated here so it does not depend on the user agent's opinion. Matches
+         the header Caddy sets for the landing page, so both halves of the
+         product behave the same. -->
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+
     <!-- Same three families the landing page loads via next/font: Inter for
          prose, JetBrains Mono for headings and UI, Press Start 2P for the
          wordmark. Loaded here rather than with an @import in index.css so the

@@ -29,11 +29,17 @@ const DEFAULT_CORS_ORIGINS = [
 
 function corsOrigins(): string[] {
   const raw = process.env.CORS_ORIGINS?.trim();
-  if (!raw) return DEFAULT_CORS_ORIGINS;
-  return raw
-    .split(',')
-    .map((o) => o.trim())
-    .filter(Boolean);
+  const configured = raw
+    ? raw
+        .split(',')
+        .map((o) => o.trim())
+        .filter(Boolean)
+    : DEFAULT_CORS_ORIGINS;
+
+  // APP_URL is the primary browser client and must always be allowed, even if
+  // CORS_ORIGINS is set and forgets it. Deduped so a repeat is harmless.
+  const appUrl = process.env.APP_URL?.trim();
+  return [...new Set(appUrl ? [appUrl, ...configured] : configured)];
 }
 
 async function bootstrap() {
@@ -52,11 +58,14 @@ async function bootstrap() {
   // scripts/styles) still loads; all other helmet protections stay on.
   app.use(helmet({ contentSecurityPolicy: false }));
 
-  // CORS restricted to the app origin (APP_URL), with credentials so the
+  // An allowlist rather than a single APP_URL. The Studio runs on its own
+  // origin (*.modal.run) and calls this API from the browser to redeem a
+  // handoff code and to refresh; restricting CORS to APP_URL alone blocks
+  // both, and the failure surfaces only as an opaque network error in the
+  // Studio console. credentials:true is required either way so the httpOnly
   // refresh cookie flows.
-  const appUrl = process.env.APP_URL || 'http://localhost:5173';
   app.enableCors({
-    origin: appUrl,
+    origin: corsOrigins(),
     credentials: true,
   });
 
