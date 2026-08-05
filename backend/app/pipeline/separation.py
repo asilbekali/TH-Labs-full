@@ -12,11 +12,14 @@ set TH_LABS_SEPARATION_DEVICE=cuda on a bigger GPU / cloud box for speed.
 """
 from __future__ import annotations
 
+import logging
 import subprocess
 import sys
 from pathlib import Path
 
 from ..config import get_settings
+
+log = logging.getLogger(__name__)
 
 
 class DemucsSeparator:
@@ -52,13 +55,31 @@ class DemucsSeparator:
         dev = device or self.resolve_device()
         out_dir.mkdir(parents=True, exist_ok=True)
         try:
-            subprocess.run(
+            proc = subprocess.run(
                 [sys.executable, "-m", "demucs", "--two-stems=vocals",
                  "-n", s.separation_model, "-d", dev,
                  "-o", str(out_dir), str(audio)],
                 capture_output=True, timeout=s.separation_timeout,
             )
-        except Exception:
+        except subprocess.TimeoutExpired:
+            log.warning("demucs timed out after %ss on %s — continuing "
+                        "voice-only", s.separation_timeout, audio.name)
             return None
+        except Exception as exc:
+            log.warning("demucs did not run (%s) — continuing voice-only", exc)
+            return None
+
+        # The return code was previously ignored: a crashed run fell straight
+        # through to the exists() check below and was indistinguishable from a
+        # clean one, with demucs' explanation discarded into a captured pipe.
+        if proc.returncode != 0:
+            tail = (proc.stderr or b"").decode("utf-8", "replace").strip().splitlines()
+            log.warning("demucs exited %s — %s", proc.returncode,
+                        " | ".join(tail[-3:]) or "no stderr")
+            return None
+
         bg = out_dir / s.separation_model / audio.stem / "no_vocals.wav"
-        return bg if bg.exists() else None
+        if not bg.exists():
+            log.warning("demucs finished but produced no no_vocals stem at %s", bg)
+            return None
+        return bg

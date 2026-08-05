@@ -2,13 +2,48 @@
 from __future__ import annotations
 
 import json
+import logging
 import shutil
 import subprocess
 from pathlib import Path
 
+log = logging.getLogger(__name__)
+
 
 def _bin(name: str) -> str | None:
     return shutil.which(name)
+
+
+def _run_ffmpeg(cmd: list[str], out_path: Path, what: str,
+                timeout: int = 180) -> bool:
+    """Run an ffmpeg command and report honestly whether it produced output.
+
+    Every call site used to be `subprocess.run(...); return out_path.exists()`,
+    which is wrong twice over: a non-zero exit was ignored, and a stale file
+    left at that path by an earlier attempt would report success for a run that
+    actually failed. ffmpeg's diagnosis went to a captured pipe nobody read, so
+    a broken filter or a missing codec looked identical to silence.
+    """
+    try:
+        # Remove any earlier artefact so `exists()` can only mean "this run
+        # wrote it".
+        out_path.unlink(missing_ok=True)
+    except OSError:
+        pass
+    try:
+        proc = subprocess.run(cmd, capture_output=True, timeout=timeout)
+    except Exception as exc:
+        log.warning("%s: ffmpeg did not run (%s)", what, exc)
+        return False
+    if proc.returncode != 0:
+        tail = (proc.stderr or b"").decode("utf-8", "replace").strip().splitlines()
+        log.warning("%s: ffmpeg exited %s — %s", what, proc.returncode,
+                    " | ".join(tail[-3:]) or "no stderr")
+        return False
+    if not out_path.exists():
+        log.warning("%s: ffmpeg reported success but wrote no file", what)
+        return False
+    return True
 
 
 def probe_duration(path: Path) -> float | None:
@@ -199,23 +234,54 @@ def extract_audio_hq(video: Path, out_wav: Path) -> bool:
 
 def mix_voice_over_background(voice: Path, background: Path, out_path: Path,
                              voice_gain: float = 1.25,
-                             bg_gain: float = 0.55) -> bool:
-    """Mix the dubbed voice on top of the preserved background (M&E)."""
+                             bg_gain: float = 0.25) -> bool:
+    """Mix the dubbed voice on top of the preserved background (M&E).
+
+    The background is DUCKED under the dubbed voice rather than laid flat
+    beneath it. That is standard dubbing practice, and here it also does
+    corrective work: the `no_vocals` stem is never perfectly clean, and the
+    original dialogue that survives separation is loudest exactly where the
+    original speaker was talking — which is exactly where the dubbed voice now
+    talks. Ducking on the dub therefore attenuates the residue precisely when
+    it would otherwise be audible, instead of leaving the source language
+    murmuring underneath the dub.
+
+    Falls back to a flat mix if the sidechain filter is unavailable, and the
+    caller falls back to voice-only if this returns False — both degrade toward
+    less original-language bleed, not more.
+    """
     ffmpeg = _bin("ffmpeg")
     if not ffmpeg or not voice.exists() or not background.exists():
         return False
-    filt = (f"[0:a]volume={bg_gain}[bg];[1:a]volume={voice_gain}[v];"
+
+    # Normalise both legs first: sidechaincompress requires a matching sample
+    # rate and channel layout, and the two stems come from different tools
+    # (Demucs writes 44.1k stereo, the TTS buffer is 24k mono).
+    fmt = "aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo"
+    ducked = (
+        f"[0:a]{fmt},volume={bg_gain}[bg];"
+        f"[1:a]{fmt},volume={voice_gain}[v];"
+        f"[v]asplit=2[vmix][vkey];"
+        # threshold low / ratio high: this is a duck, not gentle glue — when the
+        # dub speaks, the bed gets out of the way. release keeps it from
+        # pumping between words.
+        f"[bg][vkey]sidechaincompress="
+        f"threshold=0.02:ratio=12:attack=15:release=300:makeup=1[bgduck];"
+        f"[bgduck][vmix]amix=inputs=2:duration=longest:normalize=0[out]"
+    )
+    flat = (f"[0:a]{fmt},volume={bg_gain}[bg];"
+            f"[1:a]{fmt},volume={voice_gain}[v];"
             f"[bg][v]amix=inputs=2:duration=longest:normalize=0[out]")
-    try:
-        subprocess.run(
+
+    for filt, what in ((ducked, "mix (ducked)"), (flat, "mix (flat)")):
+        if _run_ffmpeg(
             [ffmpeg, "-y", "-i", str(background), "-i", str(voice),
              "-filter_complex", filt, "-map", "[out]",
              "-c:a", "pcm_s16le", str(out_path)],
-            capture_output=True, timeout=180,
-        )
-        return out_path.exists()
-    except Exception:
-        return False
+            out_path, what,
+        ):
+            return True
+    return False
 
 
 def mux(video: Path, audio: Path, out_path: Path) -> bool:
@@ -223,16 +289,15 @@ def mux(video: Path, audio: Path, out_path: Path) -> bool:
     ffmpeg = _bin("ffmpeg")
     if not ffmpeg:
         return False
-    try:
-        subprocess.run(
-            [ffmpeg, "-y", "-i", str(video), "-i", str(audio),
-             "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy",
-             "-c:a", "aac", "-shortest", str(out_path)],
-            capture_output=True, timeout=180,
-        )
-        return out_path.exists()
-    except Exception:
-        return False
+    # -map 0:v:0 -map 1:a:0 takes video from the source and audio ONLY from the
+    # dubbed track; the source's own audio stream is deliberately not mapped,
+    # so no original dialogue can reach the output through here.
+    return _run_ffmpeg(
+        [ffmpeg, "-y", "-i", str(video), "-i", str(audio),
+         "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy",
+         "-c:a", "aac", "-shortest", str(out_path)],
+        out_path, "mux",
+    )
 
 
 def copy_passthrough(src: Path, dst: Path) -> bool:

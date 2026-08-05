@@ -74,7 +74,13 @@ class Settings(BaseSettings):
     # GPU / cloud set TH_LABS_SEPARATION_DEVICE=cuda for a big speed-up.
     separation_device: str = "cpu"       # cpu | cuda
     separation_timeout: int = 900        # seconds; on timeout → voice-only
-    background_gain: float = 0.55        # background level under the dubbed voice
+    # Background level under the dubbed voice. Was 0.55 (only ~5 dB down),
+    # which is loud enough that whatever original dialogue survives Demucs is
+    # clearly audible under the dub. 0.25 is ~12 dB down, in the range dubbing
+    # mixes actually use for a music-and-effects bed, and the mix additionally
+    # ducks this further while the dubbed voice speaks (see
+    # media.mix_voice_over_background).
+    background_gain: float = 0.25
     voice_gain: float = 1.25             # dubbed voice level
 
     # ── NMT · NLLB-200 ────────────────────────────────────────────────────
