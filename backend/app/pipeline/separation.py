@@ -18,6 +18,7 @@ import sys
 from pathlib import Path
 
 from ..config import get_settings
+from . import media
 
 log = logging.getLogger(__name__)
 
@@ -78,8 +79,45 @@ class DemucsSeparator:
                         " | ".join(tail[-3:]) or "no stderr")
             return None
 
-        bg = out_dir / s.separation_model / audio.stem / "no_vocals.wav"
+        stem_dir = out_dir / s.separation_model / audio.stem
+        bg = stem_dir / "no_vocals.wav"
         if not bg.exists():
             log.warning("demucs finished but produced no no_vocals stem at %s", bg)
             return None
+
+        # Is there actually a background worth preserving?
+        #
+        # htdemucs is trained on music: "vocals" means SUNG vocals. On a
+        # talking-head clip with no music there is no M&E bed to keep — the
+        # no_vocals stem is room tone plus whatever speech the model failed to
+        # pull out. Mixing that back in does not preserve anything, it just
+        # returns the source language to the dub, quietly, underneath the new
+        # one.
+        #
+        # Measured on a real speech-only job: vocals -16.4 dB against no_vocals
+        # -27.7 dB, and in the 300-3400 Hz dialogue band -23.3 vs -41.5. A gap
+        # that large means the "background" is residue. With genuine music the
+        # no_vocals stem is comparable to or louder than the vocals stem, so
+        # the same test keeps it.
+        #
+        # keep_background asks to preserve music and effects. When there are
+        # none, preserving nothing is the honest reading of that request.
+        vocals = stem_dir / "vocals.wav"
+        bg_db = media.mean_volume_db(bg)
+        voc_db = media.mean_volume_db(vocals)
+        if bg_db is not None and voc_db is not None:
+            lead = voc_db - bg_db
+            if lead >= s.background_min_lead_db:
+                log.info(
+                    "background is %.1f dB below vocals (%.1f vs %.1f) — "
+                    "speech-only source, no music bed to keep; going voice-only "
+                    "so the source language stays out of the dub",
+                    lead, bg_db, voc_db,
+                )
+                return None
+            log.info("background kept: %.1f dB below vocals (%.1f vs %.1f)",
+                     lead, bg_db, voc_db)
+        else:
+            log.warning("could not measure stem levels (bg=%s vocals=%s) — "
+                        "keeping background unmeasured", bg_db, voc_db)
         return bg

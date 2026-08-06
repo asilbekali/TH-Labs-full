@@ -232,6 +232,29 @@ def extract_audio_hq(video: Path, out_wav: Path) -> bool:
         return False
 
 
+def mean_volume_db(path: Path) -> float | None:
+    """Mean volume of `path` in dBFS via ffmpeg's volumedetect, or None."""
+    ffmpeg = _bin("ffmpeg")
+    if not ffmpeg or not path.exists():
+        return None
+    try:
+        proc = subprocess.run(
+            [ffmpeg, "-hide_banner", "-nostats", "-i", str(path),
+             "-af", "volumedetect", "-f", "null", "-"],
+            capture_output=True, timeout=120,
+        )
+    except Exception:
+        return None
+    # volumedetect reports on stderr: "[...] mean_volume: -27.7 dB"
+    for line in (proc.stderr or b"").decode("utf-8", "replace").splitlines():
+        if "mean_volume:" in line:
+            try:
+                return float(line.split("mean_volume:")[1].split("dB")[0].strip())
+            except (IndexError, ValueError):
+                return None
+    return None
+
+
 def mix_voice_over_background(voice: Path, background: Path, out_path: Path,
                              voice_gain: float = 1.25,
                              bg_gain: float = 0.25) -> bool:
