@@ -9,6 +9,7 @@ per-stage `mode` differ.
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from pathlib import Path
 from typing import Awaitable, Callable
@@ -31,6 +32,9 @@ EmitFn = Callable[..., Awaitable[None]]
 # Quality → Whisper model. "Fast" trades accuracy for a big speed-up (base is
 # ~4-5× faster than medium); "Studio" is the paper's Whisper medium.
 QUALITY_WHISPER = {"fast": "base", "balanced": "small", "studio": "medium"}
+
+
+log = logging.getLogger(__name__)
 
 
 class Orchestrator:
@@ -109,12 +113,23 @@ class Orchestrator:
         duration = await asyncio.to_thread(media.probe_duration, input_video)
         started = time.perf_counter()
 
+        log.info(
+            "[%s] START %s -> %s | quality=%s clone=%s lipsync=%s keep_bg=%s "
+            "| duration=%ss force_simulate=%s",
+            job.id, options.source_lang, options.target_lang, options.quality,
+            options.voice_clone, options.lip_sync, options.keep_background,
+            duration, force_simulate,
+        )
+
         # `force_simulate` is set for the synthetic sample clip (no real speech
         # to transcribe) so the canned scenario is used end-to-end.
         real_asr = self.stt.mode() == "real" and not force_simulate
         real_nmt = self.nmt.mode() == "real" and not force_simulate
         real_tts = self.tts.mode() == "real" and not force_simulate
         used_real = False
+        log.info("[%s] engines: asr=%s nmt=%s tts=%s separation=%s",
+                 job.id, self.stt.mode(), self.nmt.mode(), self.tts.mode(),
+                 self.sep.mode())
 
         # 1 ── ASR ---------------------------------------------------------
         async with _stage(job, "asr", emit) as st:
@@ -145,6 +160,23 @@ class Orchestrator:
                 engine_mode = "simulation"
             job.result.detected_source_lang = detected
             job.result.segments = segments
+            # The transcript is where a looping phrase becomes visible: if the
+            # same line repeats here it is a decoder loop, not the mix.
+            # repeats_dropped (from stt._collapse_repeats) says how many the
+            # guard already removed.
+            log.info(
+                "[%s] asr: mode=%s detected=%s segments=%s words=%s "
+                "repeats_dropped=%s vad_regions=%s",
+                job.id, engine_mode, detected, len(segments),
+                sum(len(x.source_text.split()) for x in segments),
+                vad_detail.get("repeats_dropped", 0),
+                vad_detail.get("vad_regions", "n/a"),
+            )
+            for x in segments[:8]:
+                log.info("[%s]   asr %6.2f-%6.2f  %s", job.id, x.start, x.end,
+                         x.source_text[:90])
+            if len(segments) > 8:
+                log.info("[%s]   asr ... %s more segments", job.id, len(segments) - 8)
             st.detail = {"segments": len(segments),
                          "detected_lang": detected,
                          "engine_mode": engine_mode,
@@ -256,6 +288,15 @@ class Orchestrator:
         background: Path | None = None
         do_separation = (options.keep_background and options.quality != "fast"
                          and self.sep.available() and not force_simulate)
+        # Log every input to this decision: "the fix did nothing" is usually
+        # this branch not being taken at all, and the four reasons are
+        # indistinguishable from the outside.
+        log.info(
+            "[%s] separation: run=%s (keep_background=%s quality=%s "
+            "available=%s force_simulate=%s)",
+            job.id, do_separation, options.keep_background, options.quality,
+            self.sep.available(), force_simulate,
+        )
         if do_separation:
             async with _stage(job, "separation", emit) as st:
                 orig_hq = s.uploads_dir / f"{job.id}_orig.wav"
@@ -269,6 +310,9 @@ class Orchestrator:
                                                              sep_device))
                 except Exception as exc:
                     st.message = f"separation failed ({str(exc)[:50]}) — voice only"
+                log.info("[%s] separation done: background_stem=%s device=%s",
+                         job.id, background if background else "NONE (voice-only)",
+                         sep_device)
                 st.detail = {"kept_background": bool(background),
                              "device": sep_device,
                              "engine_mode": "real" if background else "simulation"}
@@ -308,8 +352,16 @@ class Orchestrator:
                         mixed_audio, s.voice_gain, s.background_gain):
                     final_audio = mixed_audio
                     mixed = True
+            log.info(
+                "[%s] mix: background=%s mixed=%s | final_audio=%s "
+                "(voice_gain=%s background_gain=%s)",
+                job.id, "present" if background is not None else "none", mixed,
+                final_audio.name, s.voice_gain, s.background_gain,
+            )
             await asyncio.to_thread(self.sync.run, working_video,
                                     final_audio, out_video)
+            log.info("[%s] mux: out=%s exists=%s", job.id, out_video.name,
+                     out_video.exists())
             st.detail = {"muxed": out_video.exists(),
                          "background_kept": mixed}
 

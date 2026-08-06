@@ -28,6 +28,11 @@ from fastapi.staticfiles import StaticFiles
 from . import __version__, languages
 from .auth import StudioUser, require_user, require_user_sse
 from .config import get_settings
+from .logging_config import setup_logging
+
+# Before anything else imports a module-level logger, so the pipeline's trace
+# actually reaches Modal's log stream.
+setup_logging()
 from .jobs import manager
 from .pipeline import media
 from .schemas import (DubOptions, HealthInfo, Quality, StageInfo)
