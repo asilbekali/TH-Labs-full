@@ -264,6 +264,22 @@ flowchart LR
     CRON["hourly cron"] --> G["grant due subscriptions<br/>every plan.grantDays"]
 ```
 
+**Stripe lives entirely on the account API.** Neither `backend/` nor
+`deploy/modal/` contains a single Stripe reference — the Studio only calls
+`/v1/payments/*` and follows the URL it is handed. Configuring Stripe on Modal
+does nothing.
+
+* **Missing Stripe config fails quiet.** The API boots without it and still
+  serves `/payments/plans`, so the Plans page looks healthy. But
+  `STRIPE_WEBHOOK_SECRET` absent means `constructEvent` throws before any
+  dispatch — and webhooks are the only thing that grants credits, so a user pays
+  and receives nothing. `STRIPE_LINK_*` absent means `seed.ts` writes
+  `stripeLinkUrl: null` and `/payments/checkout` 400s before the user even
+  reaches Stripe. Both must be passed through `deploy/server/docker-compose.yml`
+  to reach the container; see `deploy/server/README.md` § 6.
+* **`client_reference_id` is how a payment finds its user.** `getCheckoutUrl`
+  appends it to the Payment Link; the webhook reads it back. An event without it
+  is logged and ignored.
 * **Idempotency is a unique constraint**, not an `if` — `WebhookEvent.stripeEventId`.
   That is what makes Stripe's retries safe. If dispatch throws, the marker is
   deleted so the retry reprocesses it.

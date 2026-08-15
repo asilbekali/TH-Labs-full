@@ -70,6 +70,46 @@ services:
       NODE_ENV: production
       PORT: "3000"
       HOST: ${PUBLIC_HOST:-aytingchi.uz}
+
+      # Browser origins allowed to call this API directly. The Studio on Modal
+      # is a different origin and redeems its handoff code from the BROWSER, so
+      # omitting it here is what makes sign-in fail there. Comma-separated;
+      # unset falls back to DEFAULT_CORS_ORIGINS in api/src/main.ts.
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+      APP_URL: ${APP_URL:-https://th-labs.uz}
+
+      # ── Stripe ───────────────────────────────────────────────────────────
+      # Absent, the API still BOOTS and still serves /payments/plans — which is
+      # why this was easy to miss. What it cannot do is take money:
+      #
+      #   no STRIPE_SECRET_KEY    -> StripeProvider yields null, stripe.enabled
+      #                              is false, subscription cancel 503s
+      #   no STRIPE_WEBHOOK_SECRET-> constructEvent throws before any dispatch,
+      #                              so EVERY Stripe event is rejected. Webhooks
+      #                              are the only thing that grants credits, so
+      #                              a user pays and receives nothing.
+      #   no STRIPE_LINK_*        -> prisma/seed.ts writes stripeLinkUrl: null,
+      #                              and /payments/checkout 400s with "No Stripe
+      #                              Payment Link configured" before the user
+      #                              ever reaches Stripe.
+      #
+      # All optional at the container level on purpose (see env.validation.ts):
+      # a deploy with no payments configured should degrade, not refuse to boot.
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+
+      # Payment Link URLs, one per plan row. Read by prisma/seed.ts at seed
+      # time, NOT on every boot — changing one means re-running the seed.
+      STRIPE_LINK_PRO_WEEKLY: ${STRIPE_LINK_PRO_WEEKLY:-}
+      STRIPE_LINK_PRO_MONTHLY: ${STRIPE_LINK_PRO_MONTHLY:-}
+      STRIPE_LINK_PRO_YEARLY: ${STRIPE_LINK_PRO_YEARLY:-}
+      STRIPE_LINK_STUDIO_WEEKLY: ${STRIPE_LINK_STUDIO_WEEKLY:-}
+      STRIPE_LINK_STUDIO_MONTHLY: ${STRIPE_LINK_STUDIO_MONTHLY:-}
+      STRIPE_LINK_STUDIO_YEARLY: ${STRIPE_LINK_STUDIO_YEARLY:-}
+
+      # Cap on the one free dub every new user gets. Mirrors
+      # FREE_DUB_MAX_SECONDS in api/src/payment/quality-cost.ts.
+      FREE_DUB_MAX_SECONDS: ${FREE_DUB_MAX_SECONDS:-120}
     networks:
       internal:
       edge:
