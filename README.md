@@ -41,6 +41,11 @@ University):
 
 ## 🧩 Architecture
 
+> This section covers the Studio's own tree. For how the **whole product** fits
+> together — the landing page and account API on the VPS, the Studio on Modal,
+> the cross-origin sign-in handoff, credits and Stripe, and what breaks when the
+> two halves drift apart — see **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
+
 ```
 frontend/                      React + Vite + TypeScript + Tailwind v4 + Framer Motion
   src/
