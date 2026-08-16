@@ -1,64 +1,37 @@
 // Credit wallet + active plan, backed by the real billing API
-// (GET /v1/payments/credits and /v1/payments/subscription). The balance is
-// server-authoritative — this just caches it in React and refetches when it can
-// go stale: on sign-in, after a charge/purchase (the CREDITS_CHANGED_EVENT),
-// and on window focus. Static plan metadata below is display-only.
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
+// (GET /v1/payments/credits and /v1/payments/subscription).
+//
+// The balance is server-authoritative. TanStack Query owns the caching and
+// refetching now — this context is a thin, typed read of those two queries so
+// the top-bar pill and the Studio gate can stay simple. Staleness is handled
+// for us: window focus (query defaults), a charge or purchase
+// (usePaymentsInvalidation → CREDITS_CHANGED_EVENT), and sign-in/out (the
+// queries are keyed off `enabled`).
+import { createContext, useContext, useMemo } from 'react'
 import type { ReactNode } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { useAuth } from './auth'
-import {
-  getCredits,
-  getSubscription,
-  CREDITS_CHANGED_EVENT,
-  type PlanTier,
-} from './payments-api'
+import { qk } from './query'
+import { useCredits, usePlans, useSubscription } from './queries'
+import type { PlanTier } from './payments-api'
 
 export type PlanId = 'free' | 'pro' | 'studio'
 
 export interface Plan {
   id: PlanId
   name: string
-  price: number // USD / month
-  monthlyCredits: number
-  features: string[]
-  highlight?: boolean
+  /** Credits the active plan grants per billing period, per the server. */
+  creditsGranted: number
 }
 
-export const PLANS: Plan[] = [
-  {
-    id: 'free',
-    name: 'Free',
-    price: 0,
-    monthlyCredits: 60,
-    features: ['60 credits / month', 'Fast & Balanced quality', 'Voice cloning', 'Standard queue'],
-  },
-  {
-    id: 'pro',
-    name: 'Pro',
-    price: 19,
-    monthlyCredits: 600,
-    features: ['600 credits / month', 'All qualities incl. Studio', 'Voice cloning + lip sync', 'Priority queue', 'Background separation'],
-    highlight: true,
-  },
-  {
-    id: 'studio',
-    name: 'Studio',
-    price: 49,
-    monthlyCredits: 2000,
-    features: ['2000 credits / month', 'Everything in Pro', 'Batch dubbing', 'Highest fidelity output', 'Email support'],
-  },
-]
+// Display names for the three tiers. Prices, credit grants and features are
+// NOT duplicated here — the Plans page reads all of that from
+// GET /v1/payments/plans, which is the only source that can be wrong-by-drift.
+const PLAN_NAMES: Record<PlanId, string> = { free: 'Free', pro: 'Pro', studio: 'Studio' }
 
-// One-off credit packs (display metadata). No API module backs these yet, so
-// they are not purchasable — surfaced by Plans as "coming soon".
-export const CREDIT_PACKS: { credits: number; price: number }[] = [
-  { credits: 100, price: 5 },
-  { credits: 500, price: 20 },
-  { credits: 1200, price: 40 },
-]
-
-// Fallback credit cost per quality — display hint only. The server table
-// (GET /payments/plans → qualityCost) is the authority used by can-dub.
+// Fallback credit cost per quality — a display hint for the Studio's estimate
+// line before can-dub answers. The server table (GET /payments/plans →
+// qualityCost) is the authority, and can-dub is what actually decides.
 export const QUALITY_COST: Record<string, number> = {
   fast: 5,
   balanced: 10,
@@ -83,53 +56,44 @@ const WalletContext = createContext<WalletContextValue | null>(null)
 
 export function WalletProvider({ children }: { children: ReactNode }) {
   const { user, ready } = useAuth()
-  const [balance, setBalance] = useState(0)
-  const [plan, setPlan] = useState<PlanId>('free')
-  const [loading, setLoading] = useState(false)
+  const qc = useQueryClient()
+  const signedIn = ready && !!user
 
-  const refresh = useCallback(async () => {
-    if (!user) {
-      setBalance(0)
-      setPlan('free')
-      return
-    }
-    setLoading(true)
-    try {
-      const [credits, sub] = await Promise.all([
-        getCredits(1, 1),
-        getSubscription().catch(() => ({ subscription: null })),
-      ])
-      setBalance(credits.balance)
-      const tier = sub.subscription?.plan?.tier
-      const active = sub.subscription?.status === 'ACTIVE'
-      setPlan(tier && active ? TIER_TO_PLAN[tier] : 'free')
-    } catch {
-      /* leave the last known values in place on a transient failure */
-    } finally {
-      setLoading(false)
-    }
-  }, [user])
-
-  // Refetch when auth resolves / the user changes.
-  useEffect(() => {
-    if (ready) void refresh()
-  }, [ready, refresh])
-
-  // Refetch after a charge/purchase and on window focus (cheap staleness guard).
-  useEffect(() => {
-    const onChange = () => void refresh()
-    window.addEventListener(CREDITS_CHANGED_EVENT, onChange)
-    window.addEventListener('focus', onChange)
-    return () => {
-      window.removeEventListener(CREDITS_CHANGED_EVENT, onChange)
-      window.removeEventListener('focus', onChange)
-    }
-  }, [refresh])
+  // limit=1: this only needs the balance, not the ledger. The Plans page asks
+  // for a real page of entries under its own key.
+  const credits = useCredits(1, 1, signedIn)
+  const subscription = useSubscription(signedIn)
+  // Only consulted for the Free tier's grant — a paid subscription carries its
+  // own plan row, so the catalog is not on the critical path for those users.
+  const plans = usePlans()
 
   const value = useMemo<WalletContextValue>(() => {
-    const planInfo = PLANS.find((p) => p.id === plan) ?? PLANS[0]
-    return { balance, plan, planInfo, loading, refresh }
-  }, [balance, plan, loading, refresh])
+    const sub = subscription.data?.subscription
+    const active = sub?.status === 'ACTIVE'
+    const plan: PlanId = active && sub?.plan?.tier ? TIER_TO_PLAN[sub.plan.tier] : 'free'
+    const freeGrant =
+      plans.data?.plans.find((p) => p.tier === 'FREE' && p.cycle === 'MONTHLY')?.creditsGranted ?? 0
+    return {
+      balance: credits.data?.balance ?? 0,
+      plan,
+      planInfo: {
+        id: plan,
+        name: PLAN_NAMES[plan],
+        creditsGranted: active ? (sub?.plan?.creditsGranted ?? 0) : freeGrant,
+      },
+      loading: credits.isPending || subscription.isPending,
+      refresh: async () => {
+        await qc.invalidateQueries({ queryKey: qk.payments() })
+      },
+    }
+  }, [
+    credits.data,
+    credits.isPending,
+    subscription.data,
+    subscription.isPending,
+    plans.data,
+    qc,
+  ])
 
   return <WalletContext.Provider value={value}>{children}</WalletContext.Provider>
 }

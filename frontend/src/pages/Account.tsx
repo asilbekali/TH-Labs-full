@@ -6,15 +6,15 @@ import { MarkDivider } from "../components/brand/LogoMark";
 import { rise, stagger } from "../lib/motion";
 import { useAuth } from "../lib/auth";
 import { useWallet } from "../lib/wallet";
-import { updateAccount } from "../lib/auth-api";
+import { useUpdateAccount } from "../lib/queries";
 
 export default function Account() {
   const { user, accessToken, logout, updateUser } = useAuth();
   const { balance, planInfo } = useWallet();
+  const save = useUpdateAccount();
 
   const [name, setName] = useState(user?.name ?? "");
   const [email, setEmail] = useState(user?.email ?? "");
-  const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
   const [loggingOut, setLoggingOut] = useState(false);
 
@@ -46,23 +46,24 @@ export default function Account() {
     ).toUpperCase();
   })();
 
-  async function save(e: React.FormEvent) {
+  async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!user || !accessToken) return;
-    setSaving(true);
     setMsg(null);
     try {
-      await updateAccount(user.id, { name, email });
-      updateUser({ name, email });
+      const updated = await save.mutateAsync({ id: user.id, name, email });
+      // Only reflect what the server actually stored. The previous version
+      // applied the edit locally even when the PATCH failed, so a rejected
+      // email looked saved until the next reload.
+      updateUser({ name: updated.name, email: updated.email });
+      setName(updated.name);
+      setEmail(updated.email);
       setMsg({ ok: true, text: "Profile updated." });
     } catch (err) {
-      updateUser({ name, email });
       setMsg({
         ok: false,
-        text: err instanceof Error ? err.message : "Saved locally only.",
+        text: err instanceof Error ? err.message : "Could not save your profile.",
       });
-    } finally {
-      setSaving(false);
     }
   }
 
@@ -115,7 +116,7 @@ export default function Account() {
           </div>
 
           <form
-            onSubmit={save}
+            onSubmit={onSubmit}
             className="mt-6 space-y-4 border-t border-subtle pt-6"
           >
             <Field
@@ -135,7 +136,7 @@ export default function Account() {
 
             {msg && (
               <p
-                className={`rounded-lg border px-3 py-2 text-sm ${msg.ok ? "border-success/30 bg-success/10 text-success" : "border-warn/30 bg-warn/10 text-warn"}`}
+                className={`rounded-lg border px-3 py-2 text-sm ${msg.ok ? "border-success/30 bg-success/10 text-success" : "border-danger/30 bg-danger/10 text-danger"}`}
               >
                 {msg.text}
               </p>
@@ -143,10 +144,10 @@ export default function Account() {
 
             <button
               type="submit"
-              disabled={!dirty || saving}
+              disabled={!dirty || save.isPending}
               className="btn-primary focusable px-5 py-2.5 text-sm disabled:opacity-50"
             >
-              {saving ? "Saving…" : "Save changes"}
+              {save.isPending ? "Saving…" : "Save changes"}
             </button>
           </form>
         </motion.div>
@@ -170,7 +171,7 @@ export default function Account() {
             </div>
             <Link
               to="/plans"
-              className="focusable mt-5 inline-flex rounded-full bg-white px-5 py-2.5 text-sm font-semibold text-[rgb(24_22_41)] hover:bg-white/90"
+              className="focusable mt-5 inline-flex rounded-control bg-[rgb(250_249_245)] px-5 py-2.5 text-sm font-medium text-[rgb(30_29_27)] hover:bg-white"
             >
               Manage plan &amp; credits
             </Link>
