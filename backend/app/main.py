@@ -25,7 +25,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import __version__, languages
+from . import __version__, billing, languages
 from .auth import StudioUser, require_user, require_user_sse
 from .config import get_settings
 from .logging_config import setup_logging
@@ -35,7 +35,7 @@ from .logging_config import setup_logging
 setup_logging()
 from .jobs import manager
 from .pipeline import media
-from .schemas import (DubOptions, HealthInfo, Quality, StageInfo)
+from .schemas import (DubOptions, HealthInfo, JobStatus, Quality, StageInfo)
 
 settings = get_settings()
 
@@ -164,8 +164,36 @@ async def create_job(
                 out.write(chunk)
         filename = file.filename
 
+    # ── Credit gate ───────────────────────────────────────────────────────
+    # Runs here, not only in the Studio: a bearer token proves who is asking,
+    # not that they have paid, and this route spends GPU minutes. See
+    # app/billing.py. No-ops unless TH_LABS_ACCOUNT_API_URL is configured.
+    duration_seconds = 0.0
+    if billing.enabled():
+        probed = media.probe_duration(input_video)
+        if probed is None:
+            # Length decides whether this qualifies as the free dub, so an
+            # unknown duration must not silently be treated as zero.
+            raise HTTPException(400, "Could not read the video's duration.")
+        duration_seconds = probed
+        await billing.can_dub(user.token, duration_seconds, quality.value)
+
     job = manager.create(options, input_video, scenario, filename,
                          owner_id=user.id, force_simulate=force_simulate)
+
+    if billing.enabled():
+        # Charge now that the job has an id. Idempotent on it, so the Studio
+        # issuing the same call is harmless. If the charge fails the job must
+        # not run — mark it failed rather than leaving a paid-for-nothing run
+        # in the library, and let the 402 reach the caller.
+        try:
+            await billing.commit_dub(user.token, job.id, duration_seconds,
+                                     quality.value)
+        except HTTPException:
+            job.status = JobStatus.failed
+            job.error = "Billing declined this dub."
+            raise
+
     return {"id": job.id, "job": job.model_dump(mode="json")}
 
 
