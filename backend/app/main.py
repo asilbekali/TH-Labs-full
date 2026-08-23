@@ -91,7 +91,7 @@ def health() -> HealthInfo:
     stages = [StageInfo(**s) for s in manager.orchestrator.stage_info()]
     return HealthInfo(
         app=settings.app_name, version=__version__, mode=settings.mode,
-        ffmpeg=bool(settings.ffmpeg), stages=stages,
+        ffmpeg=bool(settings.ffmpeg), billing=billing.enabled(), stages=stages,
     )
 
 
