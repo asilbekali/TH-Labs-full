@@ -8,9 +8,14 @@ import PlansSuccess from './pages/PlansSuccess'
 import PlansCancel from './pages/PlansCancel'
 import Account from './pages/Account'
 import MyWorks from './pages/MyWorks'
+import { usePaymentsInvalidation } from './lib/queries'
 
 export default function App() {
   const location = useLocation()
+  // Credits also move outside this app (a Stripe webhook grants them after
+  // checkout completes on Stripe's domain), so billing queries are invalidated
+  // from one place at the root rather than per page.
+  usePaymentsInvalidation()
   return (
     <AppShell>
       <AnimatePresence mode="wait">

@@ -54,11 +54,17 @@
 /* ─────────────────────────────────────────────────────────────────────────
    TH-Labs — dual-theme design tokens (Tailwind v4, CSS-first)
 
-   The visual language is a soft, modern IoT/SaaS dashboard: lavender-tinted
-   light mode with pure-white cards and diffuse shadows, plus a deep violet
-   dark mode where depth comes from borders + elevation tints. Every color
-   below is a raw "R G B" channel triplet so Tailwind can apply /alpha; the
-   themes swap the triplets, the components never hardcode a hex.
+   The visual language follows Claude: warm and paper-like rather than the
+   cool glassy SaaS default. Light mode is a cream canvas (#F0EEE6) with
+   slightly-lifted ivory cards; dark mode is warm charcoal, never blue-black.
+   The single accent is Claude's clay/terracotta — used sparingly, on flat
+   fills instead of gradients, so it stays a signal rather than decoration.
+
+   Every color is a raw "R G B" channel triplet so Tailwind can apply /alpha;
+   the themes swap the triplets and components never hardcode a hex. The
+   accent slots keep their historical names (`cyan`, `magenta`) because they
+   are referenced across every page — only the values changed, to the two
+   warm companions in Claude's palette (cactus green and dusty rose).
    ───────────────────────────────────────────────────────────────────────── */
 
 @theme {
@@ -91,9 +97,10 @@
   --color-danger: rgb(var(--c-danger));
   --color-info: rgb(var(--c-info));
 
-  /* Radii */
-  --radius-card: 1.25rem;      /* 20px */
-  --radius-control: 0.875rem;  /* 14px */
+  /* Radii — tightened from the previous 20px/14px. Claude's surfaces are
+     softened rectangles, not capsules; only true pills use --radius-pill. */
+  --radius-card: 0.875rem;     /* 14px */
+  --radius-control: 0.625rem;  /* 10px */
   --radius-pill: 999px;
 
   /* Motion */
@@ -106,75 +113,79 @@
 :root[data-theme='light'] {
   color-scheme: light;
 
-  --c-canvas: 244 243 250;        /* faint lavender off-white */
-  --c-surface: 255 255 255;       /* pure white cards */
-  --c-raised: 255 255 255;
-  --c-sunken: 240 239 248;
+  --c-canvas: 240 238 230;        /* #F0EEE6 — Claude's cream paper */
+  --c-surface: 250 249 245;       /* #FAF9F5 — ivory card, not pure white */
+  --c-raised: 255 254 252;
+  --c-sunken: 235 232 222;
 
-  --c-border-subtle: 232 230 243;
-  --c-border-strong: 214 210 231;
+  --c-border-subtle: 226 222 210;
+  --c-border-strong: 205 199 184;
 
-  --c-text-primary: 24 22 41;     /* near-black violet */
-  --c-text-secondary: 92 88 115;
-  --c-text-muted: 142 138 163;
+  --c-text-primary: 30 29 27;     /* #1E1D1B — warm near-black */
+  --c-text-secondary: 91 87 79;
+  --c-text-muted: 138 132 121;
 
-  --c-brand-500: 124 92 246;
-  --c-brand-400: 146 122 250;
-  --c-accent-cyan: 12 165 199;
-  --c-accent-magenta: 200 55 224;
+  --c-brand-500: 193 95 60;       /* #C15F3C — clay, darkened for AA on cream */
+  --c-brand-400: 217 119 87;      /* #D97757 — Claude orange */
+  --c-accent-cyan: 74 129 118;    /* cactus green — the cool companion */
+  --c-accent-magenta: 166 100 91; /* dusty rose */
 
-  --c-success: 22 163 120;
-  --c-warn: 200 132 12;
-  --c-danger: 222 68 68;
-  --c-info: 46 120 240;
+  --c-success: 61 126 94;
+  --c-warn: 176 118 32;
+  --c-danger: 187 63 51;
+  --c-info: 74 111 150;
 
-  --grad-brand: linear-gradient(120deg, rgb(124 92 246) 0%, rgb(180 70 230) 50%, rgb(28 180 214) 100%);
+  /* Claude's surfaces are flat. This stays a gradient only because a handful
+     of components (the balance card, the logo wordmark) need a fill with
+     depth; it is a two-stop warm ramp, not a rainbow. */
+  --grad-brand: linear-gradient(120deg, rgb(193 95 60) 0%, rgb(217 119 87) 100%);
 
-  --shadow-sm: 0 1px 2px rgb(60 50 110 / 0.06), 0 1px 3px rgb(60 50 110 / 0.05);
-  --shadow-md: 0 6px 16px -6px rgb(60 50 110 / 0.12), 0 2px 6px -2px rgb(60 50 110 / 0.08);
-  --shadow-lg: 0 24px 48px -20px rgb(60 50 110 / 0.22), 0 8px 20px -12px rgb(60 50 110 / 0.14);
+  /* Shadows are tinted with the canvas's warmth so cards do not look grey. */
+  --shadow-sm: 0 1px 2px rgb(75 60 45 / 0.05), 0 1px 3px rgb(75 60 45 / 0.04);
+  --shadow-md: 0 4px 12px -4px rgb(75 60 45 / 0.10), 0 2px 5px -2px rgb(75 60 45 / 0.06);
+  --shadow-lg: 0 20px 40px -18px rgb(75 60 45 / 0.18), 0 6px 16px -10px rgb(75 60 45 / 0.12);
 
   /* surface treatments (used by component classes) */
-  --card-bg: rgb(255 255 255);
-  --card-shadow: var(--shadow-md);
-  --rail-bg: rgb(255 255 255 / 0.72);
+  --card-bg: rgb(250 249 245);
+  --card-shadow: var(--shadow-sm);
+  --rail-bg: rgb(250 249 245 / 0.78);
 }
 
 /* ── Dark theme ────────────────────────────────────────────────────────── */
 :root[data-theme='dark'] {
   color-scheme: dark;
 
-  --c-canvas: 9 9 17;             /* near-black violet */
-  --c-surface: 20 20 33;
-  --c-raised: 27 27 44;
-  --c-sunken: 13 13 23;
+  --c-canvas: 20 20 19;           /* #141413 — warm charcoal, never blue-black */
+  --c-surface: 31 30 29;          /* #1F1E1D */
+  --c-raised: 42 41 39;           /* #2A2927 */
+  --c-sunken: 26 25 24;
 
-  --c-border-subtle: 41 39 62;
-  --c-border-strong: 62 58 92;
+  --c-border-subtle: 55 53 50;
+  --c-border-strong: 79 76 71;
 
-  --c-text-primary: 238 240 246;
-  --c-text-secondary: 168 168 191;
-  --c-text-muted: 120 120 147;
+  --c-text-primary: 245 244 239;  /* #F5F4EF — warm off-white */
+  --c-text-secondary: 179 174 164;
+  --c-text-muted: 133 128 119;
 
-  --c-brand-500: 139 92 246;
-  --c-brand-400: 167 139 250;
-  --c-accent-cyan: 34 211 238;
-  --c-accent-magenta: 217 70 239;
+  --c-brand-500: 217 119 87;      /* #D97757 — Claude orange reads best on dark */
+  --c-brand-400: 232 150 121;
+  --c-accent-cyan: 122 168 156;   /* cactus green, lifted */
+  --c-accent-magenta: 201 142 132;
 
-  --c-success: 52 211 153;
-  --c-warn: 251 191 36;
-  --c-danger: 248 113 113;
-  --c-info: 96 165 250;
+  --c-success: 106 168 129;
+  --c-warn: 216 163 74;
+  --c-danger: 224 108 95;
+  --c-info: 130 165 202;
 
-  --grad-brand: linear-gradient(120deg, rgb(139 92 246) 0%, rgb(217 70 239) 50%, rgb(34 211 238) 100%);
+  --grad-brand: linear-gradient(120deg, rgb(193 95 60) 0%, rgb(217 119 87) 100%);
 
-  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.4);
-  --shadow-md: 0 8px 24px -12px rgb(0 0 0 / 0.55);
-  --shadow-lg: 0 30px 60px -24px rgb(0 0 0 / 0.7);
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.35);
+  --shadow-md: 0 6px 18px -10px rgb(0 0 0 / 0.5);
+  --shadow-lg: 0 24px 48px -22px rgb(0 0 0 / 0.62);
 
-  --card-bg: linear-gradient(180deg, rgb(27 27 44 / 0.9), rgb(20 20 33 / 0.9));
-  --card-shadow: var(--shadow-md), inset 0 1px 0 rgb(255 255 255 / 0.05);
-  --rail-bg: rgb(20 20 33 / 0.72);
+  --card-bg: rgb(31 30 29);
+  --card-shadow: var(--shadow-sm);
+  --rail-bg: rgb(31 30 29 / 0.78);
 }
 
 html { scroll-behavior: smooth; }
@@ -205,16 +216,16 @@ body {
   transition: background-color 0.25s var(--ease-exit), color 0.25s var(--ease-exit);
 }
 
-/* Soft, theme-aware ambient wash behind everything. */
+/* Ambient warmth behind everything. Claude's canvas is close to flat, so this
+   is a whisper — just enough to keep a large empty page from reading as grey. */
 body::before {
   content: '';
   position: fixed;
   inset: 0;
   z-index: -2;
   background:
-    radial-gradient(48rem 48rem at 8% -8%, rgb(var(--c-brand-500) / 0.14), transparent 60%),
-    radial-gradient(42rem 42rem at 100% 4%, rgb(var(--c-accent-cyan) / 0.10), transparent 55%),
-    radial-gradient(46rem 46rem at 50% 116%, rgb(var(--c-accent-magenta) / 0.08), transparent 60%);
+    radial-gradient(52rem 52rem at 6% -10%, rgb(var(--c-brand-500) / 0.06), transparent 62%),
+    radial-gradient(44rem 44rem at 100% 2%, rgb(var(--c-accent-cyan) / 0.045), transparent 58%);
   transition: opacity 0.25s var(--ease-exit);
 }
 
@@ -230,6 +241,8 @@ body::before {
 
 /* ── Reusable component classes ─────────────────────────────────────────── */
 @layer components {
+  /* Kept as a gradient for the one-word accents in page titles, but it is now
+     a short clay→orange ramp rather than a violet-to-cyan sweep. */
   .gradient-text {
     background: var(--grad-brand);
     -webkit-background-clip: text;
@@ -256,38 +269,42 @@ body::before {
     will-change: transform;
   }
   .card-hover:hover {
-    transform: translateY(-3px);
-    border-color: rgb(var(--c-brand-500) / 0.4);
-    box-shadow: var(--shadow-lg);
+    transform: translateY(-2px);
+    border-color: rgb(var(--c-border-strong));
+    box-shadow: var(--shadow-md);
   }
 
+  /* Flat clay fill — Claude's primary button does not glow or gradient-shift.
+     Feedback is a small darkening plus a 1px lift. */
   .btn-primary {
     position: relative;
-    background: var(--grad-brand);
-    background-size: 180% 180%;
-    color: white;
-    font-weight: 600;
-    border-radius: var(--radius-pill);
-    box-shadow: 0 10px 30px -12px rgb(var(--c-brand-500) / 0.7);
-    transition: transform 0.2s, box-shadow 0.3s, background-position 0.5s;
+    background: rgb(var(--c-brand-500));
+    color: rgb(250 249 245);
+    font-weight: 500;
+    border-radius: var(--radius-control);
+    box-shadow: var(--shadow-sm);
+    transition: background-color 0.15s var(--ease-exit), transform 0.15s, box-shadow 0.2s;
   }
   .btn-primary:hover {
-    transform: translateY(-2px);
-    background-position: 100% 50%;
-    box-shadow: 0 16px 40px -12px rgb(var(--c-brand-500) / 0.85);
+    background: rgb(var(--c-brand-400));
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-md);
   }
-  .btn-primary:active { transform: translateY(0); }
+  .btn-primary:active {
+    transform: translateY(0);
+    box-shadow: none;
+  }
 
   .btn-ghost {
     border: 1px solid rgb(var(--c-border-strong));
-    border-radius: var(--radius-pill);
+    border-radius: var(--radius-control);
     color: rgb(var(--c-text-secondary));
-    background: rgb(var(--c-surface) / 0.4);
-    transition: border-color 0.2s, background 0.2s, color 0.2s;
+    background: rgb(var(--c-surface));
+    transition: border-color 0.15s, background 0.15s, color 0.15s;
   }
   .btn-ghost:hover {
-    border-color: rgb(var(--c-brand-500) / 0.55);
-    background: rgb(var(--c-brand-500) / 0.08);
+    border-color: rgb(var(--c-brand-500) / 0.5);
+    background: rgb(var(--c-brand-500) / 0.07);
     color: rgb(var(--c-text-primary));
   }
 
@@ -315,9 +332,9 @@ body::before {
   .no-scrollbar { scrollbar-width: none; }
   .no-scrollbar::-webkit-scrollbar { display: none; width: 0; height: 0; }
 
-  /* Deterministic template thumbnail: the gradient is set inline via
-     background-image (so background-position/size stay ours); on card hover the
-     gradient drifts across ~2s for a subtle live-preview shimmer (01 §D). */
+  /* Fallback artwork for a dub with no extracted frame: the gradient is set
+     inline via background-image (so background-position/size stay ours) by
+     lib/thumb.ts; on card hover it drifts across ~2s. */
   .thumb-grad {
     background-size: 200% 200%;
     background-position: 0% 50%;
@@ -352,8 +369,8 @@ body::before {
     margin-top: -7px;
     border-radius: 999px;
     background: rgb(var(--c-brand-500));
-    border: 2px solid #fff;
-    box-shadow: 0 2px 6px rgb(var(--c-brand-500) / 0.5);
+    border: 2px solid rgb(var(--c-surface));
+    box-shadow: 0 1px 4px rgb(var(--c-brand-500) / 0.4);
     cursor: pointer;
   }
   .calc-slider::-moz-range-thumb {
@@ -361,8 +378,8 @@ body::before {
     height: 20px;
     border-radius: 999px;
     background: rgb(var(--c-brand-500));
-    border: 2px solid #fff;
-    box-shadow: 0 2px 6px rgb(var(--c-brand-500) / 0.5);
+    border: 2px solid rgb(var(--c-surface));
+    box-shadow: 0 1px 4px rgb(var(--c-brand-500) / 0.4);
     cursor: pointer;
   }
   .calc-slider:focus-visible::-webkit-slider-thumb {

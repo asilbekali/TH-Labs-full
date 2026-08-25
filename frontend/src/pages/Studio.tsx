@@ -15,19 +15,12 @@ import Page from "../components/Page";
 import LogoMark from "../components/brand/LogoMark";
 import { useIsDesktop } from "../hooks/useMediaQuery";
 import { rise, stagger } from "../lib/motion";
-import {
-  createJob,
-  getHealth,
-  getLanguages,
-  pollJob,
-  subscribeJob,
-  FALLBACK_HEALTH,
-  FALLBACK_LANGUAGES,
-} from "../lib/api";
-import type { Health, Job, Language } from "../lib/types";
+import { createJob, mediaUrl, pollJob, subscribeJob } from "../lib/api";
+import type { Job } from "../lib/types";
 import { useWallet, QUALITY_COST } from "../lib/wallet";
-import { canDub, commitDub } from "../lib/payments-api";
-import { useWorks } from "../lib/works";
+import { useCanDub, useCommitDub, useHealth, useLanguages } from "../lib/queries";
+import { useWorks, workTitle } from "../lib/works";
+import { gradientFor } from "../lib/thumb";
 
 const QUALITIES = [
   { key: "fast", label: "Fast" },
@@ -63,15 +56,22 @@ async function probeDurationSeconds(file: File | null): Promise<number> {
 
 export default function Studio() {
   const { balance } = useWallet();
-  const { works, addWork } = useWorks();
+  const { works, addWork, updateWork } = useWorks();
 
-  const [languages, setLanguages] = useState<Language[]>([]);
-  const [health, setHealth] = useState<Health | null>(null);
+  // Cached by TanStack Query, so switching pages does not refetch the catalog
+  // and the health chip stays live across the whole session.
+  const { data: languages = [] } = useLanguages();
+  const { data: health = null, isError: healthFailed } = useHealth();
+  const canDubGate = useCanDub();
+  const commit = useCommitDub();
 
   const [file, setFile] = useState<File | null>(null);
-  const [useSample, setUseSample] = useState(true);
+  // Upload-first: the sample clip is a real backend feature, but defaulting to
+  // it made the Studio open in a demo-ish state.
+  const [useSample, setUseSample] = useState(false);
   const [sourceLang, setSourceLang] = useState("auto");
-  const [targetLang, setTargetLang] = useState("es");
+  // Turkic-first product, so the default target is Uzbek rather than Spanish.
+  const [targetLang, setTargetLang] = useState("uz");
   const [voiceClone, setVoiceClone] = useState(true);
   const [lipSync, setLipSync] = useState(false);
   const [keepBackground, setKeepBackground] = useState(true);
@@ -83,15 +83,7 @@ export default function Studio() {
   const unsubRef = useRef<null | (() => void)>(null);
   const savedRef = useRef<string | null>(null);
 
-  useEffect(() => {
-    getLanguages()
-      .then(setLanguages)
-      .catch(() => setLanguages(FALLBACK_LANGUAGES));
-    getHealth()
-      .then(setHealth)
-      .catch(() => setHealth(FALLBACK_HEALTH));
-    return () => unsubRef.current?.();
-  }, []);
+  useEffect(() => () => unsubRef.current?.(), []);
 
   useEffect(() => {
     if (file) setUseSample(false);
@@ -114,11 +106,11 @@ export default function Studio() {
     } | null;
     if (!s || location.key === presetKeyRef.current) return;
     presetKeyRef.current = location.key;
+    // A quick-start card only picks a quality — it never swaps the user's
+    // upload out for the sample clip.
     if (s.preset === "video") {
-      setUseSample(true);
       setQuality("balanced");
     } else if (s.preset === "podcast" || s.preset === "voice") {
-      setUseSample(true);
       setQuality("studio");
     }
     if (s.sourceLang) setSourceLang(s.sourceLang);
@@ -154,28 +146,36 @@ export default function Studio() {
     };
   }, [job]);
 
-  // When a job finishes, record it in the user's works library (once).
+  // Mirror the live job into the works library. The record is created the
+  // moment the job is (see start()), so a run that is still processing shows up
+  // in My Works and on the dashboard; this keeps it in step as the pipeline
+  // reports progress, and writes the real result — media URLs, transcript
+  // segments, measured duration — when it lands.
   useEffect(() => {
-    if (completed && job && savedRef.current !== job.id) {
-      savedRef.current = job.id;
-      addWork({
-        id: job.id,
-        createdAt: Date.now(),
-        filename: job.filename,
-        sourceLang: job.result.detected_source_lang ?? sourceLang,
-        targetLang,
-        quality,
-        simulated: job.simulated,
-        outputUrl: job.result.output_url,
-        sourceUrl: job.result.source_url,
-        durationSec: job.result.duration,
-        speakerSimilarity:
-          job.result.metrics.speaker_similarity != null
-            ? job.result.metrics.speaker_similarity / 100
-            : null,
-      });
-    }
-  }, [completed, job, addWork, sourceLang, targetLang, quality]);
+    if (!job || savedRef.current !== job.id) return;
+    const runningStage = job.stages.find((s) => s.status === "running");
+    updateWork(job.id, {
+      status:
+        job.status === "completed"
+          ? "completed"
+          : job.status === "failed"
+            ? "failed"
+            : "processing",
+      stage: runningStage?.label ?? null,
+      progress: overall / 100,
+      simulated: job.simulated,
+      sourceLang: job.result.detected_source_lang ?? sourceLang,
+      outputUrl: job.result.output_url,
+      sourceUrl: job.result.source_url,
+      durationSec: job.result.duration,
+      segments: job.result.segments,
+      error: job.error,
+      speakerSimilarity:
+        job.result.metrics.speaker_similarity != null
+          ? job.result.metrics.speaker_similarity / 100
+          : null,
+    });
+  }, [job, overall, updateWork, sourceLang]);
 
   const isSampleRun = useSample && !file;
   const sampleLangNote = isSampleRun && !SAMPLE_LANGS.includes(targetLang);
@@ -192,7 +192,7 @@ export default function Studio() {
       isSampleRun ? null : file,
     );
     try {
-      const gate = await canDub(durationSeconds, quality);
+      const gate = await canDubGate.mutateAsync({ durationSeconds, quality });
       if (!gate.allowed) {
         setError(
           gate.reason === "FREE_DUB_LENGTH_EXCEEDED"
@@ -227,9 +227,42 @@ export default function Studio() {
         file: isSampleRun ? null : file,
       });
       setJob(created);
+      savedRef.current = created.id;
+      // Record the run immediately, so it is in the library (as "Running") even
+      // if the user navigates away or the tab is closed mid-pipeline. The effect
+      // above fills in the result as the job progresses.
+      addWork({
+        id: created.id,
+        createdAt: Date.now(),
+        status: "processing",
+        filename: created.filename,
+        sourceLang: created.result.detected_source_lang ?? sourceLang,
+        targetLang,
+        durationSec: created.result.duration,
+        outputUrl: null,
+        sourceUrl: created.result.source_url,
+        simulated: created.simulated,
+        speakerSimilarity: null,
+        creditsSpent: null,
+        settings: { voiceClone, lipSync, keepBackground, quality },
+        segments: [],
+        error: null,
+        progress: 0,
+        stage: null,
+      });
       // The job exists — now actually charge it (or consume the free dub).
-      // Idempotent on jobId; fire-and-forget so it never blocks the pipeline UI.
-      void commitDub(created.id, durationSeconds, quality).catch(() => {});
+      // Idempotent on jobId; never blocks the pipeline UI, but the charge it
+      // reports back is what the library records as the real cost.
+      commit
+        .mutateAsync({ jobId: created.id, durationSeconds, quality })
+        .then((res) =>
+          // A free dub costs nothing even though the API still reports the
+          // tariff it would otherwise have charged.
+          updateWork(created.id, { creditsSpent: res.charged ? res.cost : 0 }),
+        )
+        .catch(() => {
+          /* the pipeline keeps running; cost stays unknown rather than guessed */
+        });
       const stopSse = subscribeJob(
         created.id,
         (evt) => setJob(evt.job),
@@ -471,14 +504,25 @@ export default function Studio() {
             ? `Dubbing… ${overall}%`
             : `Start dubbing · ${cost} →`}
       </button>
-      {health && (
+      {/* Three honest states: unreachable, running simulated stages, or live.
+          An unreachable API used to fall back to a fabricated "simulation"
+          status, which looked identical to a real simulated pipeline. */}
+      {(health || healthFailed) && (
         <p className="flex items-center justify-center gap-1.5 text-center font-mono text-[11px] text-muted">
           <span
-            className={`h-1.5 w-1.5 rounded-full ${health.stages.some((s) => s.mode === "real") ? "bg-success" : "bg-warn"}`}
+            className={`h-1.5 w-1.5 rounded-full ${
+              healthFailed
+                ? "bg-danger"
+                : health!.stages.some((s) => s.mode === "real")
+                  ? "bg-success"
+                  : "bg-warn"
+            }`}
           />
-          {health.stages.filter((s) => s.mode === "real").length > 0
-            ? "Pipeline online"
-            : "Simulation mode"}
+          {healthFailed
+            ? "Dubbing service unreachable"
+            : health!.stages.some((s) => s.mode === "real")
+              ? "Pipeline online"
+              : "Simulation mode — no models loaded"}
         </p>
       )}
     </div>
@@ -632,11 +676,11 @@ export default function Studio() {
                     <div key={w.id} className="flex items-center gap-3">
                       <span
                         className="h-10 w-14 shrink-0 rounded-lg"
-                        style={{ background: gradFor(w.id) }}
+                        style={{ background: gradientFor(w.id) }}
                       />
                       <div className="min-w-0 flex-1">
                         <div className="truncate text-sm font-medium text-primary">
-                          {w.filename ?? "Sample dub"}
+                          {workTitle(w)}
                         </div>
                         <div className="font-mono text-[11px] text-muted">
                           {w.sourceLang.toUpperCase()}→
@@ -645,7 +689,7 @@ export default function Studio() {
                       </div>
                       {w.outputUrl && (
                         <a
-                          href={w.outputUrl}
+                          href={mediaUrl(w.outputUrl)}
                           download
                           aria-label="Download"
                           className="focusable grid h-8 w-8 place-items-center rounded-full text-muted hover:bg-sunken hover:text-primary"
@@ -940,12 +984,6 @@ function fmtElapsed(ms: number): string {
   const m = Math.floor(total / 60);
   const s = total % 60;
   return `${m}:${s.toString().padStart(2, "0")}`;
-}
-
-function gradFor(seed: string): string {
-  let h = 0;
-  for (const c of seed) h = (h * 31 + c.charCodeAt(0)) % 360;
-  return `linear-gradient(135deg, hsl(${h} 68% 56%), hsl(${(h + 60) % 360} 68% 46%))`;
 }
 
 // The animated 44×24 switch track (§9) — animates transform, not left.
