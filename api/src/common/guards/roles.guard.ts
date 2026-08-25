@@ -26,6 +26,15 @@ export class RolesGuard implements CanActivate {
       .switchToHttp()
       .getRequest<{ user?: AuthenticatedUser }>();
 
+    // SUPERADMIN satisfies every requirement. Without this the check is flat
+    // membership, and a route that lists @Roles(ADMIN, USER) locks out the one
+    // role that owns the system while admitting the least privileged one --
+    // which is exactly what happened to GET/PATCH/DELETE /users/:id, leaving
+    // the superadmin unable to change their own password through the API.
+    // Encoding the hierarchy here rather than appending SUPERADMIN to every
+    // decorator means the next route added cannot reintroduce the same gap.
+    if (user?.role === Role.SUPERADMIN) return true;
+
     if (!user || !requiredRoles.includes(user.role)) {
       throw new ForbiddenException(
         'You do not have permission to access this resource',

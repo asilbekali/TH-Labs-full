@@ -181,6 +181,60 @@ After this, every push to `main` touching `api/**` deploys on its own.
 
 ---
 
+## 6. Stripe
+
+Payments run **here**, on this API — not on Modal. The Studio has no Stripe code
+at all; it calls `/v1/payments/*` and follows the URL it is given.
+
+The API boots and serves `/payments/plans` whether or not Stripe is configured,
+so a broken setup is quiet. It shows up only when someone tries to pay.
+
+**1. Payment Links** — Dashboard → Payment Links, one per paid plan (PRO and
+STUDIO × weekly/monthly/yearly). Leave client-reference-ID passthrough enabled:
+the API appends `?client_reference_id=<userId>` to the link, and the webhook
+reads that field to decide whose credits to grant. A payment arriving without it
+is logged and ignored. Put the six URLs in `.env` as `STRIPE_LINK_*`.
+
+**2. Webhook endpoint** — Dashboard → Developers → Webhooks → Add endpoint:
+
+```
+https://th-labs.uz/v1/payments/webhook
+```
+
+Subscribe to exactly the events the handler dispatches:
+`checkout.session.completed`, `invoice.paid`, `invoice.payment_succeeded`,
+`invoice.payment_failed`, `customer.subscription.updated`,
+`customer.subscription.deleted`. Copy the `whsec_...` signing secret into
+`STRIPE_WEBHOOK_SECRET`.
+
+**3. Secret key** — `STRIPE_SECRET_KEY` in `.env`. The publishable key is not
+used anywhere: checkout is a redirect to a Payment Link, so Stripe.js never
+loads and no key ships to the browser.
+
+**4. Apply.** The links are read at seed time, not on boot, so re-seed:
+
+```bash
+cd /srv/th-labs && docker compose up -d api && docker compose exec api yarn prisma:seed
+```
+
+**Verify** — the warning is the tell. If Stripe is wired up, this prints nothing:
+
+```bash
+docker compose logs api | grep -i "STRIPE_SECRET_KEY not set\|not configured"
+```
+
+Then confirm the links actually landed on the plan rows:
+
+```bash
+docker compose exec -T db psql -U thlabs -d thlabs -tAc 'select tier, cycle, ("stripeLinkUrl" is not null) as has_link from "Plan" order by tier, cycle;'
+```
+
+Finally send a test event from the Dashboard and watch for a 200. A 503 means
+`STRIPE_WEBHOOK_SECRET` never reached the container; a 400 means it reached it
+but does not match the endpoint you created.
+
+---
+
 ## Rolling back
 
 Every build is also tagged with its commit sha, so the previous image is still

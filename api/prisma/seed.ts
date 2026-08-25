@@ -80,16 +80,27 @@ async function seedPlans() {
   }
 }
 
+// Seeding must be safe to re-run. It is not only invoked by hand: any change to
+// a Payment Link means re-seeding the Plan rows, and that used to take the
+// superadmin's password with it -- rewriting it to the literal below, which is
+// published in this repository. A deploy step that quietly resets a production
+// credential is a trap, so the password is now only ever written when someone
+// asked for it.
 async function seedAdmin() {
   const email = process.env.SEED_ADMIN_EMAIL ?? 'admin@thlabs.dev';
-  const password = process.env.SEED_ADMIN_PASSWORD ?? 'Admin123!';
+  const requestedPassword = process.env.SEED_ADMIN_PASSWORD;
+  const password = requestedPassword ?? 'Admin123!';
   const hashedPassword = await bcrypt.hash(password, 10);
+
+  const existing = await prisma.user.findUnique({ where: { email } });
 
   const admin = await prisma.user.upsert({
     where: { email },
+    // Only rotate the password when SEED_ADMIN_PASSWORD was explicitly set.
+    // Without it, re-seeding leaves the existing account exactly as it is.
     update: {
-      password: hashedPassword,
       role: Role.SUPERADMIN,
+      ...(requestedPassword ? { password: hashedPassword } : {}),
     },
     create: {
       email,
@@ -99,7 +110,23 @@ async function seedAdmin() {
     },
   });
 
-  console.log(`Seeded admin account: ${admin.email}`);
+  if (existing) {
+    console.log(
+      requestedPassword
+        ? `Admin ${admin.email}: password rotated from SEED_ADMIN_PASSWORD`
+        : `Admin ${admin.email}: left unchanged (set SEED_ADMIN_PASSWORD to rotate)`,
+    );
+  } else if (requestedPassword) {
+    console.log(`Created admin account: ${admin.email}`);
+  } else {
+    // Creating a fresh account with the built-in password is the one case that
+    // genuinely warrants shouting: the credential is in the public repo.
+    console.warn(
+      `WARNING: created ${admin.email} with the DEFAULT password from seed.ts, ` +
+        'which is public. Change it now, or re-run with SEED_ADMIN_EMAIL and ' +
+        'SEED_ADMIN_PASSWORD set.',
+    );
+  }
 }
 
 async function main() {
