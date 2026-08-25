@@ -24,18 +24,41 @@ yarn start:dev              # http://localhost:3001  (Swagger at /docs)
 
 ## Plan matrix (seeded from `prisma/seed.ts`)
 
-| Tier | Cycle | Price | Credits / grant | Grant every |
-|---|---|---|---|---|
-| FREE | — | $0 | 60 | 30 days |
-| PRO | WEEKLY | $6 | 150 | 7 days |
-| PRO | MONTHLY | $19 | 600 | 30 days |
-| PRO | YEARLY | $182 | 600 | 30 days ×12 |
-| STUDIO | WEEKLY | $15 | 500 | 7 days |
-| STUDIO | MONTHLY | $49 | 2000 | 30 days |
-| STUDIO | YEARLY | $470 | 2000 | 30 days ×12 |
+| Tier | Cycle | Price | Credits / grant | Grant every | Grants | **Total credits** |
+|---|---|---|---|---|---|---|
+| FREE | — | $0 | 60 | 30 days | 1 | 60 |
+| PRO | WEEKLY | $6 | 300 | 7 days | 1 | **300** |
+| PRO | MONTHLY | $19 | 1 200 | 30 days | 1 | **1 200** |
+| PRO | YEARLY | $199 | 1 200 | 30 days | 12 | **14 400** |
+| STUDIO | WEEKLY | $15 | 1 200 | 7 days | 1 | **1 200** |
+| STUDIO | MONTHLY | $49 | 4 800 | 30 days | 1 | **4 800** |
+| STUDIO | YEARLY | $499 | 4 800 | 30 days | 12 | **57 600** |
 
-**Yearly bills once but the cron drips one allocation every `grantDays`** — see
-`payment.cron.ts`.
+`priceCents` **must** match the Stripe Payment Link amount exactly — with no
+`stripePriceId` seeded, the webhook resolves the plan by `amount_total`. A
+mismatch means no credits are granted; `resolvePlan` logs the whole catalog
+when that happens so the drift is visible in one line.
+
+**Yearly bills once but the cron drips one allocation every `grantDays`** —
+`Plan.grantsPerPeriod` (12) bounds it against `Subscription.grantsIssued`, so a
+365-day period pays out exactly twelve months and not a thirteenth. Checkout and
+each renewal reset the counter to 1, having already granted the first
+allocation. See `payment.cron.ts`.
+
+## Period end & the drop back to Free
+
+`cyclePeriodEnd` steps by **calendar** units, not by 30/365 days: pay on Aug 25
+and the period ends Sep 25 (Jan 31 clamps to Feb 28/29, as Stripe does).
+
+Nothing stores a "current tier" — it is derived from the live `Subscription`
+row. So when a period ends with no renewal, `expireLapsedSubscriptions` (hourly)
+flips `ACTIVE`/`PAST_DUE` → `EXPIRED` and the user is back on Free. Because the
+cron is hourly, `GET /payments/subscription` also reports a lapsed row as
+`EXPIRED` on read, so the UI never shows a stale paid tier while waiting for the
+sweep. A renewal that arrives late simply sets the row `ACTIVE` again.
+
+**Unspent credits survive expiry** — they were paid for, and the cancel endpoint
+makes the same promise.
 
 ---
 
@@ -129,8 +152,8 @@ stripe listen --forward-to localhost:3001/v1/payments/webhook
 
 | Event | Effect |
 |---|---|
-| `checkout.session.completed` | Resolve user via `client_reference_id`, plan via amount → create/reactivate subscription, record `Payment` SUCCEEDED, grant first allocation. |
-| `invoice.paid` | Renewal: record payment, grant next allocation, extend period. Skips the initial `subscription_create` invoice (already granted at checkout). |
+| `checkout.session.completed` | Resolve user via `client_reference_id`, plan via amount → create/reactivate subscription, retire any other live subscription for that user, record `Payment` SUCCEEDED, grant allocation 1. |
+| `invoice.paid` | Renewal: record payment, start a new period, reset `grantsIssued` to 1 and grant. Skips the initial `subscription_create` invoice (already granted at checkout). |
 | `invoice.payment_failed` | Status → `PAST_DUE`. Credits kept. |
 | `customer.subscription.updated` | Sync status / period / cancelAtPeriodEnd. |
 | `customer.subscription.deleted` | Status → `CANCELED`. Unspent credits kept. |

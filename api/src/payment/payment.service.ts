@@ -28,8 +28,8 @@ type Tx = Omit<
   '$connect' | '$disconnect' | '$on' | '$transaction' | '$use' | '$extends'
 >;
 
-// Length of one billing period, in days, per cycle. Used to compute a
-// subscription's period end when Stripe doesn't hand us one.
+// Length of one billing period, in days, per cycle. Only WEEKLY is expressed
+// in days — monthly and yearly are calendar arithmetic (see cyclePeriodEnd).
 const CYCLE_DAYS: Record<BillingCycle, number> = {
   WEEKLY: 7,
   MONTHLY: 30,
@@ -206,9 +206,13 @@ export class PaymentService {
       };
     }
 
-    // 2. Active subscription or enough credits → paid dub.
-    const hasActiveSub = await this.hasActiveSubscription(userId);
-    if (hasActiveSub || user.credits >= cost) {
+    // 2. Enough credits → paid dub. A subscription alone is not enough: a
+    //    subscriber who has spent the month's allocation has to wait for the
+    //    next grant like everyone else. This has to agree with commitDub,
+    //    which enforces the balance unconditionally — letting a subscription
+    //    pass here just moved the failure from a clean preflight refusal to a
+    //    mid-job INSUFFICIENT_CREDITS.
+    if (user.credits >= cost) {
       return {
         allowed: true,
         isFreeDub: false,
@@ -336,7 +340,22 @@ export class PaymentService {
       orderBy: { createdAt: 'desc' },
       include: { plan: true },
     });
-    return { subscription };
+    if (!subscription) return { subscription: null };
+
+    // The expiry cron only runs hourly, so a row can still be stamped ACTIVE
+    // for a period that ended minutes ago. Callers use this to decide which
+    // tier to show, so report the effective status rather than the stored one
+    // — the cron catches up and writes the same value shortly after.
+    const lapsed =
+      subscription.currentPeriodEnd <= new Date() &&
+      (subscription.status === SubscriptionStatus.ACTIVE ||
+        subscription.status === SubscriptionStatus.PAST_DUE);
+
+    return {
+      subscription: lapsed
+        ? { ...subscription, status: SubscriptionStatus.EXPIRED }
+        : subscription,
+    };
   }
 
   async cancelSubscription(userId: number) {
@@ -448,22 +467,57 @@ export class PaymentService {
     if (byPrice) return byPrice;
 
     if (opts.amountCents != null) {
-      const matches = await this.prisma.plan.findMany({
-        where: { priceCents: opts.amountCents, active: true, tier: { not: PlanTier.FREE } },
+      const paid = await this.prisma.plan.findMany({
+        where: { active: true, tier: { not: PlanTier.FREE } },
       });
+      const matches = paid.filter((p) => p.priceCents === opts.amountCents);
       if (matches.length === 1) return matches[0];
+
       if (matches.length > 1) {
         this.logger.warn(
-          `Ambiguous plan resolution: ${matches.length} plans priced at ${opts.amountCents}c`,
+          `Ambiguous plan resolution: ${matches.length} plans priced at ${opts.amountCents}c ` +
+            `(${matches.map((p) => `${p.tier}/${p.cycle}`).join(', ')}). ` +
+            'Give these plans distinct prices, or seed stripePriceId.',
+        );
+      } else {
+        // The usual cause is a seeded priceCents that drifted from the amount
+        // on the Stripe Payment Link. Print the catalog so the mismatch is
+        // obvious from the one log line, instead of "no credits appeared".
+        this.logger.error(
+          `No plan priced at ${opts.amountCents}c. Seeded prices: ` +
+            paid
+              .map((p) => `${p.tier}/${p.cycle}=${p.priceCents}c`)
+              .join(', ') +
+            '. Update prisma/seed.ts to match Stripe and re-seed.',
         );
       }
     }
     return null;
   }
 
+  // When a monthly plan is bought on Aug 25 it must lapse on Sep 25, not on
+  // Sep 24 — so monthly and yearly step by calendar units, not by a fixed
+  // 30/365 days. Only the day-of-month is clamped: buying on Jan 31 gives a
+  // period ending Feb 28 (or 29), which is what Stripe does too.
   cyclePeriodEnd(cycle: BillingCycle, from: Date = new Date()): Date {
     const end = new Date(from);
-    end.setDate(end.getDate() + CYCLE_DAYS[cycle]);
+    if (cycle === 'WEEKLY') {
+      end.setDate(end.getDate() + CYCLE_DAYS.WEEKLY);
+      return end;
+    }
+
+    const months = cycle === 'YEARLY' ? 12 : 1;
+    const day = end.getDate();
+    // setMonth on the 31st would roll into the next month (Jan 31 → Mar 3).
+    // Pin to the 1st first, move the month, then clamp the day back on.
+    end.setDate(1);
+    end.setMonth(end.getMonth() + months);
+    const daysInTargetMonth = new Date(
+      end.getFullYear(),
+      end.getMonth() + 1,
+      0,
+    ).getDate();
+    end.setDate(Math.min(day, daysInTargetMonth));
     return end;
   }
 
