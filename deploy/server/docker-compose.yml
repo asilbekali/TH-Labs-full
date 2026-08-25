@@ -70,6 +70,26 @@ services:
       NODE_ENV: production
       PORT: "3000"
       HOST: ${PUBLIC_HOST:-aytingchi.uz}
+      # ── Stripe ────────────────────────────────────────────────────────────
+      # Without STRIPE_WEBHOOK_SECRET the webhook route answers 503 on every
+      # delivery, so a customer can pay and never receive credits — and the
+      # only trace is a log line. Required, not optional.
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:?set STRIPE_SECRET_KEY in .env}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:?set STRIPE_WEBHOOK_SECRET in .env}
+      # Read by `prisma db seed` to fill Plan.stripeLinkUrl. The seed leaves an
+      # existing link alone when one of these is unset, so a partial .env
+      # degrades to "stale links" rather than "checkout 400s".
+      STRIPE_LINK_PRO_WEEKLY: ${STRIPE_LINK_PRO_WEEKLY:-}
+      STRIPE_LINK_PRO_MONTHLY: ${STRIPE_LINK_PRO_MONTHLY:-}
+      STRIPE_LINK_PRO_YEARLY: ${STRIPE_LINK_PRO_YEARLY:-}
+      STRIPE_LINK_STUDIO_WEEKLY: ${STRIPE_LINK_STUDIO_WEEKLY:-}
+      STRIPE_LINK_STUDIO_MONTHLY: ${STRIPE_LINK_STUDIO_MONTHLY:-}
+      STRIPE_LINK_STUDIO_YEARLY: ${STRIPE_LINK_STUDIO_YEARLY:-}
+      FREE_DUB_MAX_SECONDS: ${FREE_DUB_MAX_SECONDS:-120}
+      # Always allowed through CORS on top of the built-in list, and what
+      # decides the refresh cookie's Secure/SameSite pair (api/src/auth).
+      APP_URL: ${APP_URL:-}
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
     networks:
       internal:
       edge:

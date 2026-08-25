@@ -24,6 +24,7 @@ import {
 import {
   isStripeLiveMode,
   isStripeTestMode,
+  paymentLinkMode,
   stripeUnavailableReason,
 } from '../lib/stripe'
 import type {
@@ -36,10 +37,10 @@ import type {
 } from '../lib/payments-api'
 
 type Cycle = 'weekly' | 'monthly' | 'yearly'
-const CYCLES: { key: Cycle; label: string; suffix: string; api: BillingCycle }[] = [
-  { key: 'weekly', label: 'Weekly', suffix: '/wk', api: 'WEEKLY' },
-  { key: 'monthly', label: 'Monthly', suffix: '/mo', api: 'MONTHLY' },
-  { key: 'yearly', label: 'Yearly', suffix: '/yr', api: 'YEARLY' },
+const CYCLES: { key: Cycle; label: string; suffix: string; per: string; api: BillingCycle }[] = [
+  { key: 'weekly', label: 'Weekly', suffix: '/wk', per: 'week', api: 'WEEKLY' },
+  { key: 'monthly', label: 'Monthly', suffix: '/mo', per: 'month', api: 'MONTHLY' },
+  { key: 'yearly', label: 'Yearly', suffix: '/yr', per: 'year', api: 'YEARLY' },
 ]
 
 // UI tier assembled from the server's Plan rows (one row per tier×cycle).
@@ -49,7 +50,18 @@ interface UiTier {
   highlight: boolean
   features: string[]
   prices: Record<Cycle, number> // dollars
-  creditsGranted: number
+  /** Credits the whole billing period is worth, per cycle. */
+  credits: Record<Cycle, number>
+  /** Credits in one allocation — differs from `credits` only for yearly. */
+  perGrant: Record<Cycle, number>
+  /** Allocations per period: 1 for weekly/monthly, 12 for yearly. */
+  grants: Record<Cycle, number>
+  /**
+   * Set when the tier exists at exactly one cycle (FREE, which is only sold
+   * monthly). Its credits are quoted against this rather than whatever the
+   * cycle switch says, so Free never reads as "60 credits / year".
+   */
+  fixedCycle?: Cycle
 }
 
 // What each tier unlocks. This is product copy, not data — the numbers beside
@@ -60,21 +72,59 @@ const TIER_META: { tier: PlanTier; name: string; highlight: boolean; features: s
   { tier: 'STUDIO', name: 'Studio', highlight: false, features: ['Everything in Pro', 'Batch dubbing', 'Highest fidelity output', 'Email support'] },
 ]
 
+const CYCLE_KEYS: Cycle[] = ['weekly', 'monthly', 'yearly']
+
+function byCycle<T>(pick: (c: Cycle) => T): Record<Cycle, T> {
+  return { weekly: pick('weekly'), monthly: pick('monthly'), yearly: pick('yearly') }
+}
+
+/**
+ * Credit figures for one plan row, from whatever the server actually sent.
+ *
+ * Deliberately paranoid about missing and non-numeric fields: an API deployed
+ * before `grantsPerPeriod` existed omits it, and `creditsGranted * undefined`
+ * is NaN — which then propagates through toLocaleString() and puts "NaN
+ * credits / month" on every pricing card. A number the user reads as a promise
+ * about what they are buying must degrade to a real number, never to NaN.
+ * `Number(x) || fallback` catches undefined, null and NaN in one step.
+ */
+function creditsOf(row: ServerPlan | undefined): {
+  perGrant: number
+  grants: number
+  total: number
+} {
+  const perGrant = Number(row?.creditsGranted) || 0
+  const grants = Number(row?.grantsPerPeriod) || 1
+  return { perGrant, grants, total: perGrant * grants }
+}
+
 function buildTiers(plans: ServerPlan[]): UiTier[] {
   return TIER_META.map((m) => {
-    const priceFor = (c: Cycle): number => {
+    // FREE only has a MONTHLY row — there is nothing to buy weekly or yearly —
+    // so fall back to it and the tier still renders under every switch.
+    const rowFor = (c: Cycle): ServerPlan | undefined => {
       const api = CYCLES.find((x) => x.key === c)!.api
-      const row = plans.find((p) => p.tier === m.tier && p.cycle === api)
-      return row ? row.priceCents / 100 : 0
+      return (
+        plans.find((p) => p.tier === m.tier && p.cycle === api) ??
+        (m.tier === 'FREE'
+          ? plans.find((p) => p.tier === 'FREE' && p.cycle === 'MONTHLY')
+          : undefined)
+      )
     }
-    const monthly = plans.find((p) => p.tier === m.tier && p.cycle === 'MONTHLY')
+
     return {
       tier: m.tier,
       name: m.name,
       highlight: m.highlight,
       features: m.features,
-      prices: { weekly: priceFor('weekly'), monthly: priceFor('monthly'), yearly: priceFor('yearly') },
-      creditsGranted: monthly?.creditsGranted ?? 0,
+      prices: byCycle((c) => (Number(rowFor(c)?.priceCents) || 0) / 100),
+      // Every cycle reads its OWN plan row. Reading the monthly row for all
+      // three was why weekly, monthly and yearly all advertised the same
+      // number of credits.
+      perGrant: byCycle((c) => creditsOf(rowFor(c)).perGrant),
+      grants: byCycle((c) => creditsOf(rowFor(c)).grants),
+      credits: byCycle((c) => creditsOf(rowFor(c)).total),
+      fixedCycle: m.tier === 'FREE' ? ('monthly' as Cycle) : undefined,
     }
   })
 }
@@ -97,6 +147,14 @@ export default function Plans() {
   const history = historyQuery.data?.items ?? []
 
   const stripeBlocked = stripeUnavailableReason()
+
+  // The links the API actually hands out decide whether money moves — trust
+  // them over the publishable key, and say so when the two disagree.
+  const linkMode = paymentLinkMode(
+    (plansQuery.data?.plans ?? []).map((p) => p.stripeLinkUrl),
+  )
+  const inTestCheckout = linkMode === 'test' || (linkMode === null && isStripeTestMode)
+  const modeMismatch = linkMode !== null && linkMode === 'test' && isStripeLiveMode
 
   const activeTier: PlanTier =
     subscription && subscription.status === 'ACTIVE' ? (subscription.plan?.tier ?? 'FREE') : 'FREE'
@@ -137,10 +195,18 @@ export default function Plans() {
     <Page className="space-y-8 pb-4">
       {/* A test-mode build takes fake cards and grants real credits in your
           database. Never let that be a surprise. */}
-      {isStripeTestMode && (
+      {inTestCheckout && (
         <div className="rounded-card border border-warn/40 bg-warn/10 px-4 py-3 text-sm text-warn">
           <strong className="font-medium">Stripe test mode.</strong> Checkout accepts test cards only — no
-          money moves. Set a <code className="font-mono text-xs">pk_live_</code> key to take real payments.
+          money moves. Swap the <code className="font-mono text-xs">STRIPE_LINK_*</code> Payment Links for
+          live ones to take real payments.
+          {modeMismatch && (
+            <>
+              {' '}
+              <strong className="font-medium">This build has a live publishable key but test Payment
+              Links</strong> — one of the two is wrong.
+            </>
+          )}
         </div>
       )}
       {stripeBlocked && (
@@ -217,7 +283,7 @@ export default function Plans() {
           </motion.div>
         )}
 
-        <StripeFooter />
+        <StripeFooter live={linkMode === 'live' && isStripeLiveMode} />
       </motion.section>
 
       <AnimatePresence>
@@ -280,9 +346,18 @@ function TierCard({
 }) {
   const featured = tier.highlight
   const price = tier.prices[cycle]
-  const suffix = CYCLES.find((c) => c.key === cycle)!.suffix
+  const meta = CYCLES.find((c) => c.key === cycle)!
+  const suffix = meta.suffix
   const perMonthYear = cycle === 'yearly' && price > 0 ? (price / 12).toFixed(2) : null
   const isFree = tier.tier === 'FREE'
+
+  // Yearly is billed once but the credits arrive a month at a time, so show
+  // both numbers — the headline total and what actually lands each month.
+  const creditCycle = tier.fixedCycle ?? cycle
+  const creditPer = CYCLES.find((c) => c.key === creditCycle)!.per
+  const grants = tier.grants[creditCycle]
+  const dripNote =
+    grants > 1 ? `${tier.perGrant[creditCycle].toLocaleString()} credits added every month` : null
 
   const label = current
     ? 'Current plan'
@@ -335,7 +410,11 @@ function TierCard({
       </div>
 
       <div className="mt-3 text-sm text-secondary">
-        {tier.creditsGranted.toLocaleString()} credits / month
+        <span className="font-mono text-primary">{tier.credits[creditCycle].toLocaleString()}</span>{' '}
+        credits / {creditPer}
+      </div>
+      <div className="h-4">
+        {dripNote && <p className="font-mono text-[11px] text-muted">{dripNote}</p>}
       </div>
 
       <div className="mt-5 flex-1">
@@ -384,8 +463,17 @@ function CompareDisclosure({
   tiers: UiTier[]
   catalog: PlansResponse
 }) {
+  // One credits row per cycle: the three grants genuinely differ, and a single
+  // "credits per month" row could only ever be right for one of them.
   const rows: { feature: string; values: (string | boolean)[] }[] = [
-    { feature: 'Credits per month', values: tiers.map((t) => t.creditsGranted.toLocaleString()) },
+    ...CYCLE_KEYS.map((c) => ({
+      feature: `Credits · ${CYCLES.find((x) => x.key === c)!.label.toLowerCase()}`,
+      values: tiers.map((t) =>
+        (t.fixedCycle && t.fixedCycle !== c) || t.credits[c] === 0
+          ? '–'
+          : t.credits[c].toLocaleString(),
+      ),
+    })),
     { feature: 'Weekly price', values: tiers.map((t) => fmtPrice(t.prices.weekly)) },
     { feature: 'Monthly price', values: tiers.map((t) => fmtPrice(t.prices.monthly)) },
     { feature: 'Yearly price', values: tiers.map((t) => fmtPrice(t.prices.yearly)) },
@@ -636,14 +724,16 @@ function HistoryCard({ rows }: { rows: PaymentRow[] }) {
 
 /* ── Small pieces ───────────────────────────────────────────────────────── */
 
-function StripeFooter() {
+// `live` is deliberately the AND of the key and the links: the badge is a claim
+// that real money moves, so anything less than both agreeing must not show it.
+function StripeFooter({ live }: { live: boolean }) {
   return (
     <div className="flex flex-wrap items-center justify-between gap-3 rounded-card border border-subtle bg-sunken/50 px-5 py-4">
       <p className="font-mono text-xs text-muted">
         Payments are processed by Stripe. Card details never reach this site, and credits are granted
         automatically once Stripe confirms the payment.
       </p>
-      {isStripeLiveMode && (
+      {live && (
         <span className="shrink-0 rounded-pill bg-success/12 px-2.5 py-1 font-mono text-[10px] uppercase tracking-wide text-success">
           Live payments
         </span>
