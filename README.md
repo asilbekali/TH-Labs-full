@@ -168,15 +168,28 @@ Wiring points for OmniVoice and Wav2Lip live in `app/pipeline/tts.py` and
 
 ## 📡 API
 
+Two services answer here, and the UI talks to both.
+
+**Account API** — NestJS, `https://th-labs.uz`, Swagger UI at `/docs`. Up
+whenever the site is.
+
 | Method | Endpoint | Purpose |
 |--------|----------|---------|
-| `GET`  | `/api/health` | Mode + per‑stage engine status |
-| `GET`  | `/api/languages` | Supported languages (32) |
+| `GET`  | `/v1/health` | API + database status, and the pipeline's per‑stage engines (probed server‑side) |
+| `GET`  | `/v1/languages` | Supported languages (32) |
+| `GET`  | `/v1/languages/{code}` | One language |
+| `GET`  | `/docs` | Interactive OpenAPI docs (a **page**, not the API base — routes live under `/v1`) |
+
+**Dubbing pipeline** — FastAPI, on the GPU box. Frequently asleep; nothing but
+dubbing depends on it.
+
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
 | `POST` | `/api/jobs` | Create a dubbing job (multipart upload or `sample=true`) |
 | `GET`  | `/api/jobs/{id}` | Job snapshot |
 | `GET`  | `/api/jobs/{id}/events` | **SSE** live pipeline progress |
 | `GET`  | `/media/...` | Source & dubbed media |
-| `GET`  | `/docs` | Interactive OpenAPI docs |
+| `GET`  | `/api/health`, `/api/languages` | Still served, but the UI reads the account API's copies instead — a sleeping GPU box used to take the language picker and status strip down with it |
 
 ---
 

@@ -1,7 +1,7 @@
 // Dashboard (01).
 //
-// Everything on this page is live: the language grid is GET /api/languages, the
-// pipeline strip is GET /api/health, and the activity row is the user's own
+// Everything on this page is live: the language grid is GET /v1/languages, the
+// pipeline strip is GET /v1/health, and the activity row is the user's own
 // dubs. The old template gallery was removed — it was a fixed list of invented
 // clips that could not actually be opened.
 import { useMemo, useState } from 'react'
@@ -11,6 +11,7 @@ import Page from '../components/Page'
 import LogoMark from '../components/brand/LogoMark'
 import { EASE_ENTRANCE, EASE_EXIT, rise, springLayout, stagger } from '../lib/motion'
 import { useHealth, useLanguages } from '../lib/queries'
+import { pipelineDown } from '../lib/api'
 import { gradientFor } from '../lib/thumb'
 import { useAuth } from '../lib/auth'
 import { useWorks, workPair, workTitle } from '../lib/works'
@@ -44,6 +45,11 @@ export default function Home() {
 
   const languages = useLanguages()
   const health = useHealth()
+
+  // "Nothing can be dubbed" now has two causes: the account API is unreachable
+  // (health.isError) or it reached the pipeline and the pipeline is down. Both
+  // render the same, so collapse them once here rather than at each use.
+  const dubbingDown = pipelineDown(health.data, health.isError)
 
   const [query, setQuery] = useState('')
 
@@ -121,11 +127,11 @@ export default function Home() {
             value={catalog.length > 0 ? `${catalog.length} languages` : 'Loading languages…'}
           />
           <HeroChip
-            tint={health.isError ? 'danger' : 'cyan'}
+            tint={dubbingDown ? 'danger' : 'cyan'}
             icon={ICON.bolt}
             value={
-              health.isError
-                ? 'Service unreachable'
+              dubbingDown
+                ? 'Pipeline unreachable'
                 : health.data
                   ? `${health.data.stages.filter((s) => s.mode === 'real').length}/${health.data.stages.length} stages live`
                   : 'Checking pipeline…'
@@ -274,7 +280,10 @@ export default function Home() {
         <p className="mt-1.5 text-sm text-secondary">
           The five stages every dub runs through, and which engine is loaded right now.
         </p>
-        {health.isError ? (
+        {/* An empty `stages` means the API could not reach the pipeline, so it
+            has to render as the failure it is — an empty grid would read as a
+            pipeline with nothing in it. */}
+        {dubbingDown ? (
           <FailedCard
             title="Dubbing service unreachable"
             body="Nothing can be dubbed until it comes back. Sign-in, plans and your library are unaffected."

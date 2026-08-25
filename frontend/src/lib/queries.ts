@@ -1,7 +1,8 @@
 // TanStack Query hooks over the two backends.
 //
-// The transport still lives in the thin clients (api.ts → FastAPI, auth-api.ts
-// and payments-api.ts → the NestJS CRUD API documented at <host>/docs). This
+// The transport still lives in the thin clients (api.ts → FastAPI for jobs and
+// media, but the account API for health and languages; auth-api.ts and
+// payments-api.ts → the NestJS CRUD API documented at <host>/docs). This
 // module owns caching, loading/error state, invalidation and refetch policy, so
 // no page has to hand-roll a useEffect + useState + "did it fail?" triangle.
 //
@@ -42,11 +43,16 @@ import {
   type Subscription,
 } from './payments-api'
 
-/* ── Dubbing API ─────────────────────────────────────────────────────────── */
+/* ── Service status & catalog (account API) ──────────────────────────────── */
 
 /**
- * Live pipeline status. Polled while the tab is visible so the Home strip and
- * the Studio chip reflect a service that comes back up without a reload.
+ * GET /v1/health — this API, its database, and the pipeline it probes on our
+ * behalf. Polled while the tab is visible so the Home strip and the Studio chip
+ * reflect a pipeline that comes back up without a reload.
+ *
+ * isError here means the ACCOUNT API is unreachable. A pipeline that is merely
+ * down resolves normally with `pipeline: 'down'` — use pipelineDown(), not
+ * isError, to decide whether dubbing is possible.
  */
 export function useHealth(): UseQueryResult<Health> {
   return useQuery({
@@ -58,10 +64,10 @@ export function useHealth(): UseQueryResult<Health> {
 }
 
 /**
- * The language catalog. Effectively static, so it is cached for the session;
- * `placeholderData` keeps the target picker usable while the first request is
- * in flight and after a failure (see FALLBACK_LANGUAGES — the same codes the
- * backend ships, not invented content).
+ * GET /v1/languages — the catalog, from the account API's database. Effectively
+ * static, so it is cached for the session; `placeholderData` keeps the target
+ * picker usable while the first request is in flight and after a failure (see
+ * FALLBACK_LANGUAGES — the same codes the API seeds, not invented content).
  */
 export function useLanguages(): UseQueryResult<Language[]> {
   return useQuery({
