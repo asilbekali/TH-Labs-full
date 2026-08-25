@@ -129,9 +129,68 @@ async function seedAdmin() {
   }
 }
 
+// ── Language catalog ───────────────────────────────────────────────────────
+// Copied verbatim from backend/app/languages.py, which is where these codes
+// were verified against the two models. Order here is the display order the
+// pipeline shipped (English and the core targets first), stored as sortOrder so
+// the picker keeps it without depending on insertion order.
+//
+// Do NOT invent entries: `whisper` must be a code Whisper accepts and `nllb` a
+// real FLORES-200 code, or the stage fails at runtime with a model error rather
+// than a validation one.
+const LANGUAGE_SEED: [string, string, string, string, string, string][] = [
+  ['en', 'English', 'English', '🇬🇧', 'en', 'eng_Latn'],
+  ['uz', 'Uzbek', 'Oʻzbekcha', '🇺🇿', 'uz', 'uzn_Latn'],
+  ['ru', 'Russian', 'Русский', '🇷🇺', 'ru', 'rus_Cyrl'],
+  ['es', 'Spanish', 'Español', '🇪🇸', 'es', 'spa_Latn'],
+  ['fr', 'French', 'Français', '🇫🇷', 'fr', 'fra_Latn'],
+  ['de', 'German', 'Deutsch', '🇩🇪', 'de', 'deu_Latn'],
+  ['it', 'Italian', 'Italiano', '🇮🇹', 'it', 'ita_Latn'],
+  ['pt', 'Portuguese', 'Português', '🇵🇹', 'pt', 'por_Latn'],
+  ['nl', 'Dutch', 'Nederlands', '🇳🇱', 'nl', 'nld_Latn'],
+  ['pl', 'Polish', 'Polski', '🇵🇱', 'pl', 'pol_Latn'],
+  ['tr', 'Turkish', 'Türkçe', '🇹🇷', 'tr', 'tur_Latn'],
+  ['ar', 'Arabic', 'العربية', '🇸🇦', 'ar', 'arb_Arab'],
+  ['fa', 'Persian', 'فارسی', '🇮🇷', 'fa', 'pes_Arab'],
+  ['hi', 'Hindi', 'हिन्दी', '🇮🇳', 'hi', 'hin_Deva'],
+  ['bn', 'Bengali', 'বাংলা', '🇧🇩', 'bn', 'ben_Beng'],
+  ['ur', 'Urdu', 'اردو', '🇵🇰', 'ur', 'urd_Arab'],
+  ['zh', 'Chinese', '中文', '🇨🇳', 'zh', 'zho_Hans'],
+  ['ja', 'Japanese', '日本語', '🇯🇵', 'ja', 'jpn_Jpan'],
+  ['ko', 'Korean', '한국어', '🇰🇷', 'ko', 'kor_Hang'],
+  ['vi', 'Vietnamese', 'Tiếng Việt', '🇻🇳', 'vi', 'vie_Latn'],
+  ['id', 'Indonesian', 'Bahasa Indonesia', '🇮🇩', 'id', 'ind_Latn'],
+  ['th', 'Thai', 'ไทย', '🇹🇭', 'th', 'tha_Thai'],
+  ['uk', 'Ukrainian', 'Українська', '🇺🇦', 'uk', 'ukr_Cyrl'],
+  ['kk', 'Kazakh', 'Қазақша', '🇰🇿', 'kk', 'kaz_Cyrl'],
+  ['az', 'Azerbaijani', 'Azərbaycan', '🇦🇿', 'az', 'azj_Latn'],
+  ['sv', 'Swedish', 'Svenska', '🇸🇪', 'sv', 'swe_Latn'],
+  ['cs', 'Czech', 'Čeština', '🇨🇿', 'cs', 'ces_Latn'],
+  ['el', 'Greek', 'Ελληνικά', '🇬🇷', 'el', 'ell_Grek'],
+  ['he', 'Hebrew', 'עברית', '🇮🇱', 'he', 'heb_Hebr'],
+  ['ro', 'Romanian', 'Română', '🇷🇴', 'ro', 'ron_Latn'],
+  ['hu', 'Hungarian', 'Magyar', '🇭🇺', 'hu', 'hun_Latn'],
+  ['fi', 'Finnish', 'Suomi', '🇫🇮', 'fi', 'fin_Latn'],
+];
+
+// Re-runnable like the rest of the seed. An operator who deactivated a language
+// by hand keeps that decision: `active` is only set on insert, never on update,
+// so re-seeding after a deploy does not resurrect a row someone switched off.
+async function seedLanguages() {
+  for (const [i, [code, name, native, flag, whisper, nllb]] of LANGUAGE_SEED.entries()) {
+    await prisma.language.upsert({
+      where: { code },
+      update: { name, native, flag, whisper, nllb, sortOrder: i },
+      create: { code, name, native, flag, whisper, nllb, sortOrder: i, active: true },
+    });
+  }
+  console.log(`Seeded ${LANGUAGE_SEED.length} language rows`);
+}
+
 async function main() {
   await seedAdmin();
   await seedPlans();
+  await seedLanguages();
 }
 
 main()

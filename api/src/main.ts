@@ -8,6 +8,7 @@ import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 
 import { AppModule } from './app.module';
+import { API_NAME, API_VERSION } from './version';
 
 // Browser origins allowed to call this API directly. The Studio needs it to
 // redeem a handoff code (POST /v1/auth/handoff/exchange) and to refresh, both
@@ -86,11 +87,11 @@ async function bootstrap() {
 
   // Swagger Configuration
   const config = new DocumentBuilder()
-    .setTitle('TH-LABS API')
+    .setTitle(API_NAME)
     .setDescription(
       '🚀 TH-LABS Backend API\n\nBuilding the future of AI Dubbing & Language Translation.',
     )
-    .setVersion('1.0.0')
+    .setVersion(API_VERSION)
     .addBearerAuth()
     .build();
 
