@@ -25,14 +25,18 @@ STUDIO_ORIGIN="https://isoqovjorabek2--th-labs-dubbing-web.modal.run"
 APP_URL="https://th-labs.uz"
 CORS_ORIGINS="https://th-labs.uz,https://www.th-labs.uz,https://aytingchi.uz,https://www.aytingchi.uz,${STUDIO_ORIGIN}"
 
-# Payment Link URLs from the Dashboard. Leave a value empty to skip that plan —
-# /payments/checkout will 400 for it until it is filled in.
-LINK_PRO_WEEKLY=""
-LINK_PRO_MONTHLY=""
-LINK_PRO_YEARLY=""
-LINK_STUDIO_WEEKLY=""
-LINK_STUDIO_MONTHLY=""
-LINK_STUDIO_YEARLY=""
+# Payment Link URLs, created by deploy/stripe/bootstrap.sh against
+# acct_1U0Ew9PGGmaP3PKr. These are TEST MODE links -- buy.stripe.com/test_...
+# -- and take test cards only. Going live means re-running bootstrap.sh with
+# the CLI in live mode and replacing all six; a test link in a live deploy
+# takes payment from nobody and grants nothing.
+# Leave a value empty to skip that plan; /payments/checkout 400s for it.
+LINK_PRO_WEEKLY="https://buy.stripe.com/test_8x2bJ3fiy3Q2aqIdOc6AM00"
+LINK_PRO_MONTHLY="https://buy.stripe.com/test_8x27sNc6m4U6buM11q6AM01"
+LINK_PRO_YEARLY="https://buy.stripe.com/test_aFa6oJdaqeuG56o5hG6AM02"
+LINK_STUDIO_WEEKLY="https://buy.stripe.com/test_14A7sN0nEcmyfL2eSg6AM03"
+LINK_STUDIO_MONTHLY="https://buy.stripe.com/test_8x2dRb3zQ3Q2fL225u6AM04"
+LINK_STUDIO_YEARLY="https://buy.stripe.com/test_14A5kF0nE5Ya0Q8h0o6AM05"
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
 die() { echo "error: $*" >&2; exit 1; }
