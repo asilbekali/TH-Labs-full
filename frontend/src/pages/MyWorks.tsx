@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useState } from 'react'
+// My works — the user's real dub library.
+//
+// Every row is a job this account actually ran: the thumbnail falls back to a
+// deterministic gradient only because the pipeline extracts no poster frame,
+// but the player streams the real source and dubbed media, the transcript is
+// the pipeline's own ASR/NMT segments, and the cost is what
+// POST /v1/payments/commit-dub charged. Nothing on this page is seeded.
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { AnimatePresence, LayoutGroup, motion } from 'framer-motion'
@@ -8,9 +15,16 @@ import AnimatedNumber from '../components/AnimatedNumber'
 import LogoMark from '../components/brand/LogoMark'
 import { useIsDesktop, useMediaQuery } from '../hooks/useMediaQuery'
 import { springLayout } from '../lib/motion'
-import { getWorks } from '../lib/api'
-import { gradientFor } from '../mocks/works'
-import type { WorkItem, WorkStatus } from '../mocks/works'
+import { mediaUrl } from '../lib/api'
+import { gradientFor } from '../lib/thumb'
+import {
+  useWorks,
+  workPair,
+  worksStorageNote,
+  workTitle,
+  type Work,
+  type WorkStatus,
+} from '../lib/works'
 
 type StatusFilter = 'all' | WorkStatus
 type RangeFilter = 'any' | '7d' | '30d' | 'year'
@@ -33,9 +47,7 @@ const RANGES: { key: RangeFilter; label: string }[] = [
 export default function MyWorks() {
   const isDesktop = useIsDesktop()
   const isMd = useMediaQuery('(min-width: 768px)')
-
-  const [works, setWorks] = useState<WorkItem[]>([])
-  const [loading, setLoading] = useState(true)
+  const { works, removeWork } = useWorks()
 
   const [view, setView] = useState<'grid' | 'list'>('grid')
   const [status, setStatus] = useState<StatusFilter>('all')
@@ -45,20 +57,13 @@ export default function MyWorks() {
   const [sort, setSort] = useState<{ col: SortCol; dir: 'asc' | 'desc' }>({ col: 'date', dir: 'desc' })
   const [selectedId, setSelectedId] = useState<string | null>(null)
 
-  useEffect(() => {
-    getWorks()
-      .then(setWorks)
-      .catch(() => setWorks([]))
-      .finally(() => setLoading(false))
-  }, [])
-
   // The list table needs horizontal room; force grid below md and hide the toggle.
   const effView: 'grid' | 'list' = isMd ? view : 'grid'
 
   const pairs = useMemo(() => {
     const m = new Map<string, number>()
     for (const w of works) {
-      const k = pairKey(w)
+      const k = workPair(w)
       m.set(k, (m.get(k) ?? 0) + 1)
     }
     return [...m.entries()].sort((a, b) => a[0].localeCompare(b[0]))
@@ -70,9 +75,9 @@ export default function MyWorks() {
     return works.filter(
       (w) =>
         (status === 'all' || w.status === status) &&
-        (pair === 'all' || pairKey(w) === pair) &&
-        (cutoff == null || new Date(w.createdAt).getTime() >= cutoff) &&
-        (q === '' || w.title.toLowerCase().includes(q)),
+        (pair === 'all' || workPair(w) === pair) &&
+        (cutoff == null || w.createdAt >= cutoff) &&
+        (q === '' || workTitle(w).toLowerCase().includes(q)),
     )
   }, [works, status, pair, range, query])
 
@@ -83,11 +88,11 @@ export default function MyWorks() {
   }, [filtered, effView, sort])
 
   const totalMinutes = useMemo(
-    () => Math.round(filtered.reduce((a, w) => a + w.duration, 0) / 60),
+    () => Math.round(filtered.reduce((a, w) => a + duration(w), 0) / 60),
     [filtered],
   )
 
-  const selected = selectedId ? works.find((w) => w.id === selectedId) ?? null : null
+  const selected = selectedId ? (works.find((w) => w.id === selectedId) ?? null) : null
 
   function clearFilters() {
     setStatus('all')
@@ -98,6 +103,11 @@ export default function MyWorks() {
 
   function toggleSort(col: SortCol) {
     setSort((s) => (s.col === col ? { col, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { col, dir: col === 'title' ? 'asc' : 'desc' }))
+  }
+
+  function onDelete(id: string) {
+    if (selectedId === id) setSelectedId(null)
+    removeWork(id)
   }
 
   const header = (
@@ -126,13 +136,13 @@ export default function MyWorks() {
 
   const results = (
     <Results
-      loading={loading}
       total={works.length}
       items={items}
       view={effView}
       sort={sort}
       onSort={toggleSort}
       onOpen={setSelectedId}
+      onDelete={onDelete}
       onClear={clearFilters}
     />
   )
@@ -207,13 +217,13 @@ function Header({
                 onClick={() => onView(v)}
                 aria-label={`${v} view`}
                 aria-pressed={view === v}
-                className="focusable relative grid h-8 w-9 place-items-center rounded-[10px]"
+                className="focusable relative grid h-8 w-9 place-items-center rounded-[8px]"
               >
                 {view === v && (
                   <motion.span
                     layoutId="view-pill"
                     transition={{ type: 'spring', stiffness: 400, damping: 32 }}
-                    className="absolute inset-0 rounded-[10px] bg-brand/15 shadow-[inset_0_0_0_1px_rgb(var(--c-brand-500)/0.4)]"
+                    className="absolute inset-0 rounded-[8px] bg-brand/15 shadow-[inset_0_0_0_1px_rgb(var(--c-brand-500)/0.4)]"
                   />
                 )}
                 <span className={`relative z-10 ${view === v ? 'text-brand' : 'text-muted'}`}>
@@ -360,34 +370,26 @@ function MiniSelect({
 /* ── Results ────────────────────────────────────────────────────────────── */
 
 function Results({
-  loading,
   total,
   items,
   view,
   sort,
   onSort,
   onOpen,
+  onDelete,
   onClear,
 }: {
-  loading: boolean
   total: number
-  items: WorkItem[]
+  items: Work[]
   view: 'grid' | 'list'
   sort: { col: SortCol; dir: 'asc' | 'desc' }
   onSort: (c: SortCol) => void
   onOpen: (id: string) => void
+  onDelete: (id: string) => void
   onClear: () => void
 }) {
-  if (loading) {
-    return (
-      <div className="grid gap-6" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))' }}>
-        {Array.from({ length: 6 }).map((_, i) => (
-          <div key={i} className="card shimmer h-64 p-0" />
-        ))}
-      </div>
-    )
-  }
-
+  // The library is read synchronously from localStorage, so there is no loading
+  // state to fake here — it is either empty or it is the real list.
   if (total === 0) return <EmptyLibrary />
   if (items.length === 0) return <NoMatches onClear={onClear} />
 
@@ -401,7 +403,7 @@ function Results({
         >
           <AnimatePresence mode="popLayout">
             {items.map((w) => (
-              <GridCard key={w.id} work={w} onOpen={() => onOpen(w.id)} />
+              <GridCard key={w.id} work={w} onOpen={() => onOpen(w.id)} onDelete={onDelete} />
             ))}
           </AnimatePresence>
         </motion.div>
@@ -410,7 +412,7 @@ function Results({
           <ListHeaderRow sort={sort} onSort={onSort} />
           <AnimatePresence mode="popLayout">
             {items.map((w) => (
-              <ListRow key={w.id} work={w} onOpen={() => onOpen(w.id)} />
+              <ListRow key={w.id} work={w} onOpen={() => onOpen(w.id)} onDelete={onDelete} />
             ))}
           </AnimatePresence>
         </motion.div>
@@ -421,7 +423,16 @@ function Results({
 
 /* ── Grid card ──────────────────────────────────────────────────────────── */
 
-function GridCard({ work, onOpen }: { work: WorkItem; onOpen: () => void }) {
+function GridCard({
+  work,
+  onOpen,
+  onDelete,
+}: {
+  work: Work
+  onOpen: () => void
+  onDelete: (id: string) => void
+}) {
+  const navigate = useNavigate()
   const [menuOpen, setMenuOpen] = useState(false)
   const failed = work.status === 'failed'
   const processing = work.status === 'processing'
@@ -440,7 +451,7 @@ function GridCard({ work, onOpen }: { work: WorkItem; onOpen: () => void }) {
       <button
         onClick={onOpen}
         className="focusable relative block aspect-video w-full overflow-hidden text-left"
-        aria-label={`Open ${work.title}`}
+        aria-label={`Open ${workTitle(work)}`}
       >
         <span
           className={`thumb-grad absolute inset-0 ${failed ? 'grayscale' : ''}`}
@@ -454,8 +465,7 @@ function GridCard({ work, onOpen }: { work: WorkItem; onOpen: () => void }) {
             </div>
             <div className="h-1 bg-black/30">
               <motion.div
-                className="h-full"
-                style={{ background: 'var(--grad-brand)' }}
+                className="h-full bg-[rgb(var(--c-brand-400))]"
                 initial={{ width: 0 }}
                 animate={{ width: `${Math.round((work.progress ?? 0) * 100)}%` }}
                 transition={{ duration: 0.8, ease: [0.22, 1, 0.36, 1] }}
@@ -475,27 +485,37 @@ function GridCard({ work, onOpen }: { work: WorkItem; onOpen: () => void }) {
             </motion.span>
           </span>
         )}
+        {work.simulated && (
+          <span className="absolute left-2 top-2 rounded-pill bg-black/45 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-white backdrop-blur-sm">
+            simulated
+          </span>
+        )}
       </button>
 
       {/* Kebab */}
       <div className="absolute right-2 top-2 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
-        <Kebab open={menuOpen} onToggle={setMenuOpen} work={work} />
+        <Kebab open={menuOpen} onToggle={setMenuOpen} work={work} onDelete={onDelete} />
       </div>
 
       {/* Body */}
       <div className="flex flex-1 flex-col gap-2 p-4">
         <div className="flex items-start justify-between gap-2">
-          <span className="min-w-0 truncate font-mono text-sm font-medium text-primary">{work.title}</span>
+          <span className="min-w-0 truncate font-mono text-sm font-medium text-primary">{workTitle(work)}</span>
           <StatusPill status={work.status} />
         </div>
         {failed ? (
           <div className="space-y-2">
-            <p className="line-clamp-2 text-xs text-danger">{work.error}</p>
-            <button className="btn-ghost focusable px-3 py-1.5 font-mono text-[11px]">Retry</button>
+            <p className="line-clamp-2 text-xs text-danger">{work.error ?? 'The pipeline reported no reason.'}</p>
+            <button
+              onClick={() => navigate('/studio', { state: duplicateState(work) })}
+              className="btn-ghost focusable px-3 py-1.5 font-mono text-[11px]"
+            >
+              Try again
+            </button>
           </div>
         ) : (
           <span className="font-mono text-xs text-muted">
-            {pairKey(work)} · {fmtDur(work.duration)} · {relTime(work.createdAt)}
+            {workPair(work)} · {fmtDur(duration(work))} · {relTime(work.createdAt)}
           </span>
         )}
       </div>
@@ -534,8 +554,17 @@ function ListHeaderRow({ sort, onSort }: { sort: { col: SortCol; dir: 'asc' | 'd
   )
 }
 
-function ListRow({ work, onOpen }: { work: WorkItem; onOpen: () => void }) {
+function ListRow({
+  work,
+  onOpen,
+  onDelete,
+}: {
+  work: Work
+  onOpen: () => void
+  onDelete: (id: string) => void
+}) {
   const [menuOpen, setMenuOpen] = useState(false)
+  const output = mediaUrl(work.outputUrl)
   return (
     <motion.div
       layoutId={work.id}
@@ -546,30 +575,33 @@ function ListRow({ work, onOpen }: { work: WorkItem; onOpen: () => void }) {
       transition={springLayout}
       className={`group grid ${LIST_COLS} items-center gap-3 border-b border-subtle px-4 py-3 transition-colors last:border-0 hover:bg-sunken`}
     >
-      <button onClick={onOpen} className="focusable h-9 w-16 overflow-hidden rounded-lg" aria-label={`Open ${work.title}`}>
+      <button onClick={onOpen} className="focusable h-9 w-16 overflow-hidden rounded-lg" aria-label={`Open ${workTitle(work)}`}>
         <span className={`thumb-grad block h-full w-full ${work.status === 'failed' ? 'grayscale' : ''}`} style={{ backgroundImage: gradientFor(work.id) }} />
       </button>
       <button onClick={onOpen} className="min-w-0 text-left">
-        <div className="truncate font-mono text-sm font-medium text-primary">{work.title}</div>
-        <div className="truncate text-xs text-muted">{work.sourceFile}</div>
+        <div className="truncate font-mono text-sm font-medium text-primary">{workTitle(work)}</div>
+        <div className="truncate text-xs text-muted">{work.filename ?? 'built-in sample clip'}</div>
       </button>
-      <span className="font-mono text-xs text-secondary">{pairKey(work)}</span>
-      <span className="font-mono text-xs text-secondary">{fmtDur(work.duration)}</span>
+      <span className="font-mono text-xs text-secondary">{workPair(work)}</span>
+      <span className="font-mono text-xs text-secondary">{fmtDur(duration(work))}</span>
       <StatusPill status={work.status} />
       <div className="font-mono text-xs leading-tight text-secondary">
         <div>{fmtDate(work.createdAt)}</div>
         <div className="text-muted">{fmtTime(work.createdAt)}</div>
       </div>
       <div className="flex items-center justify-end gap-1">
-        <a
-          href="#"
-          onClick={(e) => e.preventDefault()}
-          aria-label="Download"
-          className="focusable grid h-8 w-8 place-items-center rounded-full text-muted hover:bg-surface hover:text-primary"
-        >
-          <DownloadIcon />
-        </a>
-        <Kebab open={menuOpen} onToggle={setMenuOpen} work={work} align="right" />
+        {/* Only offered when there is a file behind it. */}
+        {output && (
+          <a
+            href={output}
+            download
+            aria-label="Download dubbed file"
+            className="focusable grid h-8 w-8 place-items-center rounded-full text-muted hover:bg-surface hover:text-primary"
+          >
+            <DownloadIcon />
+          </a>
+        )}
+        <Kebab open={menuOpen} onToggle={setMenuOpen} work={work} onDelete={onDelete} align="right" />
       </div>
     </motion.div>
   )
@@ -581,19 +613,23 @@ function Kebab({
   open,
   onToggle,
   work,
+  onDelete,
   align = 'right',
 }: {
   open: boolean
   onToggle: (v: boolean) => void
-  work: WorkItem
+  work: Work
+  onDelete: (id: string) => void
   align?: 'left' | 'right'
 }) {
   const navigate = useNavigate()
-  const items = [
-    { label: 'Download', onClick: () => {} },
-    { label: 'Rename', onClick: () => {} },
+  const output = mediaUrl(work.outputUrl)
+  // Every entry here does something real, so an action that cannot apply to
+  // this dub (no output file yet) is left out rather than shown inert.
+  const items: { label: string; href?: string; onClick?: () => void; danger?: boolean }[] = [
+    ...(output ? [{ label: 'Download', href: output }] : []),
     { label: 'Duplicate settings', onClick: () => navigate('/studio', { state: duplicateState(work) }) },
-    { label: 'Delete', onClick: () => {}, danger: true },
+    { label: 'Remove from library', onClick: () => onDelete(work.id), danger: true },
   ]
   return (
     <div className="relative">
@@ -619,24 +655,31 @@ function Kebab({
               exit={{ opacity: 0, scale: 0.9, y: -4 }}
               transition={{ type: 'spring', stiffness: 420, damping: 30 }}
               style={{ transformOrigin: align === 'right' ? 'top right' : 'top left' }}
-              className={`absolute z-50 mt-1 w-44 overflow-hidden rounded-control border border-subtle bg-raised py-1 shadow-[var(--shadow-lg)] ${
+              className={`absolute z-50 mt-1 w-48 overflow-hidden rounded-control border border-subtle bg-raised py-1 shadow-[var(--shadow-lg)] ${
                 align === 'right' ? 'right-0' : 'left-0'
               }`}
             >
-              {items.map((it) => (
-                <button
-                  key={it.label}
-                  onClick={() => {
-                    it.onClick()
-                    onToggle(false)
-                  }}
-                  className={`block w-full px-3.5 py-2 text-left text-sm transition-colors hover:bg-sunken ${
-                    it.danger ? 'text-danger' : 'text-secondary hover:text-primary'
-                  }`}
-                >
-                  {it.label}
-                </button>
-              ))}
+              {items.map((it) => {
+                const cls = `block w-full px-3.5 py-2 text-left text-sm transition-colors hover:bg-sunken ${
+                  it.danger ? 'text-danger' : 'text-secondary hover:text-primary'
+                }`
+                return it.href ? (
+                  <a key={it.label} href={it.href} download onClick={() => onToggle(false)} className={cls}>
+                    {it.label}
+                  </a>
+                ) : (
+                  <button
+                    key={it.label}
+                    onClick={() => {
+                      it.onClick?.()
+                      onToggle(false)
+                    }}
+                    className={cls}
+                  >
+                    {it.label}
+                  </button>
+                )
+              })}
             </motion.div>
           </>
         )}
@@ -647,11 +690,15 @@ function Kebab({
 
 /* ── Detail drawer / bottom sheet ───────────────────────────────────────── */
 
-function DetailPanel({ work, isSheet, onClose }: { work: WorkItem; isSheet: boolean; onClose: () => void }) {
+function DetailPanel({ work, isSheet, onClose }: { work: Work; isSheet: boolean; onClose: () => void }) {
   const navigate = useNavigate()
   const [side, setSide] = useState<'source' | 'dubbed'>('dubbed')
   const [playT, setPlayT] = useState(0)
-  const [playing, setPlaying] = useState(false)
+  const videoRef = useRef<HTMLVideoElement>(null)
+
+  const sourceUrl = mediaUrl(work.sourceUrl)
+  const outputUrl = mediaUrl(work.outputUrl)
+  const activeUrl = side === 'source' ? sourceUrl : outputUrl
 
   // Escape closes; lock the document behind the panel.
   useEffect(() => {
@@ -665,23 +712,18 @@ function DetailPanel({ work, isSheet, onClose }: { work: WorkItem; isSheet: bool
     }
   }, [onClose])
 
-  // Simulated transcript playhead (no real media in the mock).
-  useEffect(() => {
-    if (!playing) return
-    const id = window.setInterval(() => {
-      setPlayT((t) => {
-        const next = t + 0.25
-        if (next >= work.duration) {
-          setPlaying(false)
-          return 0
-        }
-        return next
-      })
-    }, 250)
-    return () => window.clearInterval(id)
-  }, [playing, work.duration])
+  // The playhead comes from the real media element, so the transcript
+  // highlight tracks actual playback rather than a timer.
+  const activeSegment = work.segments.findIndex((s) => playT >= s.start && playT < s.end)
 
-  const activeLine = TRANSCRIPT.reduce((acc, l, i) => (l.t <= playT ? i : acc), 0)
+  function seek(t: number) {
+    const el = videoRef.current
+    if (!el) return
+    el.currentTime = t
+    void el.play().catch(() => {
+      /* autoplay policy — the user can hit play themselves */
+    })
+  }
 
   const panelMotion = isSheet
     ? {
@@ -723,9 +765,9 @@ function DetailPanel({ work, isSheet, onClose }: { work: WorkItem; isSheet: bool
         {/* Title row */}
         <div className="flex items-start justify-between gap-3 px-5 pb-4 pt-4">
           <div className="min-w-0">
-            <h3 className="truncate font-mono text-lg font-medium text-primary">{work.title}</h3>
+            <h3 className="truncate font-mono text-lg font-medium text-primary">{workTitle(work)}</h3>
             <p className="mt-0.5 truncate font-mono text-xs text-muted">
-              {work.sourceFile} · {pairKey(work)} · {fmtDur(work.duration)}
+              {work.filename ?? 'built-in sample clip'} · {workPair(work)} · {fmtDur(duration(work))}
             </p>
           </div>
           <button onClick={onClose} aria-label="Close" className="focusable grid h-9 w-9 shrink-0 place-items-center rounded-full text-muted hover:bg-sunken hover:text-primary">
@@ -734,7 +776,7 @@ function DetailPanel({ work, isSheet, onClose }: { work: WorkItem; isSheet: bool
         </div>
 
         <div className="min-h-0 flex-1 space-y-6 overflow-y-auto px-5 pb-6 no-scrollbar">
-          {/* A/B player */}
+          {/* A/B player — the actual media the pipeline produced. */}
           <div className="overflow-hidden rounded-control border border-subtle">
             <div className="flex items-center justify-between border-b border-subtle bg-sunken px-3 py-2">
               <LayoutGroup id={`ab-${work.id}`}>
@@ -743,7 +785,8 @@ function DetailPanel({ work, isSheet, onClose }: { work: WorkItem; isSheet: bool
                     <button
                       key={s}
                       onClick={() => setSide(s)}
-                      className={`focusable relative rounded-pill px-3 py-1 font-mono text-[11px] ${side === s ? 'text-brand' : 'text-muted'}`}
+                      disabled={!(s === 'source' ? sourceUrl : outputUrl)}
+                      className={`focusable relative rounded-pill px-3 py-1 font-mono text-[11px] disabled:opacity-40 ${side === s ? 'text-brand' : 'text-muted'}`}
                     >
                       {side === s && <motion.span layoutId="ab-pill" className="absolute inset-0 rounded-pill bg-brand/15" />}
                       <span className="relative z-10">{s === 'source' ? 'Original' : 'Dubbed'}</span>
@@ -751,49 +794,66 @@ function DetailPanel({ work, isSheet, onClose }: { work: WorkItem; isSheet: bool
                   ))}
                 </div>
               </LayoutGroup>
-              <button
-                onClick={() => setPlaying((p) => !p)}
-                className="focusable grid h-7 w-7 place-items-center rounded-full bg-brand text-white"
-                aria-label={playing ? 'Pause' : 'Play'}
-              >
-                {playing ? (
-                  <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="currentColor"><path d="M7 5h3v14H7zM14 5h3v14h-3z" /></svg>
-                ) : (
-                  <svg viewBox="0 0 24 24" className="h-3.5 w-3.5 translate-x-px" fill="currentColor"><path d="M8 5v14l11-7z" /></svg>
-                )}
-              </button>
+              {work.simulated && (
+                <span className="rounded-pill bg-warn/15 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-warn">
+                  simulated
+                </span>
+              )}
             </div>
-            <div className="relative aspect-video">
-              <span
-                className={`absolute inset-0 ${side === 'source' ? 'grayscale' : ''}`}
-                style={{ backgroundImage: gradientFor(work.id + side), backgroundSize: 'cover' }}
+            {activeUrl ? (
+              <video
+                // Remount on side change so the element picks up the new source.
+                key={side}
+                ref={videoRef}
+                src={activeUrl}
+                controls
+                playsInline
+                onTimeUpdate={(e) => setPlayT(e.currentTarget.currentTime)}
+                className="aspect-video w-full bg-black"
               />
-              <span className="absolute bottom-2 left-3 font-mono text-[11px] text-white/90">
-                {fmtDur(Math.floor(playT))} / {fmtDur(work.duration)}
-              </span>
-            </div>
+            ) : (
+              <div className="grid aspect-video place-items-center bg-sunken px-4 text-center font-mono text-xs text-muted">
+                {work.status === 'processing'
+                  ? 'Still rendering — the file appears when the pipeline finishes.'
+                  : 'No media file for this run.'}
+              </div>
+            )}
           </div>
 
-          {/* Transcript */}
+          {/* Transcript — the pipeline's own segments. */}
           <Section label="Transcript">
-            <div className="space-y-1">
-              {TRANSCRIPT.map((l, i) => {
-                const active = i === activeLine && playing
-                return (
-                  <div key={i} className={`relative rounded-lg py-1.5 pl-3 pr-2 transition-colors ${active ? 'bg-brand/[0.07]' : ''}`}>
-                    <motion.span
-                      className="absolute left-0 top-1.5 w-[3px] rounded-full bg-brand"
-                      initial={false}
-                      animate={{ height: active ? '80%' : '0%', opacity: active ? 1 : 0 }}
-                      transition={{ duration: 0.3 }}
-                    />
-                    <span className="mr-2 font-mono text-[10px] text-muted">{fmtDur(l.t)}</span>
-                    <span className={`text-sm ${active ? 'text-primary' : 'text-secondary'}`}>{l.source}</span>
-                    <div className="mt-0.5 pl-8 font-mono text-xs text-muted">{l.target}</div>
-                  </div>
-                )
-              })}
-            </div>
+            {work.segments.length === 0 ? (
+              <p className="text-sm text-muted">
+                {work.status === 'processing'
+                  ? 'Transcription is still running.'
+                  : 'This run produced no transcript segments.'}
+              </p>
+            ) : (
+              <div className="space-y-1">
+                {work.segments.map((seg, i) => {
+                  const active = i === activeSegment
+                  return (
+                    <button
+                      key={seg.id}
+                      onClick={() => seek(seg.start)}
+                      className={`relative block w-full rounded-lg py-1.5 pl-3 pr-2 text-left transition-colors hover:bg-sunken ${active ? 'bg-brand/[0.08]' : ''}`}
+                    >
+                      <motion.span
+                        className="absolute left-0 top-1.5 w-[3px] rounded-full bg-brand"
+                        initial={false}
+                        animate={{ height: active ? '80%' : '0%', opacity: active ? 1 : 0 }}
+                        transition={{ duration: 0.3 }}
+                      />
+                      <span className="mr-2 font-mono text-[10px] text-muted">{fmtDur(seg.start)}</span>
+                      <span className={`text-sm ${active ? 'text-primary' : 'text-secondary'}`}>{seg.source_text}</span>
+                      {seg.target_text && (
+                        <div className="mt-0.5 pl-8 font-mono text-xs text-muted">{seg.target_text}</div>
+                      )}
+                    </button>
+                  )
+                })}
+              </div>
+            )}
           </Section>
 
           {/* Settings used */}
@@ -804,15 +864,24 @@ function DetailPanel({ work, isSheet, onClose }: { work: WorkItem; isSheet: bool
               <SettingRow k="Lip sync" v={work.settings.lipSync ? 'On' : 'Off'} />
               <SettingRow k="Background & effects" v={work.settings.keepBackground ? 'Kept' : 'Replaced'} />
               <SettingRow k="Quality" v={cap(work.settings.quality)} />
+              {work.speakerSimilarity != null && (
+                <SettingRow k="Speaker similarity" v={`${Math.round(work.speakerSimilarity * 100)}%`} />
+              )}
             </dl>
           </Section>
 
-          {/* Cost */}
+          {/* Cost — what commit-dub actually charged, not an estimate. */}
           <Section label="Cost">
-            <div className="flex items-baseline gap-2">
-              <span className="font-mono text-3xl font-medium text-primary">{work.creditsSpent}</span>
-              <span className="font-mono text-xs text-muted">credits spent</span>
-            </div>
+            {work.creditsSpent == null ? (
+              <p className="font-mono text-sm text-muted">Not recorded for this run.</p>
+            ) : (
+              <div className="flex items-baseline gap-2">
+                <span className="font-mono text-3xl font-medium text-primary">{work.creditsSpent}</span>
+                <span className="font-mono text-xs text-muted">
+                  {work.creditsSpent === 0 ? 'credits — covered by your free dub' : 'credits spent'}
+                </span>
+              </div>
+            )}
           </Section>
         </div>
 
@@ -857,7 +926,10 @@ function EmptyLibrary() {
       <LogoMark className="pointer-events-none absolute -bottom-12 -right-12 h-[220px] w-[220px] text-primary/[0.05]" />
       <div className="relative">
         <h3 className="font-mono text-lg font-medium text-primary">No dubs yet</h3>
-        <p className="mx-auto mt-2 max-w-sm text-sm text-secondary">Your finished dubs will collect here.</p>
+        <p className="mx-auto mt-2 max-w-sm text-sm text-secondary">
+          Every dub you run lands here with its media, transcript and cost.
+        </p>
+        <p className="mx-auto mt-2 max-w-sm text-xs text-muted">{worksStorageNote}</p>
         <button onClick={() => navigate('/studio')} className="btn-primary focusable mt-6 px-5 py-2.5 font-mono text-sm">
           Go to studio →
         </button>
@@ -924,19 +996,11 @@ function DownloadIcon() {
   )
 }
 
-/* ── Transcript sample (illustrative — the mock carries no real media) ──── */
-const TRANSCRIPT: { t: number; source: string; target: string }[] = [
-  { t: 0, source: 'Welcome back to the channel.', target: 'Bienvenidos de nuevo al canal.' },
-  { t: 4, source: 'Today we are looking at something new.', target: 'Hoy veremos algo nuevo.' },
-  { t: 9, source: 'It only takes a couple of minutes to set up.', target: 'Solo toma un par de minutos configurarlo.' },
-  { t: 15, source: 'Let me show you how it works.', target: 'Déjame mostrarte cómo funciona.' },
-  { t: 21, source: 'Thanks for watching — see you next time.', target: 'Gracias por ver, hasta la próxima.' },
-]
-
 /* ── Pure helpers ───────────────────────────────────────────────────────── */
 
-function pairKey(w: WorkItem): string {
-  return `${w.sourceLang.toUpperCase()}→${w.targetLang.toUpperCase()}`
+/** A run that has not finished has no measured duration yet. */
+function duration(w: Work): number {
+  return w.durationSec ?? 0
 }
 
 function rangeCutoff(range: RangeFilter): number | null {
@@ -951,27 +1015,27 @@ const STATUS_ORDER: Record<WorkStatus, number> = { processing: 0, completed: 1, 
 
 function makeSorter(sort: { col: SortCol; dir: 'asc' | 'desc' }) {
   const dir = sort.dir === 'asc' ? 1 : -1
-  return (a: WorkItem, b: WorkItem): number => {
+  return (a: Work, b: Work): number => {
     let d = 0
     switch (sort.col) {
       case 'title':
-        d = a.title.localeCompare(b.title)
+        d = workTitle(a).localeCompare(workTitle(b))
         break
       case 'duration':
-        d = a.duration - b.duration
+        d = duration(a) - duration(b)
         break
       case 'status':
         d = STATUS_ORDER[a.status] - STATUS_ORDER[b.status]
         break
       case 'date':
-        d = new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+        d = a.createdAt - b.createdAt
         break
     }
     return d * dir
   }
 }
 
-function duplicateState(w: WorkItem) {
+function duplicateState(w: Work) {
   return {
     sourceLang: w.sourceLang,
     targetLang: w.targetLang,
@@ -988,22 +1052,20 @@ function fmtDur(sec: number): string {
   return `${m}:${s.toString().padStart(2, '0')}`
 }
 
-function fmtDate(iso: string): string {
-  const d = new Date(iso)
+function fmtDate(ms: number): string {
+  const d = new Date(ms)
   const p = (n: number) => n.toString().padStart(2, '0')
   return `${p(d.getDate())}.${p(d.getMonth() + 1)}.${d.getFullYear()}`
 }
 
-function fmtTime(iso: string): string {
-  const d = new Date(iso)
+function fmtTime(ms: number): string {
+  const d = new Date(ms)
   const p = (n: number) => n.toString().padStart(2, '0')
   return `${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
-function relTime(iso: string): string {
-  const diff = Date.now() - new Date(iso).getTime()
-  const day = 86_400_000
-  const days = Math.floor(diff / day)
+function relTime(ms: number): string {
+  const days = Math.floor((Date.now() - ms) / 86_400_000)
   if (days <= 0) return 'today'
   if (days === 1) return 'yesterday'
   if (days < 30) return `${days} days ago`

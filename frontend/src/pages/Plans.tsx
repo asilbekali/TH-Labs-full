@@ -1,73 +1,130 @@
-import { useEffect, useState } from 'react'
+// Plans & billing (04).
+//
+// The whole page is the real billing API (NestJS, /v1/payments): prices, credit
+// grants, the free-dub allowance and the per-quality tariff all come from
+// GET /payments/plans, the subscription and payment rows from the user's own
+// account. Checkout is a Stripe-hosted Payment Link — the API returns the URL
+// (carrying this user's client_reference_id) and we hand the browser over, so
+// card data never touches this origin and only the publishable key is shipped.
+import { useState } from 'react'
 import type { ReactNode } from 'react'
-import {
-  AnimatePresence,
-  LayoutGroup,
-  animate,
-  motion,
-  useMotionTemplate,
-  useMotionValue,
-} from 'framer-motion'
+import { AnimatePresence, LayoutGroup, motion } from 'framer-motion'
 import Page from '../components/Page'
 import AnimatedNumber from '../components/AnimatedNumber'
 import Toast from '../components/Toast'
 import { EASE_ENTRANCE, rise, stagger } from '../lib/motion'
 import { useWallet } from '../lib/wallet'
-import type { PlanId } from '../lib/wallet'
 import {
-  getPlans,
-  getCheckoutUrl,
-  getSubscription,
-  getHistory,
-  cancelSubscription,
-  type ServerPlan,
-  type Subscription,
-  type PaymentRow,
-  type BillingCycle,
-  type PlanTier,
+  useCancelSubscription,
+  useCheckout,
+  useHistory,
+  usePlans,
+  useSubscription,
+} from '../lib/queries'
+import {
+  isStripeLiveMode,
+  isStripeTestMode,
+  paymentLinkMode,
+  stripeUnavailableReason,
+} from '../lib/stripe'
+import type {
+  BillingCycle,
+  PaymentRow,
+  PlansResponse,
+  PlanTier,
+  ServerPlan,
+  Subscription,
 } from '../lib/payments-api'
-import { COMPARISON } from '../mocks/plans'
 
 type Cycle = 'weekly' | 'monthly' | 'yearly'
-const CYCLES: { key: Cycle; label: string; suffix: string; api: BillingCycle }[] = [
-  { key: 'weekly', label: 'Weekly', suffix: '/wk', api: 'WEEKLY' },
-  { key: 'monthly', label: 'Monthly', suffix: '/mo', api: 'MONTHLY' },
-  { key: 'yearly', label: 'Yearly', suffix: '/yr', api: 'YEARLY' },
+const CYCLES: { key: Cycle; label: string; suffix: string; per: string; api: BillingCycle }[] = [
+  { key: 'weekly', label: 'Weekly', suffix: '/wk', per: 'week', api: 'WEEKLY' },
+  { key: 'monthly', label: 'Monthly', suffix: '/mo', per: 'month', api: 'MONTHLY' },
+  { key: 'yearly', label: 'Yearly', suffix: '/yr', per: 'year', api: 'YEARLY' },
 ]
 
 // UI tier assembled from the server's Plan rows (one row per tier×cycle).
 interface UiTier {
   tier: PlanTier
-  id: PlanId
   name: string
   highlight: boolean
   features: string[]
   prices: Record<Cycle, number> // dollars
-  creditsPerMonth: number
+  /** Credits the whole billing period is worth, per cycle. */
+  credits: Record<Cycle, number>
+  /** Credits in one allocation — differs from `credits` only for yearly. */
+  perGrant: Record<Cycle, number>
+  /** Allocations per period: 1 for weekly/monthly, 12 for yearly. */
+  grants: Record<Cycle, number>
+  /**
+   * Set when the tier exists at exactly one cycle (FREE, which is only sold
+   * monthly). Its credits are quoted against this rather than whatever the
+   * cycle switch says, so Free never reads as "60 credits / year".
+   */
+  fixedCycle?: Cycle
 }
 
-const TIER_META: { tier: PlanTier; id: PlanId; name: string; highlight: boolean; features: string[] }[] = [
-  { tier: 'FREE', id: 'free', name: 'Free', highlight: false, features: ['Fast & Balanced quality', 'Voice cloning', 'Standard queue'] },
-  { tier: 'PRO', id: 'pro', name: 'Pro', highlight: true, features: ['All qualities incl. Studio', 'Voice cloning + lip sync', 'Priority queue', 'Background separation'] },
-  { tier: 'STUDIO', id: 'studio', name: 'Studio', highlight: false, features: ['Everything in Pro', 'Batch dubbing', 'Highest fidelity output', 'Email support'] },
+// What each tier unlocks. This is product copy, not data — the numbers beside
+// it (price, credits, limits) are always read from the API.
+const TIER_META: { tier: PlanTier; name: string; highlight: boolean; features: string[] }[] = [
+  { tier: 'FREE', name: 'Free', highlight: false, features: ['Fast & Balanced quality', 'Voice cloning', 'Standard queue'] },
+  { tier: 'PRO', name: 'Pro', highlight: true, features: ['All qualities incl. Studio', 'Voice cloning + lip sync', 'Priority queue', 'Background separation'] },
+  { tier: 'STUDIO', name: 'Studio', highlight: false, features: ['Everything in Pro', 'Batch dubbing', 'Highest fidelity output', 'Email support'] },
 ]
+
+const CYCLE_KEYS: Cycle[] = ['weekly', 'monthly', 'yearly']
+
+function byCycle<T>(pick: (c: Cycle) => T): Record<Cycle, T> {
+  return { weekly: pick('weekly'), monthly: pick('monthly'), yearly: pick('yearly') }
+}
+
+/**
+ * Credit figures for one plan row, from whatever the server actually sent.
+ *
+ * Deliberately paranoid about missing and non-numeric fields: an API deployed
+ * before `grantsPerPeriod` existed omits it, and `creditsGranted * undefined`
+ * is NaN — which then propagates through toLocaleString() and puts "NaN
+ * credits / month" on every pricing card. A number the user reads as a promise
+ * about what they are buying must degrade to a real number, never to NaN.
+ * `Number(x) || fallback` catches undefined, null and NaN in one step.
+ */
+function creditsOf(row: ServerPlan | undefined): {
+  perGrant: number
+  grants: number
+  total: number
+} {
+  const perGrant = Number(row?.creditsGranted) || 0
+  const grants = Number(row?.grantsPerPeriod) || 1
+  return { perGrant, grants, total: perGrant * grants }
+}
 
 function buildTiers(plans: ServerPlan[]): UiTier[] {
   return TIER_META.map((m) => {
-    const priceFor = (c: Cycle): number => {
+    // FREE only has a MONTHLY row — there is nothing to buy weekly or yearly —
+    // so fall back to it and the tier still renders under every switch.
+    const rowFor = (c: Cycle): ServerPlan | undefined => {
       const api = CYCLES.find((x) => x.key === c)!.api
-      const row = plans.find((p) => p.tier === m.tier && p.cycle === api)
-      return row ? row.priceCents / 100 : 0
+      return (
+        plans.find((p) => p.tier === m.tier && p.cycle === api) ??
+        (m.tier === 'FREE'
+          ? plans.find((p) => p.tier === 'FREE' && p.cycle === 'MONTHLY')
+          : undefined)
+      )
     }
-    const monthly = plans.find((p) => p.tier === m.tier && p.cycle === 'MONTHLY')
+
     return {
       tier: m.tier,
-      id: m.id,
       name: m.name,
       highlight: m.highlight,
       features: m.features,
-      prices: { weekly: priceFor('weekly'), monthly: priceFor('monthly'), yearly: priceFor('yearly') },
-      creditsPerMonth: monthly?.creditsGranted ?? 0,
+      prices: byCycle((c) => (Number(rowFor(c)?.priceCents) || 0) / 100),
+      // Every cycle reads its OWN plan row. Reading the monthly row for all
+      // three was why weekly, monthly and yearly all advertised the same
+      // number of credits.
+      perGrant: byCycle((c) => creditsOf(rowFor(c)).perGrant),
+      grants: byCycle((c) => creditsOf(rowFor(c)).grants),
+      credits: byCycle((c) => creditsOf(rowFor(c)).total),
+      fixedCycle: m.tier === 'FREE' ? ('monthly' as Cycle) : undefined,
     }
   })
 }
@@ -75,56 +132,54 @@ function buildTiers(plans: ServerPlan[]): UiTier[] {
 export default function Plans() {
   const { balance, planInfo } = useWallet()
 
-  const [tiers, setTiers] = useState<UiTier[]>([])
-  const [subscription, setSubscription] = useState<Subscription | null>(null)
-  const [history, setHistory] = useState<PaymentRow[]>([])
+  const plansQuery = usePlans()
+  const subscriptionQuery = useSubscription()
+  const historyQuery = useHistory(1, 10)
+  const checkout = useCheckout()
+  const cancel = useCancelSubscription()
+
   const [cycle, setCycle] = useState<Cycle>('monthly')
   const [showCompare, setShowCompare] = useState(false)
-
-  const [busyTier, setBusyTier] = useState<PlanTier | null>(null)
   const [toast, setToast] = useState<{ id: number; msg: string } | null>(null)
 
-  useEffect(() => {
-    getPlans()
-      .then(({ plans }) => setTiers(buildTiers(plans)))
-      .catch(() => {})
-    void refreshAccount()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  const tiers = plansQuery.data ? buildTiers(plansQuery.data.plans) : []
+  const subscription = subscriptionQuery.data?.subscription ?? null
+  const history = historyQuery.data?.items ?? []
 
-  async function refreshAccount() {
-    const [sub, hist] = await Promise.all([
-      getSubscription().catch(() => ({ subscription: null })),
-      getHistory(1, 10).catch(() => ({ items: [] as PaymentRow[], page: 1, limit: 10, total: 0 })),
-    ])
-    setSubscription(sub.subscription)
-    setHistory(hist.items)
-  }
+  const stripeBlocked = stripeUnavailableReason()
+
+  // The links the API actually hands out decide whether money moves — trust
+  // them over the publishable key, and say so when the two disagree.
+  const linkMode = paymentLinkMode(
+    (plansQuery.data?.plans ?? []).map((p) => p.stripeLinkUrl),
+  )
+  const inTestCheckout = linkMode === 'test' || (linkMode === null && isStripeTestMode)
+  const modeMismatch = linkMode !== null && linkMode === 'test' && isStripeLiveMode
 
   const activeTier: PlanTier =
-    subscription && subscription.status === 'ACTIVE' ? subscription.plan?.tier ?? 'FREE' : 'FREE'
+    subscription && subscription.status === 'ACTIVE' ? (subscription.plan?.tier ?? 'FREE') : 'FREE'
   const activeCycle = subscription?.plan?.cycle
 
   // Redirect to the Stripe-hosted Payment Link. Payment Links own the whole
   // checkout UI — no client-side Stripe SDK needed.
-  async function checkout(t: UiTier) {
-    if (t.tier === 'FREE') return
-    setBusyTier(t.tier)
+  async function startCheckout(t: UiTier) {
+    if (t.tier === 'FREE' || stripeBlocked) return
     try {
       const api = CYCLES.find((c) => c.key === cycle)!.api
-      const { url } = await getCheckoutUrl(t.tier, api)
+      const { url } = await checkout.mutateAsync({
+        tier: t.tier as Exclude<PlanTier, 'FREE'>,
+        cycle: api,
+      })
       window.location.href = url
     } catch (e) {
-      setBusyTier(null)
       setToast({ id: Date.now(), msg: e instanceof Error ? e.message : 'Could not start checkout' })
     }
   }
 
   async function onCancel() {
     try {
-      const res = await cancelSubscription()
+      const res = await cancel.mutateAsync()
       setToast({ id: Date.now(), msg: res.message })
-      await refreshAccount()
     } catch (e) {
       setToast({ id: Date.now(), msg: e instanceof Error ? e.message : 'Could not cancel' })
     }
@@ -138,40 +193,88 @@ export default function Plans() {
 
   return (
     <Page className="space-y-8 pb-4">
+      {/* A test-mode build takes fake cards and grants real credits in your
+          database. Never let that be a surprise. */}
+      {inTestCheckout && (
+        <div className="rounded-card border border-warn/40 bg-warn/10 px-4 py-3 text-sm text-warn">
+          <strong className="font-medium">Stripe test mode.</strong> Checkout accepts test cards only — no
+          money moves. Swap the <code className="font-mono text-xs">STRIPE_LINK_*</code> Payment Links for
+          live ones to take real payments.
+          {modeMismatch && (
+            <>
+              {' '}
+              <strong className="font-medium">This build has a live publishable key but test Payment
+              Links</strong> — one of the two is wrong.
+            </>
+          )}
+        </div>
+      )}
+      {stripeBlocked && (
+        <div className="rounded-card border border-danger/40 bg-danger/10 px-4 py-3 text-sm text-danger">
+          <strong className="font-medium">Checkout is unavailable.</strong> {stripeBlocked}
+        </div>
+      )}
+
       {/* ── SECTION A · Subscriptions ──────────────────────────────────── */}
       <motion.section initial="hidden" animate="show" className="space-y-6">
         <motion.div variants={rise}>
           <CycleSwitch cycle={cycle} onChange={setCycle} />
         </motion.div>
 
-        <motion.div variants={stagger} className="grid grid-cols-1 gap-6 md:grid-cols-3">
-          {tiers.length === 0
-            ? Array.from({ length: 3 }).map((_, i) => <div key={i} className="card shimmer h-96" />)
-            : tiers.map((t) => (
-                <TierCard
-                  key={t.id}
-                  tier={t}
-                  cycle={cycle}
-                  current={isCurrent(t)}
-                  busy={busyTier === t.tier}
-                  onSelect={() => checkout(t)}
-                />
-              ))}
-        </motion.div>
+        {plansQuery.isError ? (
+          <div className="card grid min-h-[200px] place-items-center p-8 text-center">
+            <div>
+              <div className="font-mono text-base font-medium text-primary">Couldn't load plans</div>
+              <p className="mx-auto mt-1.5 max-w-xs text-sm text-secondary">
+                {plansQuery.error instanceof Error ? plansQuery.error.message : 'The billing API did not respond.'}
+              </p>
+              <button onClick={() => void plansQuery.refetch()} className="btn-ghost focusable mt-4 px-5 py-2 font-mono text-sm">
+                Retry
+              </button>
+            </div>
+          </div>
+        ) : (
+          <motion.div variants={stagger} className="grid grid-cols-1 gap-6 md:grid-cols-3">
+            {tiers.length === 0
+              ? Array.from({ length: 3 }).map((_, i) => <div key={i} className="card shimmer h-96" />)
+              : tiers.map((t) => (
+                  <TierCard
+                    key={t.tier}
+                    tier={t}
+                    cycle={cycle}
+                    current={isCurrent(t)}
+                    busy={checkout.isPending && checkout.variables?.tier === t.tier}
+                    disabled={!!stripeBlocked}
+                    onSelect={() => void startCheckout(t)}
+                  />
+                ))}
+          </motion.div>
+        )}
 
-        <motion.div variants={rise}>
-          <CompareDisclosure open={showCompare} onToggle={() => setShowCompare((v) => !v)} />
-        </motion.div>
+        {plansQuery.data && (
+          <motion.div variants={rise}>
+            <CompareDisclosure
+              open={showCompare}
+              onToggle={() => setShowCompare((v) => !v)}
+              tiers={tiers}
+              catalog={plansQuery.data}
+            />
+          </motion.div>
+        )}
       </motion.section>
 
       {/* ── SECTION B · Balance, subscription & history ─────────────────── */}
       <motion.section initial="hidden" animate="show" className="space-y-6">
         <motion.div variants={rise}>
-          <BalanceCard balance={balance} allowance={planInfo.monthlyCredits} planName={planInfo.name} />
+          <BalanceCard balance={balance} allowance={planInfo.creditsGranted} planName={planInfo.name} />
         </motion.div>
 
         <motion.div variants={rise}>
-          <SubscriptionCard subscription={subscription} onCancel={onCancel} />
+          <SubscriptionCard
+            subscription={subscription}
+            canceling={cancel.isPending}
+            onCancel={() => void onCancel()}
+          />
         </motion.div>
 
         {history.length > 0 && (
@@ -180,9 +283,7 @@ export default function Plans() {
           </motion.div>
         )}
 
-        <p className="font-mono text-xs text-muted">
-          Secure checkout is handled by Stripe. Credits are granted automatically once payment is confirmed.
-        </p>
+        <StripeFooter live={linkMode === 'live' && isStripeLiveMode} />
       </motion.section>
 
       <AnimatePresence>
@@ -203,27 +304,24 @@ function CycleSwitch({ cycle, onChange }: { cycle: Cycle; onChange: (c: Cycle) =
             <button
               key={c.key}
               onClick={() => onChange(c.key)}
-              className="focusable relative flex-1 rounded-[10px] px-3 py-2 text-center"
+              className="focusable relative flex-1 rounded-[8px] px-3 py-2 text-center"
             >
               {cycle === c.key && (
                 <motion.span
                   layoutId="cycle-pill"
                   transition={{ type: 'spring', stiffness: 400, damping: 32 }}
-                  className="absolute inset-0 rounded-[10px] bg-brand/15 shadow-[inset_0_0_0_1px_rgb(var(--c-brand-500)/0.4)]"
+                  className="absolute inset-0 rounded-[8px] bg-brand/15 shadow-[inset_0_0_0_1px_rgb(var(--c-brand-500)/0.4)]"
                 />
               )}
               <span className={`relative z-10 flex items-center justify-center gap-1.5 font-mono text-xs font-medium ${cycle === c.key ? 'text-brand' : 'text-muted hover:text-secondary'}`}>
                 {c.label}
-                {c.key === 'yearly' && (
-                  <span className="rounded-pill bg-success/15 px-1.5 py-0.5 text-[9px] text-success">Save 20%</span>
-                )}
               </span>
             </button>
           ))}
         </div>
       </LayoutGroup>
       <p className="mt-1.5 text-center font-mono text-[10px] text-muted">
-        {cycle === 'weekly' ? 'No commitment · cancel anytime' : cycle === 'yearly' ? 'Two months free vs. monthly' : 'Billed every month'}
+        {cycle === 'weekly' ? 'No commitment · cancel anytime' : cycle === 'yearly' ? 'Billed once a year' : 'Billed every month'}
       </p>
     </div>
   )
@@ -236,33 +334,30 @@ function TierCard({
   cycle,
   current,
   busy,
+  disabled,
   onSelect,
 }: {
   tier: UiTier
   cycle: Cycle
   current: boolean
   busy: boolean
+  disabled: boolean
   onSelect: () => void
 }) {
   const featured = tier.highlight
   const price = tier.prices[cycle]
-  const suffix = CYCLES.find((c) => c.key === cycle)!.suffix
+  const meta = CYCLES.find((c) => c.key === cycle)!
+  const suffix = meta.suffix
   const perMonthYear = cycle === 'yearly' && price > 0 ? (price / 12).toFixed(2) : null
-
-  const cycleIndex = CYCLES.findIndex((c) => c.key === cycle)
-  const [hover, setHover] = useState(false)
-  const angle = useMotionValue(118)
-  const gradient = useMotionTemplate`linear-gradient(${angle}deg, rgb(var(--c-brand-500)) 0%, rgb(var(--c-accent-magenta)) 52%, rgb(var(--c-accent-cyan)) 118%)`
-  useEffect(() => {
-    if (!featured) return
-    const controls = animate(angle, 108 + cycleIndex * 26 + (hover ? 16 : 0), { duration: 0.5, ease: EASE_ENTRANCE })
-    return () => controls.stop()
-  }, [featured, cycleIndex, hover, angle])
-
-  const nameColor = featured ? 'text-white/80' : 'text-muted'
-  const priceColor = featured ? 'text-white' : 'text-primary'
-  const subColor = featured ? 'text-white/85' : 'text-secondary'
   const isFree = tier.tier === 'FREE'
+
+  // Yearly is billed once but the credits arrive a month at a time, so show
+  // both numbers — the headline total and what actually lands each month.
+  const creditCycle = tier.fixedCycle ?? cycle
+  const creditPer = CYCLES.find((c) => c.key === creditCycle)!.per
+  const grants = tier.grants[creditCycle]
+  const dripNote =
+    grants > 1 ? `${tier.perGrant[creditCycle].toLocaleString()} credits added every month` : null
 
   const label = current
     ? 'Current plan'
@@ -270,34 +365,32 @@ function TierCard({
       ? 'Redirecting…'
       : isFree
         ? 'Free plan'
-        : `Choose ${tier.name}`
+        : disabled
+          ? 'Unavailable'
+          : `Choose ${tier.name}`
 
   return (
     <motion.div
       variants={rise}
-      onHoverStart={() => setHover(true)}
-      onHoverEnd={() => setHover(false)}
-      whileHover={featured ? undefined : { y: -3 }}
-      className={`relative flex flex-col overflow-hidden rounded-card p-6 ${
-        featured ? 'text-white shadow-[var(--shadow-lg)] max-md:order-first' : 'card'
-      } ${current ? 'ring-1 ring-brand' : ''}`}
+      whileHover={{ y: -2 }}
+      className={`card relative flex flex-col p-6 ${featured ? 'border-brand/45 max-md:order-first' : ''} ${
+        current ? 'ring-1 ring-brand' : ''
+      }`}
     >
-      {featured && <motion.span aria-hidden className="absolute inset-0 -z-10" style={{ backgroundImage: gradient }} />}
-
       <div className="flex items-center justify-between">
-        <span className={`font-mono text-[11px] font-medium uppercase tracking-[0.12em] ${nameColor}`}>{tier.name}</span>
+        <span className="font-mono text-[11px] font-medium uppercase tracking-[0.12em] text-muted">{tier.name}</span>
         {featured && (
-          <span className="rounded-pill bg-white/25 px-2.5 py-0.5 font-mono text-[10px] font-medium uppercase tracking-wide text-white backdrop-blur-sm">
+          <span className="rounded-pill bg-brand/12 px-2.5 py-0.5 font-mono text-[10px] font-medium uppercase tracking-wide text-brand">
             Popular
           </span>
         )}
       </div>
 
       <div className="mt-4 flex items-baseline gap-1">
-        <span className={`font-mono text-4xl font-medium ${priceColor}`}>
+        <span className="font-mono text-4xl font-medium text-primary">
           $<AnimatedNumber value={price} />
         </span>
-        <span className={`font-mono text-sm ${featured ? 'text-white/70' : 'text-muted'}`}>{suffix}</span>
+        <span className="font-mono text-sm text-muted">{suffix}</span>
       </div>
       <div className="h-4">
         <AnimatePresence mode="wait">
@@ -308,7 +401,7 @@ function TierCard({
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: 4 }}
               transition={{ duration: 0.25 }}
-              className={`font-mono text-[11px] ${featured ? 'text-white/70' : 'text-muted'}`}
+              className="font-mono text-[11px] text-muted"
             >
               ${perMonthYear} / month billed yearly
             </motion.p>
@@ -316,43 +409,34 @@ function TierCard({
         </AnimatePresence>
       </div>
 
-      <div className={`mt-3 text-sm ${subColor}`}>{tier.creditsPerMonth.toLocaleString()} credits / month</div>
+      <div className="mt-3 text-sm text-secondary">
+        <span className="font-mono text-primary">{tier.credits[creditCycle].toLocaleString()}</span>{' '}
+        credits / {creditPer}
+      </div>
+      <div className="h-4">
+        {dripNote && <p className="font-mono text-[11px] text-muted">{dripNote}</p>}
+      </div>
 
       <div className="mt-5 flex-1">
-        <AnimatePresence mode="wait">
-          <motion.ul
-            key={cycle}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            className="space-y-2.5"
-          >
-            {tier.features.map((f) => (
-              <li key={f} className={`flex items-start gap-2 text-sm ${featured ? 'text-white/90' : 'text-secondary'}`}>
-                <svg viewBox="0 0 24 24" className={`mt-0.5 h-4 w-4 shrink-0 ${featured ? 'text-white' : 'text-brand'}`} fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M20 6 9 17l-5-5" />
-                </svg>
-                {f}
-              </li>
-            ))}
-          </motion.ul>
-        </AnimatePresence>
+        <ul className="space-y-2.5">
+          {tier.features.map((f) => (
+            <li key={f} className="flex items-start gap-2 text-sm text-secondary">
+              <svg viewBox="0 0 24 24" className="mt-0.5 h-4 w-4 shrink-0 text-brand" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M20 6 9 17l-5-5" />
+              </svg>
+              {f}
+            </li>
+          ))}
+        </ul>
       </div>
 
       <button
         onClick={onSelect}
-        disabled={current || busy || isFree}
-        className={`focusable mt-6 w-full rounded-pill py-3 font-mono text-sm font-semibold transition-colors disabled:cursor-default ${
-          current
-            ? featured
-              ? 'bg-white/25 text-white'
-              : 'border border-subtle bg-sunken text-muted'
-            : featured
-              ? 'bg-white text-[rgb(76_29_149)] hover:bg-white/90'
-              : isFree
-                ? 'border border-subtle bg-sunken text-muted'
-                : 'btn-primary'
+        disabled={current || busy || isFree || disabled}
+        className={`focusable mt-6 w-full rounded-control py-3 font-mono text-sm font-medium transition-colors disabled:cursor-default ${
+          current || isFree || disabled
+            ? 'border border-subtle bg-sunken text-muted'
+            : 'btn-primary'
         }`}
       >
         {label}
@@ -363,11 +447,46 @@ function TierCard({
 
 /* ── Comparison disclosure ──────────────────────────────────────────────── */
 
-function CompareDisclosure({ open, onToggle }: { open: boolean; onToggle: () => void }) {
+/**
+ * Built entirely from the API response — prices, grants, the free-dub cap and
+ * the per-quality tariff. It replaced a hand-written feature matrix that could
+ * (and did) drift away from what the server actually charges.
+ */
+function CompareDisclosure({
+  open,
+  onToggle,
+  tiers,
+  catalog,
+}: {
+  open: boolean
+  onToggle: () => void
+  tiers: UiTier[]
+  catalog: PlansResponse
+}) {
+  // One credits row per cycle: the three grants genuinely differ, and a single
+  // "credits per month" row could only ever be right for one of them.
+  const rows: { feature: string; values: (string | boolean)[] }[] = [
+    ...CYCLE_KEYS.map((c) => ({
+      feature: `Credits · ${CYCLES.find((x) => x.key === c)!.label.toLowerCase()}`,
+      values: tiers.map((t) =>
+        (t.fixedCycle && t.fixedCycle !== c) || t.credits[c] === 0
+          ? '–'
+          : t.credits[c].toLocaleString(),
+      ),
+    })),
+    { feature: 'Weekly price', values: tiers.map((t) => fmtPrice(t.prices.weekly)) },
+    { feature: 'Monthly price', values: tiers.map((t) => fmtPrice(t.prices.monthly)) },
+    { feature: 'Yearly price', values: tiers.map((t) => fmtPrice(t.prices.yearly)) },
+    ...TIER_META[1].features.map((f) => ({
+      feature: f,
+      values: tiers.map((t) => t.features.includes(f) || t.tier === 'STUDIO'),
+    })),
+  ]
+
   return (
     <div className="card overflow-hidden p-0">
       <button onClick={onToggle} className="focusable flex w-full items-center justify-between px-5 py-4 text-left">
-        <span className="font-mono text-sm font-medium text-primary">Compare all features</span>
+        <span className="font-mono text-sm font-medium text-primary">Compare all plans</span>
         <motion.svg
           viewBox="0 0 24 24" className="h-4 w-4 text-muted" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
           animate={{ rotate: open ? 180 : 0 }}
@@ -390,22 +509,52 @@ function CompareDisclosure({ open, onToggle }: { open: boolean; onToggle: () => 
                 <thead>
                   <tr className="border-b border-subtle">
                     <th className="py-2 text-left font-mono text-[10px] font-medium uppercase tracking-[0.12em] text-muted">Feature</th>
-                    <th className="py-2 text-center font-mono text-[10px] font-medium uppercase tracking-[0.12em] text-muted">Free</th>
-                    <th className="bg-brand/[0.04] py-2 text-center font-mono text-[10px] font-medium uppercase tracking-[0.12em] text-brand">Pro</th>
-                    <th className="py-2 text-center font-mono text-[10px] font-medium uppercase tracking-[0.12em] text-muted">Studio</th>
+                    {tiers.map((t) => (
+                      <th
+                        key={t.tier}
+                        className={`py-2 text-center font-mono text-[10px] font-medium uppercase tracking-[0.12em] ${
+                          t.highlight ? 'bg-brand/[0.05] text-brand' : 'text-muted'
+                        }`}
+                      >
+                        {t.name}
+                      </th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {COMPARISON.map((row) => (
+                  {rows.map((row) => (
                     <tr key={row.feature} className="border-b border-subtle last:border-0">
                       <td className="py-2.5 text-sm text-secondary">{row.feature}</td>
-                      <CompareCell v={row.free} />
-                      <CompareCell v={row.pro} tinted />
-                      <CompareCell v={row.studio} />
+                      {row.values.map((v, i) => (
+                        <CompareCell key={tiers[i].tier} v={v} tinted={tiers[i].highlight} />
+                      ))}
                     </tr>
                   ))}
                 </tbody>
               </table>
+
+              {/* Everything below is the live tariff the credit gate enforces. */}
+              <div className="mt-5 grid gap-4 border-t border-subtle pt-4 sm:grid-cols-2">
+                <div>
+                  <SectionMark>Credit cost per dub</SectionMark>
+                  <ul className="mt-2 space-y-1">
+                    {Object.entries(catalog.qualityCost).map(([quality, cost]) => (
+                      <li key={quality} className="flex items-center justify-between text-sm">
+                        <span className="capitalize text-secondary">{quality}</span>
+                        <span className="font-mono text-primary">{cost} credits</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+                <div>
+                  <SectionMark>Free dub</SectionMark>
+                  <p className="mt-2 text-sm text-secondary">
+                    Every account gets one free dub of up to{' '}
+                    <span className="font-mono text-primary">{Math.round(catalog.freeDubMaxSeconds / 60)} min</span>,
+                    charged at zero credits.
+                  </p>
+                </div>
+              </div>
             </div>
           </motion.div>
         )}
@@ -416,7 +565,7 @@ function CompareDisclosure({ open, onToggle }: { open: boolean; onToggle: () => 
 
 function CompareCell({ v, tinted }: { v: boolean | string; tinted?: boolean }) {
   return (
-    <td className={`py-2.5 text-center ${tinted ? 'bg-brand/[0.04]' : ''}`}>
+    <td className={`py-2.5 text-center ${tinted ? 'bg-brand/[0.05]' : ''}`}>
       {typeof v === 'string' ? (
         <span className="font-mono text-xs text-primary">{v}</span>
       ) : v ? (
@@ -451,7 +600,7 @@ function BalanceCard({
         <div className="mt-1 font-mono text-[11px] text-muted">{planName} plan</div>
       </div>
 
-      <BalanceRing pct={pct} balance={balance} allowance={allowance} />
+      {allowance > 0 && <BalanceRing pct={pct} balance={balance} allowance={allowance} />}
     </div>
   )
 }
@@ -483,9 +632,11 @@ function BalanceRing({ pct, balance, allowance }: { pct: number; balance: number
 
 function SubscriptionCard({
   subscription,
+  canceling,
   onCancel,
 }: {
   subscription: Subscription | null
+  canceling: boolean
   onCancel: () => void
 }) {
   if (!subscription || subscription.status === 'CANCELED' || subscription.status === 'EXPIRED') {
@@ -493,7 +644,7 @@ function SubscriptionCard({
       <div className="card p-6">
         <SectionMark>Subscription</SectionMark>
         <p className="mt-2 text-sm text-secondary">
-          You’re on the Free plan. Choose Pro or Studio above to add monthly credits.
+          You're on the Free plan. Choose Pro or Studio above to add monthly credits.
         </p>
       </div>
     )
@@ -522,9 +673,10 @@ function SubscriptionCard({
       {!subscription.cancelAtPeriodEnd && (
         <button
           onClick={onCancel}
-          className="focusable rounded-pill border border-subtle bg-sunken px-4 py-2 font-mono text-xs text-secondary hover:text-primary"
+          disabled={canceling}
+          className="focusable rounded-control border border-subtle bg-sunken px-4 py-2 font-mono text-xs text-secondary hover:text-primary disabled:opacity-60"
         >
-          Cancel subscription
+          {canceling ? 'Canceling…' : 'Cancel subscription'}
         </button>
       )}
     </div>
@@ -533,7 +685,7 @@ function SubscriptionCard({
 
 function StatusPill({ status, cancelAtPeriodEnd }: { status: string; cancelAtPeriodEnd: boolean }) {
   const [label, cls] = cancelAtPeriodEnd
-    ? ['Canceling', 'bg-warning/15 text-warning']
+    ? ['Canceling', 'bg-warn/15 text-warn']
     : status === 'ACTIVE'
       ? ['Active', 'bg-success/15 text-success']
       : status === 'PAST_DUE'
@@ -557,7 +709,7 @@ function HistoryCard({ rows }: { rows: PaymentRow[] }) {
             </div>
             <div className="flex items-center gap-3">
               <span className="font-mono text-sm text-primary">
-                ${(r.amountCents / 100).toFixed(2)}
+                {(r.amountCents / 100).toLocaleString(undefined, { style: 'currency', currency: r.currency || 'USD' })}
               </span>
               <span className={`rounded-pill px-2 py-0.5 font-mono text-[10px] ${r.status === 'SUCCEEDED' ? 'bg-success/15 text-success' : 'bg-sunken text-muted'}`}>
                 {r.status}
@@ -572,6 +724,28 @@ function HistoryCard({ rows }: { rows: PaymentRow[] }) {
 
 /* ── Small pieces ───────────────────────────────────────────────────────── */
 
+// `live` is deliberately the AND of the key and the links: the badge is a claim
+// that real money moves, so anything less than both agreeing must not show it.
+function StripeFooter({ live }: { live: boolean }) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-card border border-subtle bg-sunken/50 px-5 py-4">
+      <p className="font-mono text-xs text-muted">
+        Payments are processed by Stripe. Card details never reach this site, and credits are granted
+        automatically once Stripe confirms the payment.
+      </p>
+      {live && (
+        <span className="shrink-0 rounded-pill bg-success/12 px-2.5 py-1 font-mono text-[10px] uppercase tracking-wide text-success">
+          Live payments
+        </span>
+      )}
+    </div>
+  )
+}
+
 function SectionMark({ children }: { children: ReactNode }) {
   return <span className="font-mono text-[10px] font-medium uppercase tracking-[0.12em] text-muted">/ {children}</span>
+}
+
+function fmtPrice(dollars: number): string {
+  return dollars === 0 ? 'Free' : `$${dollars.toLocaleString()}`
 }

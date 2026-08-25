@@ -8,14 +8,14 @@ export default function OptionToggle({
   title,
   description,
   icon,
-  accent = 'violet',
+  accent = 'brand',
 }: {
   checked: boolean
   onChange: (v: boolean) => void
   title: string
   description: string
   icon?: ReactNode
-  accent?: 'violet' | 'cyan'
+  accent?: 'brand' | 'cyan'
 }) {
   // A monotonically-increasing key so each toggle re-mounts (and replays) the
   // brand-tinted ripple that blooms from the knob.

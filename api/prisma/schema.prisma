@@ -98,8 +98,15 @@ model Plan {
   tier           PlanTier
   cycle          BillingCycle
   priceCents     Int
+  /// Credits handed out by ONE allocation, not the headline number on the
+  /// pricing page. For weekly/monthly the two are the same; for yearly the
+  /// advertised total is `creditsGranted * grantsPerPeriod`.
   creditsGranted Int
   grantDays      Int // 7 or 30
+  /// How many allocations one paid period is worth. 1 for weekly/monthly; 12
+  /// for yearly, which Stripe bills once but which drips a month at a time.
+  /// The cron stops at this count so a year's credits can't all land early.
+  grantsPerPeriod Int         @default(1)
   stripePriceId  String?      @unique
   stripeLinkUrl  String?
   active         Boolean      @default(true)
@@ -120,6 +127,10 @@ model Subscription {
   currentPeriodEnd     DateTime
   cancelAtPeriodEnd    Boolean            @default(false)
   lastGrantAt          DateTime?
+  /// Allocations already handed out for the CURRENT period. Reset to 1 by the
+  /// checkout and renewal handlers (both grant immediately); incremented by the
+  /// recurring cron, which stops once it reaches plan.grantsPerPeriod.
+  grantsIssued         Int                @default(0)
 
   user                 User               @relation(fields: [userId], references: [id], onDelete: Cascade)
   plan                 Plan               @relation(fields: [planId], references: [id])

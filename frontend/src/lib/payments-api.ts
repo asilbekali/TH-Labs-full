@@ -13,8 +13,17 @@ export interface ServerPlan {
   tier: PlanTier
   cycle: BillingCycle
   priceCents: number
+  /** Credits in ONE allocation. The advertised total is this × grantsPerPeriod. */
   creditsGranted: number
   grantDays: number
+  /**
+   * Allocations per paid period: 1 for weekly/monthly, 12 for yearly.
+   *
+   * Optional because an API deployed before the grant-allocation change simply
+   * omits it. Treat a missing value as 1 — never multiply by it unguarded, or
+   * every credit figure in the UI renders as NaN.
+   */
+  grantsPerPeriod?: number
   stripePriceId: string | null
   stripeLinkUrl: string | null
   active: boolean

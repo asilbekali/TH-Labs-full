@@ -127,6 +127,8 @@ export class StripeWebhookHandler {
             currentPeriodEnd: periodEnd,
             cancelAtPeriodEnd: false,
             lastGrantAt: periodStart,
+            // A fresh period, and the grant below is its first allocation.
+            grantsIssued: 1,
           },
         });
       } else {
@@ -139,9 +141,24 @@ export class StripeWebhookHandler {
             currentPeriodStart: periodStart,
             currentPeriodEnd: periodEnd,
             lastGrantAt: periodStart,
+            grantsIssued: 1,
           },
         });
       }
+
+      // Switching plans creates a second Stripe subscription rather than
+      // editing the first, so retire any other live row for this user —
+      // otherwise the old tier keeps granting credits alongside the new one.
+      await tx.subscription.updateMany({
+        where: {
+          userId,
+          id: { not: subscription.id },
+          status: {
+            in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.PAST_DUE],
+          },
+        },
+        data: { status: SubscriptionStatus.CANCELED },
+      });
 
       if (stripeCustomerId) {
         await tx.user.update({
@@ -227,8 +244,11 @@ export class StripeWebhookHandler {
         where: { id: subscription.id },
         data: {
           status: SubscriptionStatus.ACTIVE,
+          currentPeriodStart: now,
           currentPeriodEnd: periodEnd,
           lastGrantAt: now,
+          // New period — the grant below is allocation 1 of grantsPerPeriod.
+          grantsIssued: 1,
         },
       });
 
