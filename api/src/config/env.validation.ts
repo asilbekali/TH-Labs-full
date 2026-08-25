@@ -22,6 +22,11 @@ export interface AppEnv {
   APP_URL: string;
   FREE_DUB_MAX_SECONDS: number;
 
+  // Origin of the dubbing pipeline (FastAPI), probed by GET /v1/health.
+  // Optional: an account API with no pipeline attached is a valid deployment,
+  // and health then reports `pipeline: "not_configured"` rather than guessing.
+  DUB_API_URL?: string;
+
   STRIPE_SECRET_KEY?: string;
   STRIPE_WEBHOOK_SECRET?: string;
 
@@ -70,6 +75,8 @@ export function validateEnv(config: RawEnv): AppEnv {
     PORT: toInt(config.PORT, 3000),
     APP_URL: config.APP_URL ?? 'http://localhost:5173',
     FREE_DUB_MAX_SECONDS: toInt(config.FREE_DUB_MAX_SECONDS, 120),
+
+    DUB_API_URL: config.DUB_API_URL?.trim() || undefined,
 
     STRIPE_SECRET_KEY: config.STRIPE_SECRET_KEY,
     STRIPE_WEBHOOK_SECRET: config.STRIPE_WEBHOOK_SECRET,

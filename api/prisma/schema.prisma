@@ -229,6 +229,38 @@ model HandoffCode {
   @@index([userId])
 }
 
+/// The catalog of languages a dub can target.
+///
+/// This list used to live only inside the pipeline process
+/// (backend/app/languages.py), so `GET /languages` died whenever the GPU box
+/// did — and the Studio's target picker silently fell back to a 14-entry copy
+/// hardcoded in the frontend. Holding it here means the catalog is served by
+/// the always-on account API and can be corrected without a pipeline deploy.
+///
+/// `whisper` and `nllb` are the model-specific codes the pipeline needs (ASR
+/// and NMT respectively); `code` is the short id the API and UI speak. All
+/// three are kept on one row precisely so they cannot drift apart.
+model Language {
+  id        Int      @id @default(autoincrement())
+  code      String   @unique // ISO-639-1 where one exists
+  name      String // English display name
+  native    String // endonym
+  flag      String // emoji flag
+  whisper   String // Whisper language code
+  nllb      String // NLLB-200 FLORES-200 code
+  /// Soft delete. A language the pipeline can no longer handle is deactivated,
+  /// not deleted, so existing jobs that reference the code still resolve.
+  active    Boolean  @default(true)
+  /// Display order in the picker; ties break on name. Lets the common targets
+  /// stay at the top without renaming anything.
+  sortOrder Int      @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  @@index([active, sortOrder])
+}
+
 // Stripe webhook idempotency guard — one row per delivered event id.
 model WebhookEvent {
   id            String   @id @default(cuid())

@@ -12,6 +12,8 @@ import { AuthModule } from './auth/auth.module';
 import { AdminModule } from './admin/admin.module';
 import { WaitListModule } from './wait-list/wait-list.module';
 import { PaymentModule } from './payment/payment.module';
+import { LanguagesModule } from './languages/languages.module';
+import { HealthModule } from './health/health.module';
 
 @Module({
   imports: [
@@ -24,6 +26,8 @@ import { PaymentModule } from './payment/payment.module';
     AdminModule,
     WaitListModule,
     PaymentModule,
+    LanguagesModule,
+    HealthModule,
   ],
   controllers: [AppController],
   providers: [AppService],
