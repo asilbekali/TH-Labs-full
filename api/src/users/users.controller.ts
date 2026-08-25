@@ -73,7 +73,7 @@ export class UsersController {
   @Get(':id')
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(Role.ADMIN, Role.USER)
+  @Roles(Role.ADMIN, Role.USER, Role.SUPERADMIN)
   findOne(
     @Param('id') id: string,
     @CurrentUser() currentUser: AuthenticatedUser,
@@ -85,7 +85,7 @@ export class UsersController {
   @Patch(':id')
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(Role.ADMIN, Role.USER)
+  @Roles(Role.ADMIN, Role.USER, Role.SUPERADMIN)
   update(
     @Param('id') id: string,
     @Body() updateUserDto: UpdateUserDto,
@@ -98,7 +98,7 @@ export class UsersController {
   @Delete(':id')
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(Role.ADMIN, Role.USER)
+  @Roles(Role.ADMIN, Role.USER, Role.SUPERADMIN)
   remove(
     @Param('id') id: string,
     @CurrentUser() currentUser: AuthenticatedUser,
