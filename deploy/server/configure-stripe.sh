@@ -33,10 +33,10 @@ CORS_ORIGINS="https://th-labs.uz,https://www.th-labs.uz,https://aytingchi.uz,htt
 # Leave a value empty to skip that plan; /payments/checkout 400s for it.
 LINK_PRO_WEEKLY="https://buy.stripe.com/test_8x2bJ3fiy3Q2aqIdOc6AM00"
 LINK_PRO_MONTHLY="https://buy.stripe.com/test_8x27sNc6m4U6buM11q6AM01"
-LINK_PRO_YEARLY="https://buy.stripe.com/test_aFa6oJdaqeuG56o5hG6AM02"
+LINK_PRO_YEARLY="https://buy.stripe.com/test_7sYdRb0nEgCO0Q8bG46AM07"
 LINK_STUDIO_WEEKLY="https://buy.stripe.com/test_14A7sN0nEcmyfL2eSg6AM03"
 LINK_STUDIO_MONTHLY="https://buy.stripe.com/test_8x2dRb3zQ3Q2fL225u6AM04"
-LINK_STUDIO_YEARLY="https://buy.stripe.com/test_14A5kF0nE5Ya0Q8h0o6AM05"
+LINK_STUDIO_YEARLY="https://buy.stripe.com/test_aFaaEZeeubiueGY5hG6AM06"
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
 die() { echo "error: $*" >&2; exit 1; }

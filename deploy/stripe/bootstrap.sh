@@ -18,7 +18,14 @@
 # dropped -- the user is charged and credited nothing. A form is an easy place
 # to make that mistake once; a table is not.
 #
-# The amounts below MUST stay identical to PLANS in api/prisma/seed.ts.
+# The amounts below MUST stay identical to PLAN_SEED in api/prisma/seed.ts.
+# They drifted once already: links were created at the yearly prices from an
+# out-of-date checkout (18200/47000) while seed.ts had moved to 19900/49900,
+# so both yearly plans would have taken payment and granted nothing. If you
+# change a price, change it in both files in the same commit.
+#
+# credits is one ALLOCATION, not the advertised total -- yearly bills once and
+# drips creditsGranted every 30 days, twelve times.
 
 set -euo pipefail
 
@@ -26,12 +33,12 @@ MODE="${1:-}"
 
 # tier|cycle|cents|interval|credits|env-var-name
 PLANS=(
-  "PRO|WEEKLY|600|week|150|STRIPE_LINK_PRO_WEEKLY"
-  "PRO|MONTHLY|1900|month|600|STRIPE_LINK_PRO_MONTHLY"
-  "PRO|YEARLY|18200|year|600|STRIPE_LINK_PRO_YEARLY"
-  "STUDIO|WEEKLY|1500|week|500|STRIPE_LINK_STUDIO_WEEKLY"
-  "STUDIO|MONTHLY|4900|month|2000|STRIPE_LINK_STUDIO_MONTHLY"
-  "STUDIO|YEARLY|47000|year|2000|STRIPE_LINK_STUDIO_YEARLY"
+  "PRO|WEEKLY|600|week|300|STRIPE_LINK_PRO_WEEKLY"
+  "PRO|MONTHLY|1900|month|1200|STRIPE_LINK_PRO_MONTHLY"
+  "PRO|YEARLY|19900|year|1200|STRIPE_LINK_PRO_YEARLY"
+  "STUDIO|WEEKLY|1500|week|1200|STRIPE_LINK_STUDIO_WEEKLY"
+  "STUDIO|MONTHLY|4900|month|4800|STRIPE_LINK_STUDIO_MONTHLY"
+  "STUDIO|YEARLY|49900|year|4800|STRIPE_LINK_STUDIO_YEARLY"
 )
 
 WEBHOOK_URL="https://th-labs.uz/v1/payments/webhook"
