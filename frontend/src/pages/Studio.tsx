@@ -15,7 +15,7 @@ import Page from "../components/Page";
 import LogoMark from "../components/brand/LogoMark";
 import { useIsDesktop } from "../hooks/useMediaQuery";
 import { rise, stagger } from "../lib/motion";
-import { createJob, mediaUrl, pollJob, subscribeJob } from "../lib/api";
+import { createJob, mediaUrl, pollJob, revoiceJob, subscribeJob } from "../lib/api";
 import type { Job } from "../lib/types";
 import { useWallet, QUALITY_COST } from "../lib/wallet";
 import { useCanDub, useCommitDub, useHealth, useLanguages } from "../lib/queries";
@@ -79,6 +79,7 @@ export default function Studio() {
 
   const [job, setJob] = useState<Job | null>(null);
   const [busy, setBusy] = useState(false);
+  const [revoicing, setRevoicing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const unsubRef = useRef<null | (() => void)>(null);
   const savedRef = useRef<string | null>(null);
@@ -276,6 +277,56 @@ export default function Studio() {
       setError(e instanceof Error ? e.message : "Failed to start job");
     } finally {
       setBusy(false);
+    }
+  }
+
+  // Re-voice the current dub with the user's corrected translation. The backend
+  // returns a NEW job built from the same source video, so this attaches to it
+  // exactly as start() does — including recording it in the library, where it
+  // appears as its own entry rather than overwriting the run it corrects.
+  //
+  // No commitDub call: a correction is not a second dub, so nothing is charged.
+  async function revoice(edits: { id: number; target_text: string }[]) {
+    if (!job || !edits.length) return;
+    setRevoicing(true);
+    setError(null);
+    try {
+      const created = await revoiceJob(job.id, edits);
+      unsubRef.current?.();
+      setJob(created);
+      savedRef.current = created.id;
+      addWork({
+        id: created.id,
+        createdAt: Date.now(),
+        status: "processing",
+        filename: created.filename,
+        sourceLang: created.result.detected_source_lang ?? sourceLang,
+        targetLang,
+        durationSec: created.result.duration,
+        outputUrl: null,
+        sourceUrl: created.result.source_url,
+        simulated: created.simulated,
+        speakerSimilarity: null,
+        creditsSpent: 0,
+        settings: { voiceClone, lipSync, keepBackground, quality },
+        segments: [],
+        error: null,
+        progress: 0,
+        stage: null,
+      });
+      const stopSse = subscribeJob(
+        created.id,
+        (evt) => setJob(evt.job),
+        () => {
+          const stopPoll = pollJob(created.id, (j) => setJob(j));
+          unsubRef.current = stopPoll;
+        },
+      );
+      unsubRef.current = stopSse;
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to re-dub");
+    } finally {
+      setRevoicing(false);
     }
   }
 
@@ -832,7 +883,11 @@ export default function Studio() {
                   </a>
                 )}
                 <ResultMetrics m={job.result.metrics} />
-                <SegmentTable segments={job.result.segments} />
+                <SegmentTable
+                  segments={job.result.segments}
+                  onRevoice={completed ? revoice : undefined}
+                  revoicing={revoicing}
+                />
               </div>
             )}
 

@@ -11,8 +11,8 @@ import time
 import uuid
 from pathlib import Path
 
-from .schemas import (DubOptions, Job, JobResult, JobStatus, StageState,
-                      StageStatus)
+from .schemas import (DubOptions, Job, JobResult, JobStatus, Segment,
+                      StageState, StageStatus)
 from .pipeline.orchestrator import Orchestrator
 
 _STAGE_DEFS = [
@@ -37,6 +37,10 @@ def _initial_status(key: str, options: DubOptions) -> StageStatus:
 class JobManager:
     def __init__(self) -> None:
         self._jobs: dict[str, Job] = {}
+        # Source video per job, kept here rather than on the Job because Job is
+        # serialised straight to the browser and a server filesystem path is
+        # not the client's business. Re-voicing an edited transcript needs it.
+        self._sources: dict[str, Path] = {}
         self._subs: dict[str, list[asyncio.Queue]] = {}
         self._orch = Orchestrator()
         # Jobs execute one at a time through a single worker. The shared
@@ -55,10 +59,15 @@ class JobManager:
         return self._jobs.get(job_id)
 
     # ── creation ──────────────────────────────────────────────────────────
+    def source_video(self, job_id: str) -> Path | None:
+        """The video a job was run on, if it is still known."""
+        return self._sources.get(job_id)
+
     def create(self, options: DubOptions, input_video: Path,
                scenario: str, filename: str | None,
                owner_id: int | None = None,
-               force_simulate: bool = False) -> Job:
+               force_simulate: bool = False,
+               preset_segments: list[Segment] | None = None) -> Job:
         job_id = uuid.uuid4().hex[:12]
         now = time.time()
         stages = [
@@ -72,10 +81,12 @@ class JobManager:
                   stages=stages, result=JobResult(),
                   created_at=now, updated_at=now)
         self._jobs[job_id] = job
+        self._sources[job_id] = input_video
         self._subs[job_id] = []
         # enqueue for the single serial worker (started lazily on the loop)
         self._ensure_worker()
-        self._pending.put_nowait((job, input_video, scenario, force_simulate))
+        self._pending.put_nowait(
+            (job, input_video, scenario, force_simulate, preset_segments))
         return job
 
     # ── serial worker ─────────────────────────────────────────────────────
@@ -88,9 +99,11 @@ class JobManager:
     async def _worker_loop(self) -> None:
         assert self._pending is not None
         while True:
-            job, input_video, scenario, force_simulate = await self._pending.get()
+            (job, input_video, scenario, force_simulate,
+             preset_segments) = await self._pending.get()
             try:
-                await self._run(job, input_video, scenario, force_simulate)
+                await self._run(job, input_video, scenario, force_simulate,
+                                preset_segments)
             except Exception:  # pragma: no cover - defensive; keep worker alive
                 pass
             finally:
@@ -98,12 +111,14 @@ class JobManager:
 
     # ── runner ────────────────────────────────────────────────────────────
     async def _run(self, job: Job, input_video: Path, scenario: str,
-                   force_simulate: bool = False) -> None:
+                   force_simulate: bool = False,
+                   preset_segments: list[Segment] | None = None) -> None:
         job.status = JobStatus.running
         await self._emit(job)
         try:
             await self._orch.run(job, input_video, scenario, self._emit,
-                                 force_simulate=force_simulate)
+                                 force_simulate=force_simulate,
+                                 preset_segments=preset_segments)
             job.status = JobStatus.completed
         except Exception as exc:  # pragma: no cover - defensive
             job.status = JobStatus.failed

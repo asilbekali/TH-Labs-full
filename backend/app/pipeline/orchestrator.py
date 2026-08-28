@@ -17,7 +17,7 @@ from typing import Awaitable, Callable
 from ..config import get_settings
 from ..schemas import (DubOptions, Job, JobResult, Segment, StageState,
                        StageStatus)
-from . import media, metrics
+from . import media, metrics, refine
 from .lipsync import Wav2LipSync
 from .nmt import NLLBTranslator
 from .separation import DemucsSeparator
@@ -109,7 +109,16 @@ class Orchestrator:
 
     # ── main run ──────────────────────────────────────────────────────────
     async def run(self, job: Job, input_video: Path, scenario: str,
-                  emit: EmitFn, force_simulate: bool = False) -> None:
+                  emit: EmitFn, force_simulate: bool = False,
+                  preset_segments: list[Segment] | None = None) -> None:
+        """Dub `input_video` into `job.options.target_lang`.
+
+        `preset_segments` re-voices an existing transcript instead of producing
+        one: the user corrected a translation and wants to hear it. Transcribing
+        and translating again would only throw their edit away, so both stages
+        are short-circuited and everything downstream — TTS, separation, mix,
+        mux — runs exactly as it does for a first pass.
+        """
         s = get_settings()
         options = job.options
         duration = await asyncio.to_thread(media.probe_duration, input_video)
@@ -136,7 +145,15 @@ class Orchestrator:
         # 1 ── ASR ---------------------------------------------------------
         async with _stage(job, "asr", emit) as st:
             vad_detail: dict = {}
-            if real_asr:
+            if preset_segments is not None:
+                # Copies, so an edit to this job cannot reach back into the
+                # transcript the original job is still holding.
+                segments = [x.model_copy(deep=True) for x in preset_segments]
+                detected = job.result.detected_source_lang or (
+                    options.source_lang if options.source_lang != "auto" else "en")
+                engine_mode = "reused"
+                st.message = "Reused from the first run"
+            elif real_asr:
                 # Real ASR: never fabricate a transcript. If Whisper (VAD-gated)
                 # finds no speech or errors, report that honestly — do NOT fall
                 # back to the canned demo scenario.
@@ -196,7 +213,12 @@ class Orchestrator:
         # 2 ── NMT ---------------------------------------------------------
         async with _stage(job, "nmt", emit) as st:
             fell_back = False
-            if real_nmt:
+            if preset_segments is not None:
+                # The text came from the user. Re-translating it would discard
+                # the correction, and the repair pass below would second-guess
+                # a person — so neither runs.
+                st.message = "Using your edited translation"
+            elif real_nmt:
                 try:
                     segments = await self._heartbeat(
                         job, "nmt", emit,
@@ -210,10 +232,31 @@ class Orchestrator:
             else:
                 await _beat(0.7)
                 segments = self.nmt.simulate(segments, options.target_lang, scenario)
+            # Second pass over anything that came out visibly wrong. Reports as
+            # part of translation because that is what it is; the stage detail
+            # says how many lines were revised, not how.
+            revised = 0
+            if (segments and not force_simulate and preset_segments is None
+                    and refine.available()):
+                try:
+                    revised, suspects = await self._heartbeat(
+                        job, "nmt", emit,
+                        lambda: refine.refine(segments, src_lang,
+                                              options.target_lang))
+                    for i, why in list(suspects.items())[:8]:
+                        log.info("[%s]   nmt suspect %s: %s", job.id, i, why)
+                except Exception as exc:
+                    log.warning("[%s] translation repair skipped (%s)",
+                                job.id, exc)
             job.result.segments = segments
             st.detail = {"length_ratio": self.nmt.length_ratio(segments),
                          "engine_mode": "simulation" if (not real_nmt or fell_back) else "real",
-                         "target_lang": options.target_lang}
+                         "target_lang": options.target_lang,
+                         "revised": revised}
+            if revised:
+                st.message = f"{revised} line{'s' if revised > 1 else ''} revised"
+            log.info("[%s] nmt: length_ratio=%s revised=%s", job.id,
+                     self.nmt.length_ratio(segments), revised)
             await _tick(job, "nmt", emit, segments_preview(segments))
 
         # 3 ── TTS ---------------------------------------------------------

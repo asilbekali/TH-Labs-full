@@ -61,6 +61,29 @@ STRIPE_PUBLISHABLE_KEY = (
 # matching how docker-compose.yml refuses to start without JWT_SECRET.
 jwt_secret = modal.Secret.from_name("th-labs-jwt")
 
+# Key for the translation repair pass (backend/app/pipeline/refine.py), holding
+# one entry: TH_LABS_REFINE_API_KEY. Create it once with:
+#
+#     modal secret create th-labs-refine TH_LABS_REFINE_API_KEY=<the key>
+#
+# Unlike the JWT secret this one is OPTIONAL, and a missing one must not fail
+# the deploy: without a key `refine.available()` is False, the pass never runs,
+# and the pipeline behaves exactly as it did before it existed. So the lookup is
+# resolved here, locally, at deploy time — `from_name` alone is lazy and would
+# not surface the absence until a container tried to start.
+def _optional_secret(name: str) -> list:
+    try:
+        secret = modal.Secret.from_name(name)
+        secret.hydrate()
+        return [secret]
+    except Exception:
+        print(f"note: Modal secret {name!r} not found — deploying without it. "
+              f"Translation repair stays inactive until it is created.")
+        return []
+
+
+refine_secret = _optional_secret("th-labs-refine")
+
 # Media volume mount point. Deliberately OUTSIDE the copied repo: Modal refuses
 # to mount a Volume on a non-empty path, and the repo's own backend/data/ ships
 # .gitkeep files, so mounting there crash-loops the container with
@@ -198,6 +221,12 @@ image = (
         "TH_LABS_SEPARATION_DEVICE": "cuda",   # Demucs on GPU (24 GB fits it)
         "TH_LABS_CLONE_DEVICE": "cuda",        # OpenVoice fallback, if present
 
+        # Translation repair provider. The endpoint and model name are ordinary
+        # configuration and belong here; the KEY is not, and arrives separately
+        # through the Modal Secret above.
+        "TH_LABS_REFINE_BASE_URL": "https://api.deepseek.com/v1",
+        "TH_LABS_REFINE_MODEL": "deepseek-chat",
+
         # Where a signed-out visitor is sent to sign in.
         "TH_LABS_LANDING_URL": LANDING_URL,
 
@@ -270,7 +299,7 @@ image = (
     volumes={DATA_DIR: media},
     # Supplies TH_LABS_JWT_SECRET at runtime; without it every authenticated
     # route returns 503 rather than running the pipeline for anonymous callers.
-    secrets=[jwt_secret],
+    secrets=[jwt_secret, *refine_secret],
     # Whisper + NLLB + OmniVoice + Demucs keep several GB resident on the CPU
     # side, and a dub also holds decoded audio and ffmpeg intermediates. Ask
     # for explicit headroom so a long upload can't squeeze the container into

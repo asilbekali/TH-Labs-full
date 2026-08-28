@@ -95,6 +95,41 @@ export async function createJob(input: CreateJobInput): Promise<Job> {
   return (await r.json()).job
 }
 
+// Re-voice a finished job with a corrected translation. Only the TARGET text is
+// editable — the source column is what Whisper heard, and the dub is
+// synthesized from the target side alone, so rewriting the source would change
+// nothing anyone hears while making the two columns disagree about the same
+// audio.
+//
+// The backend starts a NEW job from the stored source video and skips ASR and
+// NMT, so the original stays playable while the correction renders. Returns the
+// new job to subscribe to.
+export async function revoiceJob(
+  jobId: string,
+  segments: { id: number; target_text: string }[],
+): Promise<Job> {
+  const r = await authFetchUrl(`${BASE}/jobs/${jobId}/revoice`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ segments }),
+  })
+  if (r.status === 401) throw new AuthRequiredError()
+  if (!r.ok) {
+    // The backend's messages here are written for the user — the source video
+    // has been cleaned up, nothing was actually changed — so pass them through
+    // rather than replacing them with a status code.
+    const msg = await r.text().catch(() => '')
+    let detail = ''
+    try {
+      detail = JSON.parse(msg).detail ?? ''
+    } catch {
+      detail = ''
+    }
+    throw new Error(detail || `re-dub failed: ${r.status}`)
+  }
+  return (await r.json()).job
+}
+
 export async function getJob(jobId: string): Promise<Job> {
   const r = await authFetchUrl(`${BASE}/jobs/${jobId}`)
   if (r.status === 401) throw new AuthRequiredError()

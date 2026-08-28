@@ -95,6 +95,22 @@ class Settings(BaseSettings):
     # ── NMT · NLLB-200 ────────────────────────────────────────────────────
     nmt_model: str = "facebook/nllb-200-distilled-600M"
 
+    # ── Translation repair ────────────────────────────────────────────────
+    # A second pass over segments NLLB rendered badly — copied through
+    # untranslated, truncated, looping, or impossibly long. Only those segments
+    # are sent anywhere; see pipeline/refine.py for the tests and for why every
+    # failure here keeps the original translation.
+    #
+    # The key is NEVER a literal in this file. It arrives from the environment,
+    # which on Modal means a Secret (see deploy/modal/modal_app.py) and locally
+    # means TH_LABS_REFINE_API_KEY. Unset, the whole stage is inert and the
+    # pipeline behaves exactly as it did before.
+    refine_enabled: bool = True
+    refine_api_key: str = ""
+    refine_base_url: str = "https://api.deepseek.com/v1"
+    refine_model: str = "deepseek-chat"
+    refine_timeout: int = 25             # seconds per request
+
     # ── Voice cloning · OpenVoice v2 tone-color converter ─────────────────
     # Clones the source speaker's timbre onto the edge-tts output — real voice
     # cloning that fits a 6 GB GPU (131 MB model). Works for any language.
