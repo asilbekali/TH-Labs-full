@@ -574,3 +574,62 @@ def dub(path: str, target: str = "uz", out: str = "dub_result"):
         Path(f"{out}.wav").write_bytes(wav)
         print(f"wrote {out}.wav ({len(wav) / 1e6:.1f} MB)")
     print(f"wrote {out}.json")
+
+
+@app.function(image=image, secrets=[*refine_secret], timeout=180)
+def refine_check() -> dict:
+    """Confirm the translation-repair provider actually answers.
+
+        modal run deploy/modal/modal_app.py::refine_check
+
+    preflight checks the models; this checks the one dependency that lives
+    outside this image. It feeds the repair pass three deliberately broken
+    translations — one copied through untranslated, one truncated, one looping —
+    and reports what came back. No GPU: it is a network call and some string
+    handling.
+
+    Reports whether a key is present, never what it is.
+    """
+    import logging
+
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s | %(message)s")
+
+    from app.config import get_settings
+    from app.pipeline import refine
+    from app.schemas import Segment
+
+    s = get_settings()
+    broken = [
+        ("untranslated", "We use make when we create something.",
+         "We use make when we create something."),
+        ("truncated", "Now they can be tricky and there are some exceptions, "
+                      "but here are four things to remember.", "Endi."),
+        ("looping", "This music really makes me want to sing.",
+         "Bu musiqa juda juda juda juda yaxshi."),
+    ]
+    segments = [Segment(id=i, start=float(i), end=float(i) + 3.0,
+                        source_text=src_text, target_text=tgt)
+                for i, (_, src_text, tgt) in enumerate(broken)]
+
+    out: dict = {
+        "key_present": bool(s.refine_api_key),
+        "base_url": s.refine_base_url,
+        "model": s.refine_model,
+        "available": refine.available(),
+    }
+    if not out["available"]:
+        out["result"] = ("inactive — no key in the environment. Create the "
+                         "Modal secret th-labs-refine and redeploy.")
+        print(out)
+        return out
+
+    fixed, suspects = refine.refine(segments, "en", "uz")
+    out["flagged"] = {broken[i][0]: why for i, why in suspects.items()}
+    out["repaired"] = fixed
+    out["lines"] = [{"kind": broken[i][0], "source": segments[i].source_text,
+                     "before": broken[i][2], "after": segments[i].target_text}
+                    for i in range(len(broken))]
+    out["provider_answered"] = fixed > 0
+    for k, v in out.items():
+        print(f"{k}: {v}")
+    return out
