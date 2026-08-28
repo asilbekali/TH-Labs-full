@@ -440,3 +440,108 @@ def smoke() -> dict:
     }
     print(json.dumps(result, indent=2, ensure_ascii=False))
     return result
+
+
+@app.function(image=image, gpu="L4", timeout=1800, memory=16384)
+def dub_bytes(video: bytes, target_lang: str = "uz", suffix: str = ".mp4") -> dict:
+    """Dub a caller-supplied clip and hand back the result for inspection.
+
+        modal run deploy/modal/modal_app.py::dub --path clip.mp4 --target uz
+
+    `smoke` proves the pipeline runs on a clip it makes itself; this reproduces
+    a *reported* problem on the video that caused it, against the same image
+    that serves users. It returns the dubbed audio as well as the stage detail,
+    so the caller can transcribe what was actually produced — the only way to
+    check a claim like "the dub is still speaking the source language".
+    """
+    import asyncio
+    import logging
+    import time
+    from pathlib import Path
+
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s | %(message)s")
+
+    from app.config import get_settings
+    from app.jobs import _STAGE_DEFS, _initial_status
+    from app.pipeline import media
+    from app.pipeline.orchestrator import Orchestrator, _build_speaker_ref
+    from app.schemas import DubOptions, Job, JobResult, StageState
+
+    s = get_settings()
+    work = Path("/tmp/dub")
+    work.mkdir(parents=True, exist_ok=True)
+    src_video = work / f"input{suffix}"
+    src_video.write_bytes(video)
+
+    opts = DubOptions(source_lang="auto", target_lang=target_lang,
+                      voice_clone=True, lip_sync=False,
+                      keep_background=True, quality="balanced")
+    job = Job(id="dubcheck0001", owner_id=0, options=opts,
+              filename=src_video.name, simulated=True,
+              stages=[StageState(key=k, label=l, status=_initial_status(k, opts))
+                      for k, l in _STAGE_DEFS],
+              result=JobResult(), created_at=time.time(), updated_at=time.time())
+
+    async def emit(_j, final=False):
+        return None
+
+    started = time.perf_counter()
+    error = None
+    try:
+        asyncio.run(Orchestrator().run(job, src_video, "lecture", emit,
+                                       force_simulate=False))
+    except Exception as exc:
+        import traceback
+        traceback.print_exc()
+        error = f"{type(exc).__name__}: {exc}"
+    elapsed = time.perf_counter() - started
+
+    # What the speaker reference actually ended up being — the pairing that
+    # OmniVoice's output quality hangs on.
+    ref_info = {}
+    try:
+        ref_path, ref_text = _build_speaker_ref(job.id, job.result.segments)
+        if ref_path:
+            ref_info = {"audio_seconds": media.probe_duration(ref_path),
+                        "text": ref_text, "text_chars": len(ref_text or "")}
+    except Exception as exc:
+        ref_info = {"error": str(exc)}
+
+    out_video = s.outputs_dir / f"{job.id}.mp4"
+    dub_wav = work / "dub.wav"
+    have_audio = out_video.exists() and media.extract_audio(out_video, dub_wav)
+
+    return {
+        "elapsed_seconds": round(elapsed, 1),
+        "error": error,
+        "simulated": job.simulated,
+        "detected_lang": job.result.detected_source_lang,
+        "output_audio_streams": media.count_audio_streams(out_video),
+        "speaker_reference": ref_info,
+        "stages": [{"key": st.key, "status": st.status.value,
+                    "message": st.message,
+                    "detail": {k: v for k, v in st.detail.items() if k != "preview"}}
+                   for st in job.stages],
+        "segments": [{"start": sg.start, "end": sg.end,
+                      "src": sg.source_text, "tgt": sg.target_text}
+                     for sg in job.result.segments],
+        "dub_wav": dub_wav.read_bytes() if have_audio else None,
+    }
+
+
+@app.local_entrypoint()
+def dub(path: str, target: str = "uz", out: str = "dub_result"):
+    """Send a local clip through dub_bytes and save what comes back."""
+    import json
+    from pathlib import Path
+
+    data = Path(path).read_bytes()
+    print(f"uploading {len(data) / 1e6:.1f} MB -> {target}")
+    res = dub_bytes.remote(data, target, Path(path).suffix or ".mp4")
+    wav = res.pop("dub_wav", None)
+    Path(f"{out}.json").write_text(json.dumps(res, indent=2, ensure_ascii=False),
+                                   encoding="utf-8")
+    if wav:
+        Path(f"{out}.wav").write_bytes(wav)
+        print(f"wrote {out}.wav ({len(wav) / 1e6:.1f} MB)")
+    print(f"wrote {out}.json")

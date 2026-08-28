@@ -146,16 +146,23 @@ def synth_silent_track(duration: float, out_path: Path,
     )
 
 
-def trim_audio(src: Path, out_path: Path, seconds: float) -> bool:
-    """Extract a short mono 24 kHz reference clip (for voice cloning)."""
+def trim_audio(src: Path, out_path: Path, seconds: float,
+               start: float = 0.0) -> bool:
+    """Extract a mono 24 kHz reference clip (for voice cloning).
+
+    `start` exists so the clip can be cut to a transcript's exact span rather
+    than always from zero — see orchestrator._build_speaker_ref, where the clip
+    and the text handed to OmniVoice have to describe the same speech.
+    """
     ffmpeg = _bin("ffmpeg")
     if not ffmpeg or not src.exists():
         return False
-    return _run_ffmpeg(
-        [ffmpeg, "-y", "-i", str(src), "-t", f"{max(seconds, 1.0):.2f}",
-         "-ac", "1", "-ar", "24000", str(out_path)],
-        out_path, "trim_audio", timeout=60,
-    )
+    cmd = [ffmpeg, "-y"]
+    if start > 0:
+        cmd += ["-ss", f"{start:.3f}"]
+    cmd += ["-i", str(src), "-t", f"{max(seconds, 1.0):.2f}",
+            "-ac", "1", "-ar", "24000", str(out_path)]
+    return _run_ffmpeg(cmd, out_path, "trim_audio", timeout=60)
 
 
 # Pitch-preserving compression ceiling. Past roughly 1.6x, atempo stops making

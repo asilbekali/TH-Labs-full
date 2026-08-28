@@ -541,20 +541,54 @@ def _rewarm_models(orch) -> None:
 
 
 def _build_speaker_ref(job_id: str, segments: list[Segment]):
-    """Trim the extracted source audio to a short reference clip and gather the
-    matching source transcript, for OmniVoice zero-shot cloning.
+    """Cut a reference clip from the source audio and gather the transcript that
+    matches it EXACTLY, for OmniVoice zero-shot cloning.
+
+    The pairing has to be exact, because OmniVoice does two things with it.
+    `models/omnivoice.py::_combine_text` prepends ref_text to the target text and
+    generates the two together conditioned on ref_audio; and
+    `utils/duration.py::estimate_duration` derives the speaker's rate from
+    `ref_weight / ref_duration`. Text with no audio behind it therefore gets
+    *spoken* — in the source language, at the head of what the model returns —
+    and inflates the assumed speaking rate at the same time. When the caller
+    also passes an explicit `duration`, that spurious speech shares the target's
+    fixed token budget, so the real dubbed line is squeezed into what is left.
+
+    This used to take the first `omnivoice_ref_seconds` of audio together with
+    the text of every segment *starting* before that cutoff, so a segment
+    straddling the boundary contributed all of its text and only part of its
+    audio. Measured on a 44 s clip: 12.0 s of audio described by 20.0 s of text.
+    The uncovered 8 s was heard repeating in English throughout the dub, and
+    every duration estimate ran ~20/12 too fast.
+
+    Whole segments only, then — a partial one cannot have its text trimmed to
+    match, since segment timings are all the alignment we have.
 
     Returns (ref_audio_path | None, ref_text | None).
     """
     s = get_settings()
     src_wav = s.uploads_dir / f"{job_id}.wav"
-    if not src_wav.exists():
+    if not src_wav.exists() or not segments:
         return None, None
-    secs = s.omnivoice_ref_seconds
+    limit = s.omnivoice_ref_seconds
+
+    usable = [x for x in segments if x.end <= limit]
+    if not usable:
+        # The opening line alone is longer than the window. Use it whole rather
+        # than cutting it: an over-long reference costs generation time, a
+        # mismatched one costs correctness.
+        usable = segments[:1]
+
+    start, end = usable[0].start, usable[-1].end
     ref_clip = s.uploads_dir / f"{job_id}_ref.wav"
-    if not media.trim_audio(src_wav, ref_clip, secs):
-        ref_clip = src_wav          # fall back to the full source audio
-    ref_text = " ".join(x.source_text for x in segments if x.start < secs).strip()
-    if not ref_text and segments:
-        ref_text = segments[0].source_text
-    return ref_clip, ref_text
+    if not media.trim_audio(src_wav, ref_clip, end - start, start=start):
+        # No reference at all is better than a mismatched one: OmniVoice falls
+        # back to its own voice, which is merely un-cloned rather than wrong.
+        log.warning("[%s] could not cut a speaker reference — synthesizing "
+                    "without voice cloning", job_id)
+        return None, None
+    ref_text = " ".join(x.source_text for x in usable).strip()
+    log.info("[%s] speaker reference: %.2f-%.2fs (%.2fs) over %s segment(s), "
+             "%s chars of matching transcript",
+             job_id, start, end, end - start, len(usable), len(ref_text))
+    return ref_clip, (ref_text or None)
