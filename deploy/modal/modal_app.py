@@ -160,6 +160,29 @@ def _download_models() -> None:
     step("demucs htdemucs", _demucs)
 
 
+def _download_gigaam() -> None:
+    """Prefetch the GigaAM Multilingual checkpoints (ru/en/kk/ky/uz).
+
+    Whisper transcribes Uzbek at roughly 80% WER — measured here on clean
+    synthesized Uzbek with a known transcript, identically for `small` and
+    `large-v3`, so it is a coverage problem rather than a capacity one. GigaAM
+    Multilingual publishes 7-13% on the same language and is MIT licensed, which
+    is why it is worth carrying in the image.
+
+    Weights only: the model's own code needs a torch/transformers context to
+    load, and this step only has to put the files on disk. Non-fatal, like every
+    other prefetch — a miss here costs a slow first request, not a broken image.
+    """
+    from huggingface_hub import snapshot_download
+
+    for revision in ("ctc", "large_ctc"):
+        try:
+            snapshot_download("ai-sage/GigaAM-Multilingual", revision=revision)
+            print(f"  ok    GigaAM Multilingual [{revision}]")
+        except Exception as exc:
+            print(f"  SKIP  GigaAM [{revision}] -> {type(exc).__name__}: {exc}")
+
+
 image = (
     modal.Image.debian_slim(python_version="3.12")
     .apt_install("ffmpeg", "git", "curl", "ca-certificates")
@@ -210,6 +233,20 @@ image = (
     # re-downloading all 6 GB to change a single environment variable.
     # _download_models needs only the pip packages above, so it is safe here.
     .run_function(_download_models)
+    # GigaAM (ai-sage/GigaAM-Multilingual) loads through transformers with
+    # trust_remote_code; its remote code wants hydra/omegaconf. Deliberately
+    # BELOW _download_models: Modal rebuilds every layer under the one that
+    # changed, and adding a pip step above it would re-fetch ~6 GB of weights.
+    # `pyannote` is what its loader asks for by name; the distribution that
+    # provides that namespace is pyannote.audio, so the error's own suggested
+    # `pip install pyannote` does not fix it.
+    .pip_install("hydra-core", "omegaconf", "pyannote.audio")
+    # GigaAM weights, baked in for the same reason as everything in
+    # _download_models: a cold start should not spend minutes downloading. It is
+    # a SEPARATE build step, below that function rather than inside it, because
+    # Modal rebuilds every layer under the one that changed — folding it in
+    # would re-fetch the ~6 GB above it every time this list is touched.
+    .run_function(_download_gigaam)
     .env({
         "PYTHONPATH": f"{REMOTE}/backend",     # so `app.main:app` imports
         "PYTHONUNBUFFERED": "1",
@@ -472,7 +509,8 @@ def smoke() -> dict:
 
 
 @app.function(image=image, gpu="L4", timeout=1800, memory=16384)
-def dub_bytes(video: bytes, target_lang: str = "uz", suffix: str = ".mp4") -> dict:
+def dub_bytes(video: bytes, target_lang: str = "uz", suffix: str = ".mp4",
+              source_lang: str = "auto") -> dict:
     """Dub a caller-supplied clip and hand back the result for inspection.
 
         modal run deploy/modal/modal_app.py::dub --path clip.mp4 --target uz
@@ -502,7 +540,7 @@ def dub_bytes(video: bytes, target_lang: str = "uz", suffix: str = ".mp4") -> di
     src_video = work / f"input{suffix}"
     src_video.write_bytes(video)
 
-    opts = DubOptions(source_lang="auto", target_lang=target_lang,
+    opts = DubOptions(source_lang=source_lang, target_lang=target_lang,
                       voice_clone=True, lip_sync=False,
                       keep_background=True, quality="balanced")
     job = Job(id="dubcheck0001", owner_id=0, options=opts,
@@ -559,14 +597,15 @@ def dub_bytes(video: bytes, target_lang: str = "uz", suffix: str = ".mp4") -> di
 
 
 @app.local_entrypoint()
-def dub(path: str, target: str = "uz", out: str = "dub_result"):
+def dub(path: str, target: str = "uz", out: str = "dub_result",
+        source: str = "auto"):
     """Send a local clip through dub_bytes and save what comes back."""
     import json
     from pathlib import Path
 
     data = Path(path).read_bytes()
     print(f"uploading {len(data) / 1e6:.1f} MB -> {target}")
-    res = dub_bytes.remote(data, target, Path(path).suffix or ".mp4")
+    res = dub_bytes.remote(data, target, Path(path).suffix or ".mp4", source)
     wav = res.pop("dub_wav", None)
     Path(f"{out}.json").write_text(json.dumps(res, indent=2, ensure_ascii=False),
                                    encoding="utf-8")
@@ -633,3 +672,148 @@ def refine_check() -> dict:
     for k, v in out.items():
         print(f"{k}: {v}")
     return out
+
+
+@app.function(image=image, gpu="L4", timeout=2700, memory=16384)
+def asr_ab(audio: bytes, truth: str = "", lang: str = "uz") -> dict:
+    """Compare ASR engines on one clip with a known transcript.
+
+        modal run deploy/modal/modal_app.py::asrab --path clip.wav --truth "..."
+
+    Whisper's published Uzbek numbers are catastrophic (>100% WER on the GigaAM
+    Multilingual card, i.e. more errors than words), which would explain a
+    Uzbek->English dub coming back as Turkish-looking gibberish. This measures
+    it here rather than taking a model card's word for it, on audio whose
+    transcript we already know, so the WERs are real and not an ASR scoring an
+    ASR.
+    """
+    import logging
+    import re
+    import time
+    from pathlib import Path
+
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s | %(message)s")
+    work = Path("/tmp/asrab")
+    work.mkdir(parents=True, exist_ok=True)
+    clip = work / "clip.wav"
+    clip.write_bytes(audio)
+
+    def norm(t: str) -> str:
+        t = t.lower().replace("’", "'").replace("‘", "'").replace("`", "'")
+        return re.sub(r"\s+", " ", re.sub(r"[^\w\s']", " ", t, flags=re.U)).strip()
+
+    def wer(ref: str, hyp: str) -> float:
+        r, h = norm(ref).split(), norm(hyp).split()
+        if not r:
+            return 1.0
+        prev = list(range(len(h) + 1))
+        for i, rw in enumerate(r, 1):
+            cur = [i]
+            for j, hw in enumerate(h, 1):
+                cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (rw != hw)))
+            prev = cur
+        return prev[-1] / len(r)
+
+    results = {}
+
+    def as_text(value) -> str:
+        """Whatever an engine hands back, as a string.
+
+        whisper returns a dict, GigaAM a TranscriptionResult object; a list of
+        utterances is also plausible for a longform decoder. Coerce here rather
+        than special-casing each engine at its call site.
+        """
+        if isinstance(value, str):
+            return value
+        for attr in ("text", "transcription", "hypothesis"):
+            got = getattr(value, attr, None)
+            if isinstance(got, str):
+                return got
+            if isinstance(got, (list, tuple)):
+                return " ".join(str(x) for x in got)
+        if isinstance(value, (list, tuple)):
+            return " ".join(as_text(v) for v in value)
+        print(f"    (unfamiliar result type {type(value).__name__}: "
+              f"{[a for a in dir(value) if not a.startswith('_')][:12]})")
+        return str(value)
+
+    def run(name, fn):
+        t0 = time.perf_counter()
+        try:
+            text = as_text(fn())
+        except Exception as exc:
+            results[name] = {"error": f"{type(exc).__name__}: {str(exc)[:160]}"}
+            print(f"{name}: FAILED {results[name]['error']}")
+            return
+        # With no reference transcript there is nothing to score against, and
+        # scoring one ASR against another only measures agreement. Report the
+        # text and let a speaker of the language judge it.
+        results[name] = {"wer": round(wer(truth, text), 3) if truth else None,
+                         "seconds": round(time.perf_counter() - t0, 1),
+                         "text": text.strip()}
+        print(f"{name}: WER={results[name]['wer']} ({results[name]['seconds']}s)")
+        print(f"    {results[name]['text'][:300]}")
+
+    import whisper
+    for size in ("small", "large-v3"):
+        run(f"whisper-{size}", lambda s=size: whisper.load_model(
+            s, device="cuda").transcribe(str(clip), language=lang,
+                                         fp16=True)["text"])
+
+    from transformers import AutoModel
+    for rev in ("ctc", "large_ctc"):
+        def go(r=rev):
+            m = AutoModel.from_pretrained("ai-sage/GigaAM-Multilingual",
+                                          revision=r, trust_remote_code=True)
+            m = m.to("cuda").eval()
+            try:
+                return m.transcribe(str(clip))
+            except ValueError as exc:
+                # GigaAM caps single-pass decoding at ~30s; anything longer has
+                # to go through its own segmenter. Report the shape of what
+                # comes back, because whether it carries timestamps decides how
+                # the pipeline would use it: with them it can produce segments
+                # directly, without them it needs the silero VAD regions the ASR
+                # stage already computes.
+                if "longform" not in str(exc):
+                    raise
+                print(f"    ({r}: too long for one pass, using transcribe_longform)")
+                got = m.transcribe_longform(str(clip))
+                head = got[0] if isinstance(got, (list, tuple)) and got else got
+                print(f"    longform returns {type(got).__name__} of "
+                      f"{type(head).__name__}; item keys/attrs: "
+                      f"{list(head.keys()) if isinstance(head, dict) else [a for a in dir(head) if not a.startswith('_')][:12]}")
+                if isinstance(head, dict):
+                    print(f"    first item: { {k: (str(v)[:60]) for k, v in head.items()} }")
+                if isinstance(got, (list, tuple)):
+                    parts = []
+                    for it in got:
+                        if isinstance(it, dict):
+                            parts.append(str(it.get("transcription")
+                                              or it.get("text") or ""))
+                        else:
+                            parts.append(as_text(it))
+                    return " ".join(p for p in parts if p)
+                return got
+        run(f"gigaam-{rev}", go)
+
+    out = {"truth": truth, "results": results}
+    print("")
+    print("ranking (lower WER is better):")
+    for name, r in sorted(results.items(),
+                          key=lambda kv: (kv[1].get("wer") is None,
+                                          kv[1].get("wer") or 9)):
+        print(f"  {name:16s} {r.get('wer', 'FAILED')}")
+    return out
+
+
+@app.local_entrypoint()
+def asrab(path: str, truth: str = "", lang: str = "uz", out: str = "asrab"):
+    """Send a local clip with its known transcript through asr_ab."""
+    import json
+    from pathlib import Path
+
+    res = asr_ab.remote(Path(path).read_bytes(), truth, lang)
+    Path(f"{out}.json").write_text(json.dumps(res, indent=2, ensure_ascii=False),
+                                   encoding="utf-8")
+    print(f"wrote {out}.json")

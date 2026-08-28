@@ -22,6 +22,8 @@ from .lipsync import Wav2LipSync
 from .nmt import NLLBTranslator
 from .separation import DemucsSeparator
 from .stt import WhisperSTT
+from .stt_gigaam import GigaAMSTT
+from . import stt_gigaam
 from .sync import Synchronizer
 from .tts import OmniVoiceTTS
 from .tts_edge import EdgeTTS, TTSOutcome
@@ -40,6 +42,7 @@ log = logging.getLogger(__name__)
 class Orchestrator:
     def __init__(self) -> None:
         self.stt = WhisperSTT()
+        self.giga = GigaAMSTT()   # Turkic + Russian ASR (see stt_gigaam)
         self.nmt = NLLBTranslator()
         self.tts = OmniVoiceTTS()          # voice cloning (when it can load)
         self.edge = EdgeTTS()              # real neural speech (generic voice)
@@ -54,9 +57,14 @@ class Orchestrator:
     # ── introspection for /health ─────────────────────────────────────────
     def stage_info(self) -> list[dict]:
         return [
-            dict(key=self.stt.key, label=self.stt.label, engine=self.stt.engine,
+            dict(key=self.stt.key, label=self.stt.label,
+                 engine=(f"Whisper + {self.giga.engine}"
+                         if self.giga.available() else self.stt.engine),
                  mode=self.stt.mode(),
-                 detail=("Whisper medium · silero-VAD gated"
+                 detail=(f"GigaAM for {get_settings().gigaam_languages} · "
+                         "Whisper elsewhere · silero-VAD gated"
+                         if self.giga.available()
+                         else "Whisper medium · silero-VAD gated"
                          if self.stt._vad.available()
                          else "Whisper medium · segment timestamps")),
             dict(key=self.nmt.key, label=self.nmt.label, engine=self.nmt.engine,
@@ -166,11 +174,41 @@ class Orchestrator:
                         # transcribe, so reporting "no speech detected" would be
                         # a guess. ffmpeg's own reason is in the log.
                         raise RuntimeError("could not extract audio from the video")
-                    wmodel = QUALITY_WHISPER.get(options.quality, "small")
-                    segments, detected, vad_detail = await self._heartbeat(
-                        job, "asr", emit,
-                        lambda: self.stt.transcribe(wav, options.source_lang, wmodel))
-                    vad_detail = {**vad_detail, "model": wmodel}
+                    # Engine selection. Whisper transcribes Turkic speech
+                    # badly enough to be unusable — measured at 80% WER on
+                    # Uzbek, written in a neighbouring alphabet — so those
+                    # languages go to GigaAM instead. English stays on Whisper,
+                    # which is better there. A source set to "auto" has to be
+                    # resolved first, since the choice depends on the answer.
+                    hint = options.source_lang
+                    if hint != "auto":
+                        # The user said what it is; that beats a guess.
+                        use_giga = (self.giga.available()
+                                    and stt_gigaam.supports(hint))
+                    elif self.giga.available():
+                        hint = await asyncio.to_thread(
+                            self.stt.detect_language, wav) or "auto"
+                        use_giga = stt_gigaam.supports_detected(hint)
+                        log.info("[%s] asr: detected %s -> %s", job.id, hint,
+                                 "GigaAM" if use_giga else "Whisper")
+                    else:
+                        use_giga = False
+                    if use_giga:
+                        asr_engine = f"GigaAM {s.gigaam_revision}"
+                        regions = await asyncio.to_thread(
+                            self.stt.speech_regions, wav)
+                        segments, detected, vad_detail = await self._heartbeat(
+                            job, "asr", emit,
+                            lambda: self.giga.transcribe(wav, hint, regions))
+                    else:
+                        asr_engine = "Whisper"
+                        wmodel = QUALITY_WHISPER.get(options.quality, "small")
+                        segments, detected, vad_detail = await self._heartbeat(
+                            job, "asr", emit,
+                            lambda: self.stt.transcribe(wav, options.source_lang,
+                                                        wmodel))
+                        vad_detail = {**vad_detail, "model": wmodel}
+                    vad_detail = {**vad_detail, "engine": asr_engine}
                     if not segments:
                         st.message = "No speech detected in the audio."
                 except Exception as exc:

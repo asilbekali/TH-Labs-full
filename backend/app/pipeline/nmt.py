@@ -126,7 +126,7 @@ class NLLBTranslator:
                 num_beams=4, length_penalty=1.0, no_repeat_ngram_size=3)
             out = self._tok.batch_decode(gen, skip_special_tokens=True)
             for seg, txt in zip(chunk, out):
-                seg.target_text = txt.strip()
+                seg.target_text = _detokenize(txt)
         return segments
 
     # ── simulation ────────────────────────────────────────────────────────

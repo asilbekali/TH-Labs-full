@@ -60,6 +60,19 @@ class Settings(BaseSettings):
     whisper_device: str = "auto"           # auto|cuda|cpu
     whisper_compute_type: str = "auto"     # e.g. float16 / int8
 
+    # ── ASR · GigaAM Multilingual (Turkic + Russian) ──────────────────────
+    # A second ASR engine for the languages Whisper cannot transcribe. Measured
+    # on clean synthesized Uzbek against a known transcript: whisper small and
+    # large-v3 both 80% WER, GigaAM large_ctc 0% — and 25x faster. English is
+    # deliberately NOT routed here; Whisper is more than twice as accurate on it
+    # (3.9 vs 9.4 on FLEURS, GigaAM's own figures). See pipeline/stt_gigaam.py.
+    gigaam_enabled: bool = True
+    gigaam_model: str = "ai-sage/GigaAM-Multilingual"
+    gigaam_revision: str = "large_ctc"   # ctc = 220M, large_ctc = 600M
+    # Which source languages it handles. Comma-separated so a deployment can
+    # widen or narrow it without a code change.
+    gigaam_languages: str = "uz,kk,ky,ru"
+
     # ── VAD · silero-vad ──────────────────────────────────────────────────
     # Gates ASR to real speech regions so Whisper doesn't hallucinate text on
     # music/silence (and so "no speech" is reported honestly, not faked).
