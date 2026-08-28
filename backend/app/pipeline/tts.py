@@ -41,9 +41,18 @@ MIN_FITTED_SLOT = 0.35  # seconds
 # default is to pass the code straight through. This table holds the
 # exceptions plus the three primary targets, spelled out deliberately:
 OMNIVOICE_LANG: dict[str, str] = {
-    "uz": "uz",    # Uzbek — NLLB emits uzn_Latn (Northern Uzbek, Latin).
-                   # "uzn" is also in OmniVoice's table if you want to pin the
-                   # narrower variant; "uz" is the generic and is what we send.
+    "uz": "uzn",   # Uzbek — the NARROW variant: Northern Uzbek, Latin script,
+                   # which is what NLLB emits (uzn_Latn). The generic "uz" is
+                   # also in OmniVoice's table and was used until listening
+                   # comparison preferred "uzn". Noting the disagreement, since
+                   # it is the sort of thing someone will re-measure: an ASR
+                   # round-trip over identical text scored "uz" better (CER
+                   # 0.258 vs 0.294 with whisper-small forced to Uzbek). That
+                   # proxy is weak here — a native Uzbek voice speaking the
+                   # same text only reached 0.228, so the measurement floor
+                   # sits near the differences being compared — and a human
+                   # listening to the audio is the better judge of how a voice
+                   # pronounces a language.
     "ru": "ru",    # Russian — Cyrillic, matches NLLB's rus_Cyrl output.
     "en": "en",    # English.
     "ar": "arb",   # EXCEPTION: OmniVoice has no generic "ar", only variants
