@@ -22,7 +22,7 @@ from pathlib import Path
 
 from ..config import get_settings
 from ..schemas import Segment
-from . import media
+from . import media, timeline
 
 SAMPLE_RATE = 24_000  # OmniVoice output sample rate
 
@@ -129,43 +129,55 @@ class OmniVoiceTTS:
         ref = str(ref_audio) if clone else None
         language = resolve_language(target_lang)
 
-        total = total_duration or (segments[-1].end if segments else 1.0)
-        buf = np.zeros(int(total * SAMPLE_RATE) + SAMPLE_RATE, dtype=np.float32)
-
+        lines: list[tuple[Segment, str]] = []
         for seg in segments:
             text = (seg.target_text or seg.source_text or "").strip()
-            if not text:
-                continue
-            # Fit the clip to its source slot so dubbed segments don't overrun
-            # into the next one. OmniVoice targets the duration during
-            # generation, which beats synthesising then time-stretching with
-            # ffmpeg (what the edge-tts path has to do).
-            #
-            # Measured: it's a SOFT target. Asking it to compress is accurate
-            # (3.0 s requested -> 3.11 s), but it will not pad to fill a longer
-            # slot (5.0 s requested -> 4.53 s). That asymmetry suits dubbing:
-            # overruns are what break timing, and undershooting just leaves a
-            # short gap. Very short slots keep the model's own estimate rather
-            # than forcing a rush.
-            slot = seg.end - seg.start
+            if text:
+                lines.append((seg, text))
+        total = total_duration or (segments[-1].end if segments else 1.0)
+
+        # Each clip gets a budget from `timeline`, exactly as the edge-tts path
+        # does, and is placed against a cursor so it cannot land on top of the
+        # line after it. Generation is sequential here, so the budget is
+        # computed one line at a time rather than planned up front.
+        #
+        # The duration argument is a SOFT target — measured, asking OmniVoice to
+        # compress is accurate (3.0 s requested -> 3.11 s) but it will not pad to
+        # fill a longer slot (5.0 s -> 4.53 s). Undershooting only leaves a short
+        # gap; overrunning is what used to put two dubbed voices in the same
+        # samples, so `cut_to` bounds it whatever the model returns.
+        placements: list[tuple[int, "np.ndarray"]] = []
+        cursor = 0.0
+        for i, (seg, text) in enumerate(lines):
+            due_next = (lines[i + 1][0].start if i + 1 < len(lines)
+                        else max(total, seg.end))
+            at, target, limit = timeline.slot_budget(
+                max(0.0, seg.start), seg.end, due_next, cursor)
             kwargs: dict = {"text": text}
             if language:
                 kwargs["language"] = language
-            if slot >= MIN_FITTED_SLOT:
-                kwargs["duration"] = slot
+            # Very short slots keep the model's own estimate rather than being
+            # forced into a rush.
+            if target >= MIN_FITTED_SLOT:
+                kwargs["duration"] = target
             if ref:
                 kwargs["ref_audio"] = ref
                 kwargs["ref_text"] = ref_text or ""
             out = model.generate(**kwargs)
             clip = np.asarray(out[0], dtype=np.float32).reshape(-1)
-            start = int(max(0.0, seg.start) * SAMPLE_RATE)
-            end = start + clip.shape[0]
-            if end > buf.shape[0]:
-                buf = np.pad(buf, (0, end - buf.shape[0]))
-            buf[start:end] += clip
+            clip = timeline.cut_to(clip, int(limit * SAMPLE_RATE), SAMPLE_RATE)
+            if not clip.shape[0]:
+                continue
+            placements.append((int(at * SAMPLE_RATE), clip))
+            cursor = at + clip.shape[0] / SAMPLE_RATE
 
+        end = max((s + len(c) for s, c in placements),
+                  default=int(total * SAMPLE_RATE))
+        buf = np.zeros(max(end, int(total * SAMPLE_RATE)) + SAMPLE_RATE,
+                       dtype=np.float32)
+        timeline.write_without_overlap(buf, placements)
         peak = float(np.max(np.abs(buf))) if buf.size else 0.0
-        if peak > 1.0:                      # prevent clipping from overlaps
+        if peak > 1.0:
             buf = buf / peak
         sf.write(str(out_audio), buf, SAMPLE_RATE)
         return Path(out_audio).exists()

@@ -82,14 +82,14 @@ class Settings(BaseSettings):
     # media.mix_voice_over_background).
     background_gain: float = 0.25
 
-    # How much quieter the no_vocals stem must be than the vocals stem before
-    # we conclude there is no real music bed and go voice-only. Guards against
-    # mixing separation residue — i.e. the source language — back under the
-    # dub. Measured on a real speech-only clip the gap was 11.3 dB; a genuine
-    # music bed sits at or above the vocals level, so 8 dB separates the two
-    # cases with margin. Raise it to keep more background, lower it to be
+    # How much louder the no_vocals stem may get while the original speaker is
+    # talking before we conclude it is carrying the source dialogue rather than
+    # a music bed, and go voice-only. See separation.speech_lift_db: a real M&E
+    # bed is indifferent to the speech and measures around 0 dB, while a stem
+    # holding the speaker measured +26.4 dB on a real job. 6 dB sits in the wide
+    # gap between those. Raise it to keep more background, lower it to be
     # stricter about source-language bleed.
-    background_min_lead_db: float = 8.0
+    background_max_speech_lift_db: float = 6.0
     voice_gain: float = 1.25             # dubbed voice level
 
     # ── NMT · NLLB-200 ────────────────────────────────────────────────────

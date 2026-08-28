@@ -24,7 +24,7 @@ from .separation import DemucsSeparator
 from .stt import WhisperSTT
 from .sync import Synchronizer
 from .tts import OmniVoiceTTS
-from .tts_edge import EdgeTTS
+from .tts_edge import EdgeTTS, TTSOutcome
 from .voice_clone import OpenVoiceCloner
 
 EmitFn = Callable[..., Awaitable[None]]
@@ -79,7 +79,9 @@ class Orchestrator:
                  detail="Optional · enabled per job"),
             dict(key=self.sync.key, label=self.sync.label, engine=self.sync.engine,
                  mode=self.sync.mode(),
-                 detail="Time-align + mux to container"),
+                 detail=("Time-align + mux to container"
+                         if self.sync.available()
+                         else "Unavailable — ffmpeg is required to write a dub")),
         ]
 
     def is_simulated(self, options: DubOptions) -> bool:
@@ -141,7 +143,12 @@ class Orchestrator:
                 used_real = True
                 try:
                     wav = s.uploads_dir / f"{job.id}.wav"
-                    await asyncio.to_thread(media.extract_audio, input_video, wav)
+                    if not await asyncio.to_thread(media.extract_audio,
+                                                   input_video, wav):
+                        # Distinct from a silent video: there is nothing to
+                        # transcribe, so reporting "no speech detected" would be
+                        # a guess. ffmpeg's own reason is in the log.
+                        raise RuntimeError("could not extract audio from the video")
                     wmodel = QUALITY_WHISPER.get(options.quality, "small")
                     segments, detected, vad_detail = await self._heartbeat(
                         job, "asr", emit,
@@ -216,6 +223,7 @@ class Orchestrator:
         tts_engine = "simulation"
         voice_cloned = False
         measured_similarity: float | None = None
+        voiced: TTSOutcome | None = None
         async with _stage(job, "tts", emit) as st:
             done = False
             want_clone = options.voice_clone and not force_simulate
@@ -238,10 +246,13 @@ class Orchestrator:
                     and self.edge.available()
                     and self.edge.supports(options.target_lang)):
                 try:
-                    ok = await self._heartbeat(job, "tts", emit,
+                    voiced = await self._heartbeat(job, "tts", emit,
                         lambda: self.edge.synthesize(segments, options.target_lang,
                                                      dubbed_audio, duration))
-                    if ok:
+                    # `ok` is false only when nothing at all was voiced. A dub
+                    # missing some lines is kept and reported; it used to be
+                    # discarded for the placeholder tone below.
+                    if voiced.ok:
                         tts_engine, used_real, done = "edge-tts", True, True
                         # 2b) OpenVoice — clone the source speaker's timbre onto
                         # the generic edge-tts voice (real voice cloning here).
@@ -268,6 +279,21 @@ class Orchestrator:
                             st.message = ("neural voice (cloning off in Fast mode)"
                                           if options.quality == "fast"
                                           else "neural voice (cloning unavailable)")
+                        # Missing lines outrank whatever the clone had to say:
+                        # it is the one thing here the viewer will actually
+                        # notice in the finished video.
+                        if voiced.voiced < voiced.total:
+                            gap = (f"{voiced.total - voiced.voiced} of "
+                                   f"{voiced.total} lines could not be "
+                                   f"synthesized — the rest was dubbed")
+                            st.message = (f"{gap}; {st.message}"
+                                          if st.message not in ("", "Working…")
+                                          else gap)
+                        log.info(
+                            "[%s] tts: voiced %s/%s chunks (network lost %s, "
+                            "fit lost %s)", job.id, voiced.voiced, voiced.total,
+                            voiced.lost_network, voiced.lost_fit,
+                        )
                 except Exception as exc:
                     st.message = f"edge-tts error ({str(exc)[:45]})"
             # 3) placeholder tone
@@ -277,7 +303,9 @@ class Orchestrator:
                                         dubbed_audio, options.voice_clone)
             st.detail = {"engine": tts_engine, "voice_clone": voice_cloned,
                          "engine_mode": "real" if tts_engine != "simulation"
-                         else "simulation"}
+                         else "simulation",
+                         **({"voiced": voiced.voiced, "lines": voiced.total}
+                            if voiced is not None else {})}
 
         job.simulated = not used_real
 
@@ -301,15 +329,37 @@ class Orchestrator:
             async with _stage(job, "separation", emit) as st:
                 orig_hq = s.uploads_dir / f"{job.id}_orig.wav"
                 sep_dir = s.outputs_dir / f"{job.id}_sep"
-                await asyncio.to_thread(media.extract_audio_hq, input_video, orig_hq)
                 sep_device = self.sep.resolve_device()
-                try:
-                    background = await self._heartbeat(
-                        job, "separation", emit,
-                        lambda: self.sep.separate_background(orig_hq, sep_dir,
-                                                             sep_device))
-                except Exception as exc:
-                    st.message = f"separation failed ({str(exc)[:50]}) — voice only"
+                if not await asyncio.to_thread(media.extract_audio_hq,
+                                               input_video, orig_hq):
+                    # Without this, Demucs was handed a path that does not
+                    # exist and failed for a reason that read like a model
+                    # problem.
+                    st.message = "could not extract audio to separate — voice only"
+                    log.warning("[%s] separation: audio extraction failed — "
+                                "voice only", job.id)
+                else:
+                    if sep_device == "cuda":
+                        # Demucs runs in its own process and cannot share the
+                        # GPU with the models this one is holding — on a 6 GB
+                        # box that is an OOM. Freeing them is what the CUDA
+                        # path always documented and never did. ASR and NMT are
+                        # finished by now, so this costs the next job a reload,
+                        # which _rewarm_models covers off the request path.
+                        log.info("[%s] separation: freeing STT+NMT for a CUDA "
+                                 "Demucs run", job.id)
+                        await asyncio.to_thread(self.stt.unload)
+                        await asyncio.to_thread(self.nmt.unload)
+                    try:
+                        background = await self._heartbeat(
+                            job, "separation", emit,
+                            lambda: self.sep.separate_background(orig_hq, sep_dir,
+                                                                 sep_device))
+                    except Exception as exc:
+                        st.message = f"separation failed ({str(exc)[:50]}) — voice only"
+                    finally:
+                        if sep_device == "cuda":
+                            _rewarm_models(self)
                 log.info("[%s] separation done: background_stem=%s device=%s",
                          job.id, background if background else "NONE (voice-only)",
                          sep_device)
@@ -340,6 +390,12 @@ class Orchestrator:
             await emit(job)
 
         # 6 ── Sync & Mux --------------------------------------------------
+        # Fill in what is already known before the mux, so a job that fails here
+        # still shows its source and its transcript. `output_url` stays unset
+        # until there is genuinely a dubbed file to point it at.
+        job.result.duration = duration
+        job.result.source_url = _source_url(input_video)
+
         out_video = s.outputs_dir / f"{job.id}.mp4"
         async with _stage(job, "sync", emit) as st:
             await _beat(0.5)
@@ -358,18 +414,20 @@ class Orchestrator:
                 job.id, "present" if background is not None else "none", mixed,
                 final_audio.name, s.voice_gain, s.background_gain,
             )
+            st.detail = {"muxed": False, "background_kept": mixed}
+            # Raises MuxFailed if the dub cannot be written. That propagates:
+            # the stage is marked failed with the reason, the job fails, and
+            # `output_url` below is never reached. There is deliberately nothing
+            # to catch it with — the fallback this replaced returned the source
+            # video, original soundtrack and all, as the finished dub.
             await asyncio.to_thread(self.sync.run, working_video,
                                     final_audio, out_video)
-            log.info("[%s] mux: out=%s exists=%s", job.id, out_video.name,
-                     out_video.exists())
-            st.detail = {"muxed": out_video.exists(),
-                         "background_kept": mixed}
+            log.info("[%s] mux: out=%s", job.id, out_video.name)
+            st.detail = {**st.detail, "muxed": True}
 
         # ── finalise ------------------------------------------------------
         elapsed = time.perf_counter() - started
-        job.result.duration = duration
         job.result.output_url = f"/media/outputs/{out_video.name}"
-        job.result.source_url = _source_url(input_video)
         length_ratio = self.nmt.length_ratio(segments)
         job.result.metrics = metrics.simulated_metrics(
             job.id, options, elapsed, duration, length_ratio,
@@ -457,7 +515,12 @@ def _source_url(input_video: Path) -> str:
 
 def _rewarm_models(orch) -> None:
     """Reload STT + NMT to the GPU in a background thread after a CUDA Demucs
-    run freed them, so the next job doesn't pay the cold-load cost inline."""
+    run freed them, so the next job doesn't pay the cold-load cost inline.
+
+    Called from the separation stage when it ran on CUDA. Failures are
+    swallowed on purpose: this is a warm-up, and `_load()` will simply do the
+    work inline on the next job if it did not happen here.
+    """
     import threading
 
     def warm() -> None:
