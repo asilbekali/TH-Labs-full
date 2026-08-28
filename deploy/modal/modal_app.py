@@ -337,3 +337,106 @@ def preflight() -> dict:
     for k, v in out.items():
         print(f"{k}: {v}")
     return out
+
+
+@app.function(image=image, gpu="L4", timeout=1800, memory=16384)
+def smoke() -> dict:
+    """Run one real dub end to end, inside the deployed image.
+
+        modal run deploy/modal/modal_app.py::smoke
+
+    `preflight` checks that the environment is sane; this checks that the
+    *pipeline* is. It builds a clip with real English speech (edge-tts, so no
+    asset is needed), then drives the orchestrator exactly as a job would:
+    Whisper -> NLLB -> OmniVoice -> Demucs -> mix -> mux, with separation on
+    CUDA and background preservation on, which is the configuration this image
+    actually ships.
+
+    Everything it reports is something that has silently gone wrong before: a
+    dub replaced by a placeholder tone, a background stem carrying the source
+    language, a mux that handed back the original soundtrack. Stage detail and
+    the muxed stream count are printed rather than asserted, because what counts
+    as healthy depends on the clip.
+    """
+    import asyncio
+    import json
+    import logging
+    import subprocess
+    import time
+    from pathlib import Path
+
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s | %(message)s")
+
+    from app.config import get_settings
+    from app.jobs import _STAGE_DEFS, _initial_status
+    from app.pipeline import media
+    from app.pipeline.orchestrator import Orchestrator
+    from app.schemas import DubOptions, Job, JobResult, StageState
+
+    s = get_settings()
+    work = Path("/tmp/smoke")
+    work.mkdir(parents=True, exist_ok=True)
+
+    # 1) a clip with real speech for Whisper to transcribe
+    import edge_tts
+    say = ("Good morning everyone. Today we will explore how neural networks "
+           "learn from data. A neural network is built from layers of connected "
+           "units called neurons. Each connection carries a weight that the "
+           "model adjusts while it trains.")
+    mp3 = work / "speech.mp3"
+    asyncio.run(edge_tts.Communicate(say, "en-US-AriaNeural").save(str(mp3)))
+    src_video = work / "source.mp4"
+    dur = media.probe_duration(mp3) or 20.0
+    subprocess.run(
+        ["ffmpeg", "-y", "-v", "error",
+         "-f", "lavfi", "-i", f"testsrc=size=640x360:rate=25:duration={dur:.2f}",
+         "-i", str(mp3), "-c:v", "libx264", "-pix_fmt", "yuv420p",
+         "-c:a", "aac", "-shortest", str(src_video)],
+        check=True,
+    )
+    print(f"smoke: built a {dur:.1f}s clip with real speech")
+
+    # 2) drive the pipeline as a job would
+    opts = DubOptions(source_lang="en", target_lang="ru", voice_clone=True,
+                      lip_sync=False, keep_background=True, quality="balanced")
+    job = Job(id="smoke0000001", owner_id=0, options=opts,
+              filename="source.mp4", simulated=True,
+              stages=[StageState(key=k, label=l, status=_initial_status(k, opts))
+                      for k, l in _STAGE_DEFS],
+              result=JobResult(), created_at=time.time(), updated_at=time.time())
+
+    async def emit(_j, final=False):
+        return None
+
+    started = time.perf_counter()
+    error = None
+    try:
+        asyncio.run(Orchestrator().run(job, src_video, "lecture", emit,
+                                       force_simulate=False))
+    except Exception as exc:
+        error = f"{type(exc).__name__}: {exc}"
+    elapsed = time.perf_counter() - started
+
+    out_video = s.outputs_dir / f"{job.id}.mp4"
+    result = {
+        "elapsed_seconds": round(elapsed, 1),
+        "error": error,
+        "simulated": job.simulated,
+        "detected_lang": job.result.detected_source_lang,
+        "segments": len(job.result.segments),
+        "output_written": out_video.exists(),
+        "output_audio_streams": media.count_audio_streams(out_video),
+        "output_url": job.result.output_url,
+        "stages": [
+            {"key": st.key, "status": st.status.value,
+             "message": st.message, "detail": st.detail}
+            for st in job.stages
+        ],
+        "transcript": [
+            {"start": sg.start, "end": sg.end,
+             "src": sg.source_text[:70], "tgt": (sg.target_text or "")[:70]}
+            for sg in job.result.segments[:4]
+        ],
+    }
+    print(json.dumps(result, indent=2, ensure_ascii=False))
+    return result

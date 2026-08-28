@@ -363,9 +363,15 @@ class Orchestrator:
                 log.info("[%s] separation done: background_stem=%s device=%s",
                          job.id, background if background else "NONE (voice-only)",
                          sep_device)
+                # "real" describes whether Demucs ran, not whether its output
+                # was kept. Dropping a stem that carries the source dialogue is
+                # a real separation doing its job — reporting it as
+                # "simulation" told the UI the stage had been faked, which the
+                # speech-correlated guard now makes the common case on
+                # speech-only sources. kept_background carries the verdict.
                 st.detail = {"kept_background": bool(background),
                              "device": sep_device,
-                             "engine_mode": "real" if background else "simulation"}
+                             "engine_mode": "real"}
         else:
             _skip(job, "separation")
             await emit(job)
