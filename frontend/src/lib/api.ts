@@ -57,6 +57,11 @@ export interface CreateJobInput {
   target_lang: string
   source_lang?: string
   voice_clone?: boolean
+  /** How the dub should sound: the speaker's voice, a native voice, or the
+   *  speaker's timbre on native speech. Omit to let voice_clone decide. */
+  voice_mode?: 'speaker' | 'native' | 'both'
+  /** A clip of the voice to dub in, instead of the speaker from the video. */
+  reference?: File | null
   lip_sync?: boolean
   keep_background?: boolean
   quality?: string
@@ -80,6 +85,11 @@ export async function createJob(input: CreateJobInput): Promise<Job> {
   fd.append('target_lang', input.target_lang)
   fd.append('source_lang', input.source_lang ?? 'auto')
   fd.append('voice_clone', String(input.voice_clone ?? true))
+  // Three-way voice choice. voice_clone is still sent so an older backend
+  // keeps working; a newer one prefers voice_mode when it is present.
+  if (input.voice_mode) fd.append('voice_mode', input.voice_mode)
+  // An optional voice to dub in, instead of the speaker from the video.
+  if (input.reference) fd.append('reference', input.reference)
   fd.append('lip_sync', String(input.lip_sync ?? false))
   fd.append('keep_background', String(input.keep_background ?? true))
   fd.append('quality', input.quality ?? 'balanced')

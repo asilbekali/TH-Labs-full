@@ -7,6 +7,8 @@ import LanguageSelect from "../components/LanguageSelect";
 import OptionToggle from "../components/OptionToggle";
 import StageTimeline from "../components/StageTimeline";
 import VideoCompare from "../components/VideoCompare";
+import VoiceChoice from "../components/VoiceChoice";
+import type { VoiceMode } from "../components/VoiceChoice";
 import SegmentTable from "../components/SegmentTable";
 import ResultMetrics from "../components/ResultMetrics";
 import AnimatedNumber from "../components/AnimatedNumber";
@@ -72,7 +74,17 @@ export default function Studio() {
   const [sourceLang, setSourceLang] = useState("auto");
   // Turkic-first product, so the default target is Uzbek rather than Spanish.
   const [targetLang, setTargetLang] = useState("uz");
-  const [voiceClone, setVoiceClone] = useState(true);
+  // "both" is the default because it is right for the common case: a dub into
+  // a language the speaker does not speak. Cloning them outright carries their
+  // accent across, which surprised users who had only ever been offered an
+  // on/off switch.
+  const [voiceMode, setVoiceMode] = useState<VoiceMode>("both");
+  const [reference, setReference] = useState<File | null>(null);
+  // Derived, for the parts that still speak in terms of cloning: the library
+  // record, the Home launchpad presets, and older backends.
+  const voiceClone = voiceMode !== "native";
+  const setVoiceClone = (on: boolean) =>
+    setVoiceMode(on ? "both" : "native");
   const [lipSync, setLipSync] = useState(false);
   const [keepBackground, setKeepBackground] = useState(true);
   const [quality, setQuality] = useState("balanced");
@@ -221,6 +233,8 @@ export default function Studio() {
         target_lang: targetLang,
         source_lang: sourceLang,
         voice_clone: voiceClone,
+        voice_mode: voiceMode,
+        reference,
         lip_sync: lipSync,
         keep_background: keepBackground,
         quality,
@@ -471,16 +485,17 @@ export default function Studio() {
         )}
       </div>
 
-      {/* 03 Options */}
+      {/* 03 Voice */}
+      <VoiceChoice
+        mode={voiceMode}
+        onMode={setVoiceMode}
+        reference={reference}
+        onReference={setReference}
+      />
+
+      {/* 04 Options */}
       <div className="card space-y-2.5 p-5">
-        <GroupLabel n="03" title="Options" />
-        <OptionToggle
-          checked={voiceClone}
-          onChange={setVoiceClone}
-          title="Voice cloning"
-          description="Preserve the original speaker's voice instead of a generic narrator."
-          icon={<path d="M3 12h3l2-6 3 15 3-12 2 5h4" />}
-        />
+        <GroupLabel n="04" title="Options" />
         <OptionToggle
           checked={keepBackground}
           onChange={setKeepBackground}
@@ -502,7 +517,7 @@ export default function Studio() {
 
       {/* 04 Quality */}
       <div className="card space-y-3 p-5">
-        <GroupLabel n="04" title="Quality" />
+        <GroupLabel n="05" title="Quality" />
         <div className="flex rounded-control border border-subtle bg-sunken p-1">
           {QUALITIES.map((q) => (
             <button
