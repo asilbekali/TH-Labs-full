@@ -86,6 +86,11 @@ export default function Studio() {
   const setVoiceClone = (on: boolean) =>
     setVoiceMode(on ? "both" : "native");
   const [lipSync, setLipSync] = useState(false);
+  // /health reports each stage's resolved mode. Offering a switch the pipeline
+  // will only skip is worse than showing the capability as unavailable — the
+  // stage used to accept it, pause, copy the video through, and report done.
+  const lipSyncReady =
+    health?.stages.some((s) => s.key === "lipsync" && s.mode === "real") ?? false;
   const [keepBackground, setKeepBackground] = useState(true);
   const [quality, setQuality] = useState("balanced");
 
@@ -506,11 +511,16 @@ export default function Studio() {
           }
         />
         <OptionToggle
-          checked={lipSync}
+          checked={lipSyncReady && lipSync}
+          disabled={!lipSyncReady}
           onChange={setLipSync}
           accent="cyan"
           title="Lip sync (optional)"
-          description="Reshape the speaker's mouth to match the translated speech (Wav2Lip)."
+          description={
+            lipSyncReady
+              ? "Reshape the speaker's mouth to match the translated speech."
+              : "Not available on this deployment — dubs run without it."
+          }
           icon={<path d="M3 12c3-3 15-3 18 0-3 4-15 4-18 0zM7 12h10" />}
         />
       </div>

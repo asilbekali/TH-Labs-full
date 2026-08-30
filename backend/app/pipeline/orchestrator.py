@@ -93,11 +93,12 @@ class Orchestrator:
         ]
 
     def is_simulated(self, options: DubOptions) -> bool:
-        real = (self.stt.mode() == "real" and self.nmt.mode() == "real"
-                and self._tts_available())
-        if options.lip_sync:
-            real = real and self.lip.mode() == "real"
-        return not real
+        # Lip sync deliberately excluded. It is an optional extra on top of a
+        # dub, and when it is unavailable the stage now says so itself — while
+        # marking the whole job "simulation" implied the transcript, the
+        # translation and the voice were fake too, when all three were real.
+        return not (self.stt.mode() == "real" and self.nmt.mode() == "real"
+                    and self._tts_available())
 
     async def _speaker_ref(self, job: Job, segments: list[Segment],
                            custom: Path | None, want_text: bool):
@@ -544,19 +545,30 @@ class Orchestrator:
 
         # 5 ── Lip Sync (optional) ----------------------------------------
         working_video = input_video
-        if options.lip_sync:
+        if options.lip_sync and self.lip.mode() != "real":
+            # Asked for, not available. This used to pause for a second and
+            # copy the video through, then report `enabled: True` — so the
+            # stage showed as done, the toggle appeared to work, and the output
+            # was byte-identical to leaving it off. Say plainly that it did not
+            # run; a dub is still delivered, just without reshaped mouths.
+            st = _find_stage(job, "lipsync")
+            st.status = StageStatus.skipped
+            st.progress = 1.0
+            st.message = "Not available on this deployment — dubbed without it"
+            st.detail = {"enabled": False, "reason": "engine not configured"}
+            log.warning("[%s] lipsync requested but Wav2Lip is not configured "
+                        "— skipping", job.id)
+            await emit(job)
+        elif options.lip_sync:
             lip_out = s.outputs_dir / f"{job.id}_lip.mp4"
             async with _stage(job, "lipsync", emit) as st:
-                if self.lip.mode() == "real":
-                    ok = await asyncio.to_thread(
-                        self.lip.run, input_video, dubbed_audio, lip_out)
-                else:
-                    await _beat(1.0)
-                    ok = await asyncio.to_thread(
-                        self.lip.simulate, input_video, lip_out)
+                ok = await asyncio.to_thread(
+                    self.lip.run, input_video, dubbed_audio, lip_out)
                 if ok:
                     working_video = lip_out
-                st.detail = {"enabled": True}
+                else:
+                    st.message = "Lip sync failed — dubbed without it"
+                st.detail = {"enabled": bool(ok)}
         else:
             _skip(job, "lipsync")
             await emit(job)

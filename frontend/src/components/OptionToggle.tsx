@@ -9,6 +9,7 @@ export default function OptionToggle({
   description,
   icon,
   accent = 'brand',
+  disabled = false,
 }: {
   checked: boolean
   onChange: (v: boolean) => void
@@ -16,6 +17,10 @@ export default function OptionToggle({
   description: string
   icon?: ReactNode
   accent?: 'brand' | 'cyan'
+  /** The feature is not available on this deployment. Shown, but not offered:
+   *  hiding it entirely would make the capability invisible, while leaving it
+   *  switchable promises something the pipeline cannot deliver. */
+  disabled?: boolean
 }) {
   // A monotonically-increasing key so each toggle re-mounts (and replays) the
   // brand-tinted ripple that blooms from the knob.
@@ -28,11 +33,15 @@ export default function OptionToggle({
       type="button"
       role="switch"
       aria-checked={checked}
+      aria-disabled={disabled}
+      disabled={disabled}
       onClick={() => {
         onChange(!checked)
         setRipple((r) => r + 1)
       }}
       className={`focusable flex w-full items-start gap-3 rounded-2xl border p-4 text-left transition-colors ${
+        disabled ? 'cursor-not-allowed opacity-45 ' : ''
+      }${
         checked
           ? isCyan
             ? 'border-cyan/40 bg-cyan/[0.06]'
