@@ -41,6 +41,10 @@ class JobManager:
         # serialised straight to the browser and a server filesystem path is
         # not the client's business. Re-voicing an edited transcript needs it.
         self._sources: dict[str, Path] = {}
+        # An uploaded voice to dub in, when the user supplied one instead of
+        # using the speaker from the video. Kept here for the same reason as
+        # the source path: it is a server file, not the client's business.
+        self._references: dict[str, Path | None] = {}
         self._subs: dict[str, list[asyncio.Queue]] = {}
         self._orch = Orchestrator()
         # Jobs execute one at a time through a single worker. The shared
@@ -59,6 +63,10 @@ class JobManager:
         return self._jobs.get(job_id)
 
     # ── creation ──────────────────────────────────────────────────────────
+    def reference_audio(self, job_id: str) -> Path | None:
+        """The voice the user supplied for this job, if any."""
+        return self._references.get(job_id)
+
     def source_video(self, job_id: str) -> Path | None:
         """The video a job was run on, if it is still known."""
         return self._sources.get(job_id)
@@ -67,7 +75,8 @@ class JobManager:
                scenario: str, filename: str | None,
                owner_id: int | None = None,
                force_simulate: bool = False,
-               preset_segments: list[Segment] | None = None) -> Job:
+               preset_segments: list[Segment] | None = None,
+               reference_audio: Path | None = None) -> Job:
         job_id = uuid.uuid4().hex[:12]
         now = time.time()
         stages = [
@@ -85,8 +94,10 @@ class JobManager:
         self._subs[job_id] = []
         # enqueue for the single serial worker (started lazily on the loop)
         self._ensure_worker()
+        self._references[job_id] = reference_audio
         self._pending.put_nowait(
-            (job, input_video, scenario, force_simulate, preset_segments))
+            (job, input_video, scenario, force_simulate, preset_segments,
+             reference_audio))
         return job
 
     # ── serial worker ─────────────────────────────────────────────────────
@@ -99,11 +110,11 @@ class JobManager:
     async def _worker_loop(self) -> None:
         assert self._pending is not None
         while True:
-            (job, input_video, scenario, force_simulate,
-             preset_segments) = await self._pending.get()
+            (job, input_video, scenario, force_simulate, preset_segments,
+             reference_audio) = await self._pending.get()
             try:
                 await self._run(job, input_video, scenario, force_simulate,
-                                preset_segments)
+                                preset_segments, reference_audio)
             except Exception:  # pragma: no cover - defensive; keep worker alive
                 pass
             finally:
@@ -112,13 +123,15 @@ class JobManager:
     # ── runner ────────────────────────────────────────────────────────────
     async def _run(self, job: Job, input_video: Path, scenario: str,
                    force_simulate: bool = False,
-                   preset_segments: list[Segment] | None = None) -> None:
+                   preset_segments: list[Segment] | None = None,
+                   reference_audio: Path | None = None) -> None:
         job.status = JobStatus.running
         await self._emit(job)
         try:
             await self._orch.run(job, input_video, scenario, self._emit,
                                  force_simulate=force_simulate,
-                                 preset_segments=preset_segments)
+                                 preset_segments=preset_segments,
+                                 reference_audio=reference_audio)
             job.status = JobStatus.completed
         except Exception as exc:  # pragma: no cover - defensive
             job.status = JobStatus.failed

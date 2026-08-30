@@ -99,6 +99,50 @@ class Orchestrator:
             real = real and self.lip.mode() == "real"
         return not real
 
+    async def _speaker_ref(self, job: Job, segments: list[Segment],
+                           custom: Path | None, want_text: bool):
+        """The voice to clone: an uploaded clip if given, else the source
+        speaker.
+
+        For an uploaded clip the transcript is produced by transcribing the
+        TRIMMED reference rather than anything supplied alongside it. That is
+        deliberate — OmniVoice speaks any reference text it is given that the
+        reference audio does not cover, in the source language, at the head of
+        every segment. Transcribing exactly what was trimmed makes the two
+        agree by construction, so that failure cannot come back through this
+        path.
+
+        `want_text` is False for the tone-colour converter, which needs only
+        audio; skipping transcription there saves an ASR pass per job.
+        """
+        if custom is None or not Path(custom).exists():
+            return await asyncio.to_thread(_build_speaker_ref, job.id, segments)
+
+        s = get_settings()
+        clip = s.uploads_dir / f"{job.id}_ref.wav"
+        ok = await asyncio.to_thread(media.trim_audio, Path(custom), clip,
+                                     s.omnivoice_ref_seconds)
+        if not ok:
+            log.warning("[%s] supplied reference could not be trimmed — "
+                        "falling back to the source speaker", job.id)
+            return await asyncio.to_thread(_build_speaker_ref, job.id, segments)
+        if not want_text:
+            log.info("[%s] voice reference: supplied clip, %.1fs", job.id,
+                     s.omnivoice_ref_seconds)
+            return clip, None
+        text = None
+        try:
+            heard, _lang, _d = await asyncio.to_thread(
+                self.stt.transcribe, clip, "auto", "base")
+            text = " ".join(x.source_text for x in heard).strip() or None
+        except Exception as exc:
+            log.warning("[%s] could not transcribe the supplied reference "
+                        "(%s) — letting the model transcribe it itself",
+                        job.id, type(exc).__name__)
+        log.info("[%s] voice reference: supplied clip, %s chars of matching "
+                 "transcript", job.id, len(text or ""))
+        return clip, text
+
     async def _heartbeat(self, job: Job, key: str, emit: EmitFn, fn,
                          interval: float = 4.0, ceiling: float = 0.92):
         """Run a blocking `fn()` in a worker thread while periodically nudging
@@ -118,7 +162,8 @@ class Orchestrator:
     # ── main run ──────────────────────────────────────────────────────────
     async def run(self, job: Job, input_video: Path, scenario: str,
                   emit: EmitFn, force_simulate: bool = False,
-                  preset_segments: list[Segment] | None = None) -> None:
+                  preset_segments: list[Segment] | None = None,
+                  reference_audio: Path | None = None) -> None:
         """Dub `input_video` into `job.options.target_lang`.
 
         `preset_segments` re-voices an existing transcript instead of producing
@@ -126,6 +171,10 @@ class Orchestrator:
         and translating again would only throw their edit away, so both stages
         are short-circuited and everything downstream — TTS, separation, mix,
         mux — runs exactly as it does for a first pass.
+
+        `reference_audio` is a voice to dub in, supplied by the user instead of
+        taken from the video. It replaces the speaker reference for whichever
+        cloning mode is selected.
         """
         s = get_settings()
         options = job.options
@@ -298,8 +347,27 @@ class Orchestrator:
             await _tick(job, "nmt", emit, segments_preview(segments))
 
         # 3 ── TTS ---------------------------------------------------------
-        # Engine chain: OmniVoice (clones the speaker) → edge-tts (real neural
-        # voice) → tone (placeholder). Whichever produces audio wins.
+        # Which engine runs is decided by what the user asked the dub to sound
+        # like, because the three answers need different engines:
+        #
+        #   "speaker"  OmniVoice, conditioned on a clip of the original. It
+        #              reproduces the voice — including how its owner
+        #              articulates — so a speaker dubbed out of their own
+        #              language carries their accent into the target one. That
+        #              is the cloning working, not failing: timbre and accent
+        #              are the same signal and no dial separates them.
+        #   "native"   edge-tts alone. A natural speaker of the target
+        #              language, and none of the original's identity.
+        #   "both"     edge-tts for the speech, then OpenVoice to transfer only
+        #              the tone colour onto it. The accent and prosody come
+        #              from the native voice, the timbre from the original, so
+        #              this is the one that sounds like the speaker saying it
+        #              properly. The likeness is looser than "speaker" —
+        #              a converter matches timbre, it does not resynthesize
+        #              the person.
+        #
+        # Each falls back down the chain when its engine is unavailable rather
+        # than failing the job, and the placeholder tone is the last resort.
         dubbed_audio = s.outputs_dir / f"{job.id}_audio.wav"
         tts_engine = "simulation"
         voice_cloned = False
@@ -307,12 +375,20 @@ class Orchestrator:
         voiced: TTSOutcome | None = None
         async with _stage(job, "tts", emit) as st:
             done = False
-            want_clone = options.voice_clone and not force_simulate
-            # 1) OmniVoice — voice cloning
-            if want_clone and self.tts.mode() == "real":
+            # voice_mode is authoritative; voice_clone is what older clients
+            # send, and maps onto the two modes that existed before.
+            mode = options.voice_mode or (
+                "speaker" if options.voice_clone else "native")
+            if force_simulate:
+                mode = "native"
+            want_clone = mode in ("speaker", "both")
+            log.info("[%s] tts: voice_mode=%s (voice_clone=%s)", job.id, mode,
+                     options.voice_clone)
+            # 1) OmniVoice — the speaker's own voice, accent included
+            if mode == "speaker" and self.tts.mode() == "real":
                 try:
-                    ref_audio, ref_text = await asyncio.to_thread(
-                        _build_speaker_ref, job.id, segments)
+                    ref_audio, ref_text = await self._speaker_ref(
+                        job, segments, reference_audio, want_text=True)
                     ok = await self._heartbeat(job, "tts", emit,
                         lambda: self.tts.synthesize(segments, ref_audio, ref_text,
                                                     True, dubbed_audio, duration,
@@ -338,11 +414,12 @@ class Orchestrator:
                         # 2b) OpenVoice — clone the source speaker's timbre onto
                         # the generic edge-tts voice (real voice cloning here).
                         # Skipped in Fast mode (CPU cloning is slow on long audio).
-                        if (want_clone and options.quality != "fast"
+                        if (mode == "both" and options.quality != "fast"
                                 and self.cloner.available()):
                             try:
-                                ref_audio, _ = await asyncio.to_thread(
-                                    _build_speaker_ref, job.id, segments)
+                                ref_audio, _ = await self._speaker_ref(
+                                    job, segments, reference_audio,
+                                    want_text=False)
                                 if ref_audio and Path(ref_audio).exists():
                                     cloned = s.outputs_dir / f"{job.id}_cloned.wav"
                                     sim = await self._heartbeat(job, "tts", emit,
@@ -356,10 +433,17 @@ class Orchestrator:
                                         st.message = f"cloned to source speaker · {sim}% match"
                             except Exception as exc:
                                 st.message = f"clone skipped ({str(exc)[:40]})"
-                        elif want_clone:
-                            st.message = ("neural voice (cloning off in Fast mode)"
+                        elif mode == "both":
+                            st.message = ("native voice (speaker match off in "
+                                          "Fast mode)"
                                           if options.quality == "fast"
-                                          else "neural voice (cloning unavailable)")
+                                          else "native voice (speaker match "
+                                               "unavailable)")
+                        elif mode == "speaker":
+                            # Wanted the speaker's own voice and could not have
+                            # it; say so rather than quietly shipping a
+                            # stranger's.
+                            st.message = "native voice (speaker cloning unavailable)"
                         # Missing lines outrank whatever the clone had to say:
                         # it is the one thing here the viewer will actually
                         # notice in the finished video.
@@ -382,7 +466,8 @@ class Orchestrator:
                 await _beat(0.7)
                 await asyncio.to_thread(self.tts.simulate, duration or 25.0,
                                         dubbed_audio, options.voice_clone)
-            st.detail = {"engine": tts_engine, "voice_clone": voice_cloned,
+            st.detail = {"engine": tts_engine, "voice_mode": mode,
+                         "voice_clone": voice_cloned,
                          "engine_mode": "real" if tts_engine != "simulation"
                          else "simulation",
                          **({"voiced": voiced.voiced, "lines": voiced.total}

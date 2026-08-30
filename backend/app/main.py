@@ -117,19 +117,24 @@ async def create_job(
     target_lang: str = Form(...),
     source_lang: str = Form("auto"),
     voice_clone: bool = Form(True),
+    voice_mode: str | None = Form(None),
     lip_sync: bool = Form(False),
     keep_background: bool = Form(True),
     quality: Quality = Form(Quality.balanced),
     sample: bool = Form(False),
     file: UploadFile | None = File(None),
+    reference: UploadFile | None = File(None),
     user: StudioUser = Depends(require_user),
 ) -> dict:
     if not languages.get(target_lang):
         raise HTTPException(400, f"Unsupported target language: {target_lang}")
 
+    if voice_mode not in (None, "", "speaker", "native", "both"):
+        raise HTTPException(400, f"Unknown voice mode: {voice_mode}")
     options = DubOptions(
         source_lang=source_lang, target_lang=target_lang,
-        voice_clone=voice_clone, lip_sync=lip_sync,
+        voice_clone=voice_clone, voice_mode=voice_mode or None,
+        lip_sync=lip_sync,
         keep_background=keep_background, quality=quality,
     )
 
@@ -165,8 +170,19 @@ async def create_job(
                 out.write(chunk)
         filename = file.filename
 
+    # An optional voice to dub in, instead of the speaker from the video.
+    # Any format ffmpeg reads; it is trimmed and transcribed at use.
+    reference_path: Path | None = None
+    if reference is not None and reference.filename:
+        suffix = Path(reference.filename).suffix or ".wav"
+        reference_path = settings.uploads_dir / f"ref_{_safe_id()}{suffix}"
+        with reference_path.open("wb") as out:
+            while chunk := await reference.read(_UPLOAD_CHUNK):
+                out.write(chunk)
+
     job = manager.create(options, input_video, scenario, filename,
-                         owner_id=user.id, force_simulate=force_simulate)
+                         owner_id=user.id, force_simulate=force_simulate,
+                         reference_audio=reference_path)
     return {"id": job.id, "job": job.model_dump(mode="json")}
 
 
@@ -242,7 +258,8 @@ async def revoice_job(
         raise HTTPException(400, "The edited translation is empty.")
 
     new_job = manager.create(job.options, source, "lecture", job.filename,
-                             owner_id=user.id, preset_segments=segments)
+                             owner_id=user.id, preset_segments=segments,
+                             reference_audio=manager.reference_audio(job_id))
     new_job.result.detected_source_lang = job.result.detected_source_lang
     return {"id": new_job.id, "job": new_job.model_dump(mode="json"),
             "edited_lines": changed}

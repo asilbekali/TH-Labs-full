@@ -160,6 +160,36 @@ def _download_models() -> None:
     step("demucs htdemucs", _demucs)
 
 
+# Where the OpenVoice converter lands in the image. Settings.openvoice_converter_dir
+# is pointed here by TH_LABS_OPENVOICE_CONVERTER_DIR below, rather than the
+# repo-relative default, because backend/models is excluded from the image.
+OPENVOICE_DIR = "/opt/openvoice/converter"
+
+
+def _download_openvoice() -> None:
+    """Fetch the OpenVoice v2 tone-colour converter (~131 MB).
+
+    Only the converter is needed. OpenVoice's own base speakers are not used:
+    edge-tts already provides a native voice per language, and this model's job
+    is purely to move timbre onto it.
+    """
+    import shutil
+    from pathlib import Path
+
+    from huggingface_hub import snapshot_download
+
+    try:
+        got = snapshot_download("myshell-ai/OpenVoiceV2",
+                                allow_patterns=["converter/*"])
+        dst = Path(OPENVOICE_DIR)
+        dst.mkdir(parents=True, exist_ok=True)
+        for name in ("checkpoint.pth", "config.json"):
+            shutil.copyfile(Path(got) / "converter" / name, dst / name)
+        print(f"  ok    OpenVoice v2 converter -> {dst}")
+    except Exception as exc:
+        print(f"  SKIP  OpenVoice converter -> {type(exc).__name__}: {exc}")
+
+
 def _download_gigaam() -> None:
     """Prefetch the GigaAM Multilingual checkpoints (ru/en/kk/ky/uz).
 
@@ -241,6 +271,34 @@ image = (
     # provides that namespace is pyannote.audio, so the error's own suggested
     # `pip install pyannote` does not fix it.
     .pip_install("hydra-core", "omegaconf", "pyannote.audio")
+    # OpenVoice v2's tone-colour converter, which is what makes the "both"
+    # voice mode possible: edge-tts speaks the target language natively and
+    # this transfers only the original speaker's timbre onto it, so the accent
+    # comes from the native voice and the identity from the speaker. Not on
+    # PyPI, hence the git URL (git is apt-installed above). Kept below the
+    # weights layer for the usual reason.
+    # --no-deps deliberately. Its setup pins numpy==1.22.0, librosa==0.9.1 and
+    # faster-whisper==0.9.0, none of which build on Python 3.12 and all of which
+    # would break the torch already installed here. What the converter actually
+    # imports is torch, numpy, soundfile, librosa and its own modules — every
+    # one already present. `wavmark`, its remaining import, is only reached when
+    # watermarking is on, and voice_clone.py turns that off.
+    # api.py imports openvoice.text at module level even though tone-colour
+    # conversion never uses it, so the text-cleaner chain has to be present.
+    # These are the ones actually on that import path; the package's other
+    # dependencies (faster-whisper, gradio, whisper-timestamped, langid) belong
+    # to se_extractor and the demo app, which this pipeline does not touch —
+    # confirmed by ToneColorConverter importing fine on a machine where those
+    # are absent.
+    .pip_install("inflect", "Unidecode", "eng-to-ipa", "cn2an", "jieba",
+                 "pypinyin")
+    .run_commands(
+        "python -m pip install --no-deps "
+        "git+https://github.com/myshell-ai/OpenVoice.git",
+        # Fail at build time, not on the first job that asks for this voice.
+        "python -c 'from openvoice.api import ToneColorConverter'",
+    )
+    .run_function(_download_openvoice)
     # GigaAM weights, baked in for the same reason as everything in
     # _download_models: a cold start should not spend minutes downloading. It is
     # a SEPARATE build step, below that function rather than inside it, because
@@ -256,7 +314,10 @@ image = (
         "TH_LABS_WHISPER_DEVICE": "cuda",
         "TH_LABS_OMNIVOICE_DEVICE": "cuda:0",  # voice cloning on GPU
         "TH_LABS_SEPARATION_DEVICE": "cuda",   # Demucs on GPU (24 GB fits it)
-        "TH_LABS_CLONE_DEVICE": "cuda",        # OpenVoice fallback, if present
+        "TH_LABS_CLONE_DEVICE": "cuda",        # OpenVoice tone-colour converter
+        # backend/models is excluded from the image, so point the converter at
+        # where _download_openvoice put it.
+        "TH_LABS_OPENVOICE_CONVERTER_DIR": OPENVOICE_DIR,
 
         # Translation repair provider. The endpoint and model name are ordinary
         # configuration and belong here; the KEY is not, and arrives separately
@@ -471,6 +532,12 @@ def smoke() -> dict:
                       for k, l in _STAGE_DEFS],
               result=JobResult(), created_at=time.time(), updated_at=time.time())
 
+    ref_path = None
+    if reference:
+        ref_path = work / f"reference{reference_suffix}"
+        ref_path.write_bytes(reference)
+        print(f"dub: using a supplied voice reference ({len(reference)/1e6:.1f} MB)")
+
     async def emit(_j, final=False):
         return None
 
@@ -478,7 +545,8 @@ def smoke() -> dict:
     error = None
     try:
         asyncio.run(Orchestrator().run(job, src_video, "lecture", emit,
-                                       force_simulate=False))
+                                       force_simulate=False,
+                                       reference_audio=ref_path))
     except Exception as exc:
         error = f"{type(exc).__name__}: {exc}"
     elapsed = time.perf_counter() - started
@@ -510,7 +578,9 @@ def smoke() -> dict:
 
 @app.function(image=image, gpu="L4", timeout=1800, memory=16384)
 def dub_bytes(video: bytes, target_lang: str = "uz", suffix: str = ".mp4",
-              source_lang: str = "auto") -> dict:
+              source_lang: str = "auto", voice_clone: bool = True,
+              voice_mode: str = "", reference: bytes | None = None,
+              reference_suffix: str = ".wav") -> dict:
     """Dub a caller-supplied clip and hand back the result for inspection.
 
         modal run deploy/modal/modal_app.py::dub --path clip.mp4 --target uz
@@ -541,13 +611,20 @@ def dub_bytes(video: bytes, target_lang: str = "uz", suffix: str = ".mp4",
     src_video.write_bytes(video)
 
     opts = DubOptions(source_lang=source_lang, target_lang=target_lang,
-                      voice_clone=True, lip_sync=False,
+                      voice_clone=voice_clone, voice_mode=voice_mode or None,
+                      lip_sync=False,
                       keep_background=True, quality="balanced")
     job = Job(id="dubcheck0001", owner_id=0, options=opts,
               filename=src_video.name, simulated=True,
               stages=[StageState(key=k, label=l, status=_initial_status(k, opts))
                       for k, l in _STAGE_DEFS],
               result=JobResult(), created_at=time.time(), updated_at=time.time())
+
+    ref_path = None
+    if reference:
+        ref_path = work / f"reference{reference_suffix}"
+        ref_path.write_bytes(reference)
+        print(f"dub: using a supplied voice reference ({len(reference)/1e6:.1f} MB)")
 
     async def emit(_j, final=False):
         return None
@@ -556,7 +633,8 @@ def dub_bytes(video: bytes, target_lang: str = "uz", suffix: str = ".mp4",
     error = None
     try:
         asyncio.run(Orchestrator().run(job, src_video, "lecture", emit,
-                                       force_simulate=False))
+                                       force_simulate=False,
+                                       reference_audio=ref_path))
     except Exception as exc:
         import traceback
         traceback.print_exc()
@@ -598,14 +676,18 @@ def dub_bytes(video: bytes, target_lang: str = "uz", suffix: str = ".mp4",
 
 @app.local_entrypoint()
 def dub(path: str, target: str = "uz", out: str = "dub_result",
-        source: str = "auto"):
+        source: str = "auto", clone: bool = True, mode: str = "",
+        reference: str = ""):
     """Send a local clip through dub_bytes and save what comes back."""
     import json
     from pathlib import Path
 
     data = Path(path).read_bytes()
     print(f"uploading {len(data) / 1e6:.1f} MB -> {target}")
-    res = dub_bytes.remote(data, target, Path(path).suffix or ".mp4", source)
+    ref_bytes = Path(reference).read_bytes() if reference else None
+    ref_suffix = Path(reference).suffix if reference else ".wav"
+    res = dub_bytes.remote(data, target, Path(path).suffix or ".mp4", source,
+                           clone, mode, ref_bytes, ref_suffix)
     wav = res.pop("dub_wav", None)
     Path(f"{out}.json").write_text(json.dumps(res, indent=2, ensure_ascii=False),
                                    encoding="utf-8")
