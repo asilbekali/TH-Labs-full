@@ -162,6 +162,27 @@ Tier, cycle and amount are always derived from the Stripe object, never the clie
 
 ---
 
+## Where the gate is enforced
+
+`can-dub` / `commit-dub` are called **twice**, and that is deliberate:
+
+| Caller | Why |
+|---|---|
+| The Studio (`frontend/src/pages/Studio.tsx`) | Fast feedback — refuses before uploading and shows the real cost in the library. |
+| The dubbing API (`backend/app/billing.py`) | The one that actually protects the GPU. A bearer token proves *who* is asking, not that they have paid; without this check anyone holding a valid access token can `POST /api/jobs` directly and dub for free. |
+
+`commit-dub` is idempotent on `jobId`, so both callers charging the same job is
+harmless — exactly one `CreditEntry` is written.
+
+Server-side enforcement turns on when the dubbing API has
+`TH_LABS_ACCOUNT_API_URL` set (to this API's base URL, including `/v1`). It is
+unset for local runs and docker-compose, which have no account API to ask, and
+set in `deploy/modal/modal_app.py`, where the GPU costs real money. When it is
+on, every failure path **denies** the dub: an unreachable billing API returns
+`503` rather than becoming a free GPU.
+
+---
+
 ## Credit integrity
 
 - `CreditEntry` is an append-only ledger; `User.credits` is a cached balance.

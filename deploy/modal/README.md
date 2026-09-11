@@ -53,6 +53,25 @@ Modal's **$30/month free credit** covers moderate use outright. Compare with an
 always-on GPU VM at ~$580/month for the same card — the bursty workload is why
 serverless is the right shape here.
 
+## Billing is enforced here, not just in the browser
+
+The Studio calls `/v1/payments/can-dub` before it starts a job — but that is a
+browser asking politely. Anyone holding a valid access token can `POST
+/api/jobs` on this deployment directly and skip it, which on an L4 is real
+money. So `modal_app.py` sets:
+
+```python
+"TH_LABS_ACCOUNT_API_URL": ACCOUNT_API_URL,   # https://th-labs.uz/v1
+```
+
+which turns on `backend/app/billing.py`: the same `can-dub` / `commit-dub`
+calls, made server-side with the caller's own token, where they cannot be
+skipped. `commit-dub` is idempotent on the job id, so the Studio still calling
+it never double-charges. Unset that variable and every dub runs unbilled.
+
+If the account API is unreachable the dub is **refused** (`503`) rather than
+run for free — see `api/PAYMENTS.md`.
+
 ## Design notes (why it's built this way)
 
 - **Python 3.12.** `omnivoice` needs `transformers>=5.3`, unreachable on the dev

@@ -174,6 +174,10 @@ image = (
         # Verifies the bearer tokens minted by the NestJS account API. Without
         # it every /api/jobs call 503s — see backend/app/auth.py.
         "PyJWT>=2.8",
+        # Calls the account API's credit endpoints from backend/app/billing.py.
+        # Without it TH_LABS_ACCOUNT_API_URL below cannot be honoured and every
+        # dub would run unbilled.
+        "httpx>=0.27",
         "openai-whisper", "sentencepiece", "edge-tts", "soundfile",
         "silero-vad", "demucs", "huggingface_hub",
     )
@@ -200,6 +204,14 @@ image = (
 
         # Where a signed-out visitor is sent to sign in.
         "TH_LABS_LANDING_URL": LANDING_URL,
+
+        # Turns on SERVER-SIDE credit enforcement (backend/app/billing.py).
+        # The Studio already calls can-dub/commit-dub before starting a job,
+        # but that is a browser asking politely: anyone holding a valid access
+        # token can POST /api/jobs directly and skip it. On Modal that is real
+        # GPU money, so the same two calls are made again here, where they
+        # cannot be skipped. Unset it and dubs run unbilled.
+        "TH_LABS_ACCOUNT_API_URL": ACCOUNT_API_URL,
 
         # Read by Vite during the `npm run build` step further down. Vite
         # inlines VITE_* at build time, so these must be set on the image
