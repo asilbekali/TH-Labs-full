@@ -1,4 +1,5 @@
-// Types mirroring the FastAPI backend schemas.
+// Types mirroring the FastAPI backend schemas, plus the two responses the
+// account API now serves in its place (Health and Language — see api.ts).
 
 export interface Language {
   code: string
@@ -20,9 +21,23 @@ export interface StageInfo {
 export interface Health {
   app: string
   version: string
+  /** The pipeline's mode, or 'degraded' when the API could not reach it. */
   mode: string
   ffmpeg: boolean
+  /**
+   * Live stage/engine status. EMPTY MEANS UNKNOWN, not "no stages" — the
+   * account API returns [] when the pipeline did not answer. Check `pipeline`
+   * (via pipelineDown) before reading this as a pipeline that has nothing
+   * loaded.
+   */
   stages: StageInfo[]
+  /**
+   * Added by the account API's GET /v1/health. Optional because a build
+   * pointed straight at the FastAPI pipeline gets its narrower payload, which
+   * has neither field.
+   */
+  database?: 'up' | 'down'
+  pipeline?: 'up' | 'down' | 'not_configured'
 }
 
 export type StageStatus = 'pending' | 'running' | 'done' | 'skipped' | 'failed'

@@ -15,7 +15,7 @@ import Page from "../components/Page";
 import LogoMark from "../components/brand/LogoMark";
 import { useIsDesktop } from "../hooks/useMediaQuery";
 import { rise, stagger } from "../lib/motion";
-import { createJob, mediaUrl, pollJob, subscribeJob } from "../lib/api";
+import { createJob, mediaUrl, pipelineDown, pollJob, subscribeJob } from "../lib/api";
 import type { Job } from "../lib/types";
 import { useWallet, QUALITY_COST } from "../lib/wallet";
 import { useCanDub, useCommitDub, useHealth, useLanguages } from "../lib/queries";
@@ -61,7 +61,11 @@ export default function Studio() {
   // Cached by TanStack Query, so switching pages does not refetch the catalog
   // and the health chip stays live across the whole session.
   const { data: languages = [] } = useLanguages();
-  const { data: health = null, isError: healthFailed } = useHealth();
+  const { data: health = null, isError: healthQueryFailed } = useHealth();
+  // The health call itself now succeeds while the pipeline is asleep — the
+  // account API answers for it — so "unreachable" is the response's `pipeline`
+  // field, not just a failed query.
+  const healthFailed = pipelineDown(health, healthQueryFailed);
   const canDubGate = useCanDub();
   const commit = useCommitDub();
 

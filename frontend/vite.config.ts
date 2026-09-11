@@ -5,9 +5,13 @@ import tailwindcss from '@tailwindcss/vite'
 
 // Two different backends sit behind this app, and they are not interchangeable:
 //
-//   /api, /media  → the dubbing pipeline (FastAPI, :8000 on the server box)
+//   /api, /media  → the dubbing pipeline (FastAPI, :8000 on the server box).
+//                   Jobs and result playback only. This box is frequently
+//                   asleep, so anything proxied here 502s at those times —
+//                   which is why health and the language catalog were moved
+//                   off it and onto /v1 (see src/lib/api.ts).
 //   /v1           → the account API (NestJS): auth, users, subscriptions,
-//                   Stripe. In production https://th-labs.uz/v1.
+//                   Stripe, health, languages. In production https://th-labs.uz/v1.
 //
 // NOTE: `/docs` is the Swagger UI — a page for humans. It is NOT the API base,
 // and every route on it is listed under /v1. Pointing the app at /docs makes
