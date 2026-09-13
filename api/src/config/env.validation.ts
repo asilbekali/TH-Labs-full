@@ -27,6 +27,14 @@ export interface AppEnv {
   // and health then reports `pipeline: "not_configured"` rather than guessing.
   DUB_API_URL?: string;
 
+  // SMTP. Optional: with no credentials MailService logs and skips sends, so a
+  // dev box boots fine without a mailbox attached.
+  MAIL_HOST: string;
+  MAIL_PORT: number;
+  MAIL_USER?: string;
+  MAIL_PASS?: string;
+  MAIL_FROM?: string;
+
   STRIPE_SECRET_KEY?: string;
   STRIPE_WEBHOOK_SECRET?: string;
 
@@ -77,6 +85,12 @@ export function validateEnv(config: RawEnv): AppEnv {
     FREE_DUB_MAX_SECONDS: toInt(config.FREE_DUB_MAX_SECONDS, 120),
 
     DUB_API_URL: config.DUB_API_URL?.trim() || undefined,
+
+    MAIL_HOST: config.MAIL_HOST ?? 'smtp.gmail.com',
+    MAIL_PORT: toInt(config.MAIL_PORT, 465),
+    MAIL_USER: config.MAIL_USER,
+    MAIL_PASS: config.MAIL_PASS,
+    MAIL_FROM: config.MAIL_FROM,
 
     STRIPE_SECRET_KEY: config.STRIPE_SECRET_KEY,
     STRIPE_WEBHOOK_SECRET: config.STRIPE_WEBHOOK_SECRET,

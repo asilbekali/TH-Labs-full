@@ -7,13 +7,15 @@ import { validateEnv } from './config/env.validation';
 
 import { PrismaModule } from './prisma/prisma.module';
 import { LoggerModule } from './common/logger/logger.module';
+import { MailModule } from './mail/mail.module';
 import { UsersModule } from './users/users.module';
 import { AuthModule } from './auth/auth.module';
 import { AdminModule } from './admin/admin.module';
-import { WaitListModule } from './wait-list/wait-list.module';
+import { CommunityModule } from './community/community.module';
 import { PaymentModule } from './payment/payment.module';
 import { LanguagesModule } from './languages/languages.module';
 import { HealthModule } from './health/health.module';
+import { PriceTokenModule } from './price-token/price-token.module';
 
 @Module({
   imports: [
@@ -21,13 +23,15 @@ import { HealthModule } from './health/health.module';
     ScheduleModule.forRoot(),
     PrismaModule,
     LoggerModule,
+    MailModule,
     UsersModule,
     AuthModule,
     AdminModule,
-    WaitListModule,
+    CommunityModule,
     PaymentModule,
     LanguagesModule,
     HealthModule,
+    PriceTokenModule,
   ],
   controllers: [AppController],
   providers: [AppService],

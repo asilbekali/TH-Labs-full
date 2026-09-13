@@ -7,7 +7,13 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model Waitlist {
+/// People who left their name and email on the landing page.
+///
+/// This is the old `Waitlist` table, renamed in place (the data came along) —
+/// we stopped framing it as a queue to get in and started framing it as the
+/// community you join. Joining still triggers the welcome email; see
+/// CommunityService.create.
+model Community {
   id        Int      @id @default(autoincrement())
   name      String
   email     String   @unique
@@ -16,25 +22,25 @@ model Waitlist {
 }
 
 model User {
-  id                 Int      @id @default(autoincrement())
-  email              String   @unique
-  name               String
-  password           String
-  role               Role     @default(USER)
+  id       Int    @id @default(autoincrement())
+  email    String @unique
+  name     String
+  password String
+  role     Role   @default(USER)
 
   // ── Billing & credits (step 05, additive) ──────────────────────────────
-  credits            Int      @default(60) // cached balance; CreditEntry ledger is the truth
-  freeDubUsed        Boolean  @default(false) // the one free 2-minute dub
-  stripeCustomerId   String?  @unique
+  credits          Int     @default(60) // cached balance; CreditEntry ledger is the truth
+  freeDubUsed      Boolean @default(false) // the one free 2-minute dub
+  stripeCustomerId String? @unique
 
-  subscriptions      Subscription[]
-  payments           Payment[]
-  creditEntries      CreditEntry[]
-  refreshTokens      RefreshToken[]
-  handoffCodes       HandoffCode[]
+  subscriptions Subscription[]
+  payments      Payment[]
+  creditEntries CreditEntry[]
+  refreshTokens RefreshToken[]
+  handoffCodes  HandoffCode[]
 
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @default(now()) @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
 
   @@index([email])
 }
@@ -94,72 +100,72 @@ enum CreditReason {
 
 // Catalog of purchasable plans (seven rows: FREE + PRO/STUDIO × weekly/monthly/yearly).
 model Plan {
-  id             String       @id @default(cuid())
-  tier           PlanTier
-  cycle          BillingCycle
-  priceCents     Int
+  id              String       @id @default(cuid())
+  tier            PlanTier
+  cycle           BillingCycle
+  priceCents      Int
   /// Credits handed out by ONE allocation, not the headline number on the
   /// pricing page. For weekly/monthly the two are the same; for yearly the
   /// advertised total is `creditsGranted * grantsPerPeriod`.
-  creditsGranted Int
-  grantDays      Int // 7 or 30
+  creditsGranted  Int
+  grantDays       Int // 7 or 30
   /// How many allocations one paid period is worth. 1 for weekly/monthly; 12
   /// for yearly, which Stripe bills once but which drips a month at a time.
   /// The cron stops at this count so a year's credits can't all land early.
-  grantsPerPeriod Int         @default(1)
-  stripePriceId  String?      @unique
-  stripeLinkUrl  String?
-  active         Boolean      @default(true)
+  grantsPerPeriod Int          @default(1)
+  stripePriceId   String?      @unique
+  stripeLinkUrl   String?
+  active          Boolean      @default(true)
 
-  subscriptions  Subscription[]
+  subscriptions Subscription[]
 
   @@unique([tier, cycle])
 }
 
 model Subscription {
-  id                   String             @id @default(cuid())
-  userId               Int
-  planId               String
-  status               SubscriptionStatus @default(ACTIVE)
+  id     String             @id @default(cuid())
+  userId Int
+  planId String
+  status SubscriptionStatus @default(ACTIVE)
 
-  stripeSubscriptionId String?            @unique
+  stripeSubscriptionId String?   @unique
   currentPeriodStart   DateTime
   currentPeriodEnd     DateTime
-  cancelAtPeriodEnd    Boolean            @default(false)
+  cancelAtPeriodEnd    Boolean   @default(false)
   lastGrantAt          DateTime?
   /// Allocations already handed out for the CURRENT period. Reset to 1 by the
   /// checkout and renewal handlers (both grant immediately); incremented by the
   /// recurring cron, which stops once it reaches plan.grantsPerPeriod.
-  grantsIssued         Int                @default(0)
+  grantsIssued         Int       @default(0)
 
-  user                 User               @relation(fields: [userId], references: [id], onDelete: Cascade)
-  plan                 Plan               @relation(fields: [planId], references: [id])
-  payments             Payment[]
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  plan     Plan      @relation(fields: [planId], references: [id])
+  payments Payment[]
 
-  createdAt            DateTime           @default(now())
-  updatedAt            DateTime           @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([userId, status])
 }
 
 model Payment {
-  id                    String        @id @default(cuid())
-  userId                Int
-  subscriptionId        String?
+  id             String  @id @default(cuid())
+  userId         Int
+  subscriptionId String?
 
-  amountCents           Int
-  currency              String        @default("usd")
-  status                PaymentStatus @default(PENDING)
-  description           String
+  amountCents Int
+  currency    String        @default("usd")
+  status      PaymentStatus @default(PENDING)
+  description String
 
-  stripeSessionId       String?       @unique
-  stripePaymentIntentId String?       @unique
-  stripeInvoiceId       String?       @unique
+  stripeSessionId       String? @unique
+  stripePaymentIntentId String? @unique
+  stripeInvoiceId       String? @unique
 
-  user                  User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  subscription          Subscription? @relation(fields: [subscriptionId], references: [id])
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subscription Subscription? @relation(fields: [subscriptionId], references: [id])
 
-  createdAt             DateTime      @default(now())
+  createdAt DateTime @default(now())
 
   @@index([userId, createdAt])
 }
@@ -167,16 +173,16 @@ model Payment {
 // Append-only credit ledger. User.credits is a cached balance; if they ever
 // disagree, this table wins.
 model CreditEntry {
-  id        String       @id @default(cuid())
-  userId    Int
-  delta     Int // positive grant, negative spend
-  balance   Int // running balance after this entry
-  reason    CreditReason
-  refId     String? // jobId, paymentId, etc.
-  note      String?
+  id      String       @id @default(cuid())
+  userId  Int
+  delta   Int // positive grant, negative spend
+  balance Int // running balance after this entry
+  reason  CreditReason
+  refId   String? // jobId, paymentId, etc.
+  note    String?
 
-  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  createdAt DateTime     @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
 
   @@index([userId, createdAt])
 }
@@ -190,8 +196,8 @@ model RefreshToken {
   revokedAt DateTime?
   userAgent String?
 
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  createdAt DateTime  @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
 
   @@index([userId])
 }
@@ -229,6 +235,13 @@ model HandoffCode {
   @@index([userId])
 }
 
+// model PriceOfCredits {
+//   id        Int      @id @default(autoincrement())
+//   price     Float    @default(0.65)
+//   createdAt DateTime @default(now())
+//   updatedAt DateTime @default(now()) @updatedAt
+// }
+
 /// The catalog of languages a dub can target.
 ///
 /// This list used to live only inside the pipeline process
@@ -241,8 +254,8 @@ model HandoffCode {
 /// and NMT respectively); `code` is the short id the API and UI speak. All
 /// three are kept on one row precisely so they cannot drift apart.
 model Language {
-  id        Int      @id @default(autoincrement())
-  code      String   @unique // ISO-639-1 where one exists
+  id        Int     @id @default(autoincrement())
+  code      String  @unique // ISO-639-1 where one exists
   name      String // English display name
   native    String // endonym
   flag      String // emoji flag
@@ -250,10 +263,10 @@ model Language {
   nllb      String // NLLB-200 FLORES-200 code
   /// Soft delete. A language the pipeline can no longer handle is deactivated,
   /// not deleted, so existing jobs that reference the code still resolve.
-  active    Boolean  @default(true)
+  active    Boolean @default(true)
   /// Display order in the picker; ties break on name. Lets the common targets
   /// stay at the top without renaming anything.
-  sortOrder Int      @default(0)
+  sortOrder Int     @default(0)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @default(now()) @updatedAt

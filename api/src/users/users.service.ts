@@ -6,6 +6,7 @@ import {
 import { Prisma, Role } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
+import { MailService } from '../mail/mail.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
@@ -22,8 +23,13 @@ const PUBLIC_USER_SELECT = {
 
 @Injectable()
 export class UsersService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly mail: MailService,
+  ) {}
 
+  // This is public registration — POST /users/create-user. Creating the account
+  // *is* registering, so the welcome email belongs here rather than in AuthService.
   async create(createUserDto: CreateUserDto) {
     const hashedPassword = await bcrypt.hash(
       createUserDto.password,
@@ -31,10 +37,17 @@ export class UsersService {
     );
 
     try {
-      return await this.prisma.user.create({
+      const user = await this.prisma.user.create({
         data: { ...createUserDto, password: hashedPassword },
         select: PUBLIC_USER_SELECT,
       });
+
+      // Fire-and-forget: the account exists either way, and MailService
+      // swallows and logs its own failures — registration must not fail on a
+      // mail error.
+      void this.mail.sendSignupWelcome(user.email, user.name);
+
+      return user;
     } catch (error) {
       if (
         error instanceof Prisma.PrismaClientKnownRequestError &&

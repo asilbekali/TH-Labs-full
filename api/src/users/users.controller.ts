@@ -28,6 +28,7 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { UsersService } from './users.service';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { CreateUserDto } from './dto/create-user.dto';
+import { UpdateRoleDto } from './dto/update-role.dto';
 import { AuthService } from '../auth/auth.service';
 import { AuthResponseDto } from '../auth/dto/auth-response.dto';
 
@@ -95,21 +96,56 @@ export class UsersController {
     return this.usersService.update(+id, updateUserDto);
   }
 
+  // Deleting an account is destructive, so ADMIN (level 2) cannot do it to
+  // somebody else -- only SUPERADMIN can. Every role may still delete its own
+  // account, which is what keeps self-service account removal working.
   @Delete(':id')
   @ApiBearerAuth()
+  @ApiOperation({
+    summary: 'Delete a user (own account, or any account as SUPERADMIN)',
+  })
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.ADMIN, Role.USER, Role.SUPERADMIN)
   remove(
     @Param('id') id: string,
     @CurrentUser() currentUser: AuthenticatedUser,
   ) {
-    this.ensureSelfOrAdmin(currentUser, +id);
+    this.ensureSelfOrSuperAdmin(currentUser, +id);
     return this.usersService.remove(+id);
   }
 
+  // Role changes are SUPERADMIN-only: an ADMIN who could hand out roles could
+  // promote itself to SUPERADMIN and erase the level-2 boundary entirely.
+  @Patch(':id/role')
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Change a user role (SUPERADMIN only)' })
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.SUPERADMIN)
+  updateRole(@Param('id') id: string, @Body() updateRoleDto: UpdateRoleDto) {
+    return this.usersService.updateRole(+id, updateRoleDto.role);
+  }
+
+  // Read/update: ADMIN and SUPERADMIN reach any account, everyone else only
+  // their own. SUPERADMIN was missing here, which left the role that owns the
+  // system unable to touch other accounts.
   private ensureSelfOrAdmin(currentUser: AuthenticatedUser, targetId: number) {
-    if (currentUser.role !== Role.ADMIN && currentUser.id !== targetId) {
+    const isAdmin =
+      currentUser.role === Role.ADMIN || currentUser.role === Role.SUPERADMIN;
+
+    if (!isAdmin && currentUser.id !== targetId) {
       throw new ForbiddenException('You can only access your own account');
+    }
+  }
+
+  // Delete: only SUPERADMIN reaches somebody else's account.
+  private ensureSelfOrSuperAdmin(
+    currentUser: AuthenticatedUser,
+    targetId: number,
+  ) {
+    if (currentUser.role !== Role.SUPERADMIN && currentUser.id !== targetId) {
+      throw new ForbiddenException(
+        'Only a SUPERADMIN can delete other accounts',
+      );
     }
   }
 }
