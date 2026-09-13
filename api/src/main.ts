@@ -51,6 +51,7 @@ async function bootstrap() {
 
   const PORT = Number(process.env.PORT) || 3001;
   const HOST = process.env.HOST || 'localhost';
+  const DB_URL = process.env.DATABASE_URL || '';
 
   // Parse the httpOnly refresh cookie into req.cookies for the auth routes.
   app.use(cookieParser());
@@ -136,6 +137,7 @@ async function bootstrap() {
   console.log('\x1b[35m══════════════════════════════════════════════\x1b[0m');
   console.log('\x1b[35m⚡ Waiting for incoming requests...\x1b[0m');
   console.log('\x1b[35m══════════════════════════════════════════════\x1b[0m');
+  console.log(`\x1b[36m🗄️  Database  : \x1b[33m${DB_URL}\x1b[0m`);
 }
 
 bootstrap();
