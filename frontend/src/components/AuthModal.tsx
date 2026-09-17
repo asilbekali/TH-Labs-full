@@ -1,10 +1,9 @@
 import { useEffect, useState } from 'react'
-import { useAuth } from '../lib/auth'
+import AuthForm, { type Mode } from './AuthForm'
 import LogoMark from './brand/LogoMark'
 
-type Mode = 'login' | 'register'
-
 // Sign-in / register dialog. Deliberately static — no transitions or motion.
+// The form itself lives in AuthForm, shared with the Studio's RequireAuth gate.
 export default function AuthModal({
   open,
   onClose,
@@ -14,25 +13,13 @@ export default function AuthModal({
   onClose: () => void
   initialMode?: Mode
 }) {
-  const { login, register } = useAuth()
-  const [mode, setMode] = useState<Mode>(initialMode)
-  const [name, setName] = useState('')
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  // Reset the form each time the dialog is opened.
+  // Remounting the form on each open is what resets the fields — the key
+  // changes, React throws the old instance away, and AuthForm keeps its state
+  // entirely local.
+  const [openCount, setOpenCount] = useState(0)
   useEffect(() => {
-    if (open) {
-      setMode(initialMode)
-      setName('')
-      setEmail('')
-      setPassword('')
-      setError(null)
-      setBusy(false)
-    }
-  }, [open, initialMode])
+    if (open) setOpenCount((n) => n + 1)
+  }, [open])
 
   // Close on Escape.
   useEffect(() => {
@@ -46,30 +33,13 @@ export default function AuthModal({
 
   if (!open) return null
 
-  async function submit(e: React.FormEvent) {
-    e.preventDefault()
-    setError(null)
-    setBusy(true)
-    try {
-      if (mode === 'login') await login(email, password)
-      else await register(name, email, password)
-      onClose()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Something went wrong')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const isRegister = mode === 'register'
-
   return (
     <div
       className="fixed inset-0 z-[100] grid place-items-center overflow-y-auto bg-black/50 p-4 backdrop-blur-sm"
       onClick={onClose}
       role="dialog"
       aria-modal="true"
-      aria-label={isRegister ? 'Create account' : 'Sign in'}
+      aria-label={initialMode === 'register' ? 'Create account' : 'Sign in'}
     >
       <div
         className="card relative w-full max-w-md p-6 sm:p-8"
@@ -90,112 +60,8 @@ export default function AuthModal({
           <LogoMark className="h-12 w-12 text-brand" title="TH-Labs" />
         </div>
 
-        <h2 className="text-center text-2xl font-bold tracking-tight text-primary">
-          {isRegister ? 'Create your account' : 'Welcome back'}
-        </h2>
-        <p className="mt-1.5 text-center text-sm text-secondary">
-          {isRegister
-            ? 'Sign up to save your dubbing projects.'
-            : 'Sign in to your TH-Labs account.'}
-        </p>
-
-        <form onSubmit={submit} className="mt-6 space-y-4">
-          {isRegister && (
-            <Field
-              label="Full name"
-              type="text"
-              value={name}
-              onChange={setName}
-              placeholder="Jane Doe"
-              autoComplete="name"
-              minLength={2}
-            />
-          )}
-          <Field
-            label="Email"
-            type="email"
-            value={email}
-            onChange={setEmail}
-            placeholder="you@example.com"
-            autoComplete="email"
-          />
-          <Field
-            label="Password"
-            type="password"
-            value={password}
-            onChange={setPassword}
-            placeholder="At least 8 characters"
-            autoComplete={isRegister ? 'new-password' : 'current-password'}
-            minLength={8}
-          />
-
-          {error && (
-            <p className="rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-sm text-danger">
-              {error}
-            </p>
-          )}
-
-          <button
-            type="submit"
-            disabled={busy}
-            className="btn-primary focusable w-full py-3 text-sm disabled:opacity-60"
-          >
-            {busy
-              ? 'Please wait…'
-              : isRegister
-                ? 'Create account'
-                : 'Sign in'}
-          </button>
-        </form>
-
-        <p className="mt-5 text-center text-sm text-secondary">
-          {isRegister ? 'Already have an account?' : "Don't have an account?"}{' '}
-          <button
-            type="button"
-            onClick={() => {
-              setMode(isRegister ? 'login' : 'register')
-              setError(null)
-            }}
-            className="font-semibold text-brand hover:opacity-80"
-          >
-            {isRegister ? 'Sign in' : 'Create one'}
-          </button>
-        </p>
+        <AuthForm key={openCount} initialMode={initialMode} onDone={onClose} />
       </div>
     </div>
-  )
-}
-
-function Field({
-  label,
-  type,
-  value,
-  onChange,
-  placeholder,
-  autoComplete,
-  minLength,
-}: {
-  label: string
-  type: string
-  value: string
-  onChange: (v: string) => void
-  placeholder?: string
-  autoComplete?: string
-  minLength?: number
-}) {
-  return (
-    <label className="block">
-      <span className="mb-1.5 block text-xs font-medium text-muted">{label}</span>
-      <input
-        type={type}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        autoComplete={autoComplete}
-        minLength={minLength}
-        required
-        className="focusable w-full rounded-xl border border-subtle bg-sunken px-3.5 py-2.5 text-sm text-primary placeholder:text-muted outline-none focus:border-brand/60"
-      />
-    </label>
   )
 }

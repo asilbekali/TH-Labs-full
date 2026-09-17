@@ -6,6 +6,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import type { ReactNode } from 'react'
 import * as authApi from './auth-api'
 import type { AccountUser } from './auth-api'
+import { accountKey, markJustRegistered } from './onboarding'
 import {
   apiUrl,
   bootstrapSession,
@@ -246,6 +247,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     async (name: string, email: string, password: string) => {
       const res = await authApi.register(name, email, password)
       apply({ accessToken: res.accessToken, user: res.user })
+      // The one exact signal for "this account was just created": the Studio
+      // walkthrough opens itself for a first-time account and for nobody else,
+      // and inferring that from timestamps alone would be a guess.
+      markJustRegistered(accountKey(res.user.id))
     },
     [apply],
   )

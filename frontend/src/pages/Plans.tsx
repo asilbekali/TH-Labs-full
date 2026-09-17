@@ -17,6 +17,8 @@ import { useWallet } from '../lib/wallet'
 import {
   useCancelSubscription,
   useCheckout,
+  useCreditCheckout,
+  useCreditPacks,
   useHistory,
   usePlans,
   useSubscription,
@@ -27,8 +29,11 @@ import {
   paymentLinkMode,
   stripeUnavailableReason,
 } from '../lib/stripe'
+import { creditsForMinutes, packFor } from '../lib/payments-api'
 import type {
   BillingCycle,
+  CreditPack,
+  CreditPacksResponse,
   PaymentRow,
   PlansResponse,
   PlanTier,
@@ -36,9 +41,11 @@ import type {
   Subscription,
 } from '../lib/payments-api'
 
-type Cycle = 'weekly' | 'monthly' | 'yearly'
+// Weekly billing is no longer sold. The API still knows the cycle (existing
+// weekly subscribers keep renewing, and the subscription card below prints
+// whatever cycle their row carries) — it is simply not offered to new buyers.
+type Cycle = 'monthly' | 'yearly'
 const CYCLES: { key: Cycle; label: string; suffix: string; per: string; api: BillingCycle }[] = [
-  { key: 'weekly', label: 'Weekly', suffix: '/wk', per: 'week', api: 'WEEKLY' },
   { key: 'monthly', label: 'Monthly', suffix: '/mo', per: 'month', api: 'MONTHLY' },
   { key: 'yearly', label: 'Yearly', suffix: '/yr', per: 'year', api: 'YEARLY' },
 ]
@@ -72,10 +79,10 @@ const TIER_META: { tier: PlanTier; name: string; highlight: boolean; features: s
   { tier: 'STUDIO', name: 'Studio', highlight: false, features: ['Everything in Pro', 'Batch dubbing', 'Highest fidelity output', 'Email support'] },
 ]
 
-const CYCLE_KEYS: Cycle[] = ['weekly', 'monthly', 'yearly']
+const CYCLE_KEYS: Cycle[] = ['monthly', 'yearly']
 
 function byCycle<T>(pick: (c: Cycle) => T): Record<Cycle, T> {
-  return { weekly: pick('weekly'), monthly: pick('monthly'), yearly: pick('yearly') }
+  return { monthly: pick('monthly'), yearly: pick('yearly') }
 }
 
 /**
@@ -133,9 +140,11 @@ export default function Plans() {
   const { balance, planInfo } = useWallet()
 
   const plansQuery = usePlans()
+  const packsQuery = useCreditPacks()
   const subscriptionQuery = useSubscription()
   const historyQuery = useHistory(1, 10)
   const checkout = useCheckout()
+  const creditCheckout = useCreditCheckout()
   const cancel = useCancelSubscription()
 
   const [cycle, setCycle] = useState<Cycle>('monthly')
@@ -173,6 +182,23 @@ export default function Plans() {
       window.location.href = url
     } catch (e) {
       setToast({ id: Date.now(), msg: e instanceof Error ? e.message : 'Could not start checkout' })
+    }
+  }
+
+  // One-time pack purchase. Same handover as a subscription — the API returns a
+  // Stripe-hosted URL and the browser goes there — so card data never touches
+  // this origin. Until /payments/checkout/credits exists this surfaces as a
+  // toast rather than a silent no-op.
+  async function buyCredits(packId: string) {
+    if (stripeBlocked) return
+    try {
+      const { url } = await creditCheckout.mutateAsync({ packId })
+      window.location.href = url
+    } catch (e) {
+      setToast({
+        id: Date.now(),
+        msg: e instanceof Error ? e.message : 'Could not start checkout',
+      })
     }
   }
 
@@ -263,6 +289,18 @@ export default function Plans() {
         )}
       </motion.section>
 
+      {/* ── SECTION A2 · One-time credits ──────────────────────────────── */}
+      <motion.section initial="hidden" animate="show">
+        <motion.div variants={rise}>
+          <TopUpSection
+            catalog={packsQuery.data}
+            busyPackId={creditCheckout.isPending ? (creditCheckout.variables?.packId ?? null) : null}
+            disabled={!!stripeBlocked}
+            onBuy={(packId) => void buyCredits(packId)}
+          />
+        </motion.div>
+      </motion.section>
+
       {/* ── SECTION B · Balance, subscription & history ─────────────────── */}
       <motion.section initial="hidden" animate="show" className="space-y-6">
         <motion.div variants={rise}>
@@ -321,7 +359,7 @@ function CycleSwitch({ cycle, onChange }: { cycle: Cycle; onChange: (c: Cycle) =
         </div>
       </LayoutGroup>
       <p className="mt-1.5 text-center font-mono text-[10px] text-muted">
-        {cycle === 'weekly' ? 'No commitment · cancel anytime' : cycle === 'yearly' ? 'Billed once a year' : 'Billed every month'}
+        {cycle === 'yearly' ? 'Billed once a year' : 'Billed every month · cancel anytime'}
       </p>
     </div>
   )
@@ -445,6 +483,220 @@ function TierCard({
   )
 }
 
+/* ── Pay as you go ──────────────────────────────────────────────────────── */
+
+const EST_QUALITIES = [
+  { key: 'fast', label: 'Fast' },
+  { key: 'balanced', label: 'Balanced' },
+  { key: 'studio', label: 'Studio' },
+]
+
+/**
+ * Credits bought outright, for the person who has one video and no interest in
+ * a subscription.
+ *
+ * The estimator is the point of the section: "how long is your clip" answers
+ * "how many credits" answers "which pack", in one motion. A pack alone means
+ * nothing to someone who has never bought credits before — 240 of something is
+ * not a quantity anyone can picture.
+ */
+function TopUpSection({
+  catalog,
+  busyPackId,
+  disabled,
+  onBuy,
+}: {
+  catalog: CreditPacksResponse | undefined
+  busyPackId: string | null
+  disabled: boolean
+  onBuy: (packId: string) => void
+}) {
+  const [minutes, setMinutes] = useState(4.5)
+  const [quality, setQuality] = useState('balanced')
+
+  if (!catalog) {
+    return (
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,360px)_minmax(0,1fr)]">
+        <div className="card shimmer h-72" />
+        <div className="card shimmer h-72" />
+      </div>
+    )
+  }
+
+  const needed = creditsForMinutes(minutes, quality, catalog)
+  const recommended = packFor(needed, catalog.packs)
+  const packs = [...catalog.packs].sort((a, b) => a.credits - b.credits)
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <SectionMark>Pay as you go</SectionMark>
+          <h2 className="mt-1.5 font-mono text-lg font-medium text-primary">
+            Buy credits once — no subscription
+          </h2>
+          <p className="mt-1 text-sm text-secondary">
+            Credits never expire and work on any quality. Pay for the video you have.
+          </p>
+        </div>
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,360px)_minmax(0,1fr)]">
+        {/* Estimator */}
+        <div className="card flex flex-col p-6">
+          <SectionMark>How many do I need?</SectionMark>
+
+          <div className="mt-4 flex items-baseline gap-1.5">
+            <span className="font-mono text-4xl font-medium text-primary">
+              {fmtMinutes(minutes)}
+            </span>
+            <span className="font-mono text-sm text-muted">min of video</span>
+          </div>
+          <input
+            type="range"
+            min={0.5}
+            max={60}
+            step={0.5}
+            value={minutes}
+            onChange={(e) => setMinutes(Number(e.target.value))}
+            aria-label="Length of your clip in minutes"
+            className="calc-slider focusable mt-3 h-11 w-full cursor-pointer"
+          />
+          <div className="-mt-1 flex justify-between font-mono text-[10px] text-muted">
+            <span>30s</span>
+            <span>60 min</span>
+          </div>
+
+          <div className="mt-4 flex rounded-control border border-subtle bg-sunken p-1">
+            {EST_QUALITIES.map((q) => (
+              <button
+                key={q.key}
+                onClick={() => setQuality(q.key)}
+                className="focusable relative flex-1 rounded-[8px] px-3 py-2 font-mono text-xs font-medium transition-colors"
+              >
+                {quality === q.key && (
+                  <motion.span
+                    layoutId="est-quality-pill"
+                    transition={{ type: 'spring', stiffness: 400, damping: 32 }}
+                    className="absolute inset-0 rounded-[8px] bg-brand/15 shadow-[inset_0_0_0_1px_rgb(var(--c-brand-500)/0.4)]"
+                  />
+                )}
+                <span className={`relative z-10 ${quality === q.key ? 'text-brand' : 'text-muted hover:text-secondary'}`}>
+                  {q.label}
+                </span>
+              </button>
+            ))}
+          </div>
+
+          <div className="mt-5 border-t border-subtle pt-4">
+            <div className="flex items-baseline justify-between">
+              <span className="text-sm text-secondary">You need about</span>
+              <span className="font-mono text-2xl font-medium text-brand">
+                <AnimatedNumber value={needed} /> <span className="text-sm text-muted">credits</span>
+              </span>
+            </div>
+            {recommended && (
+              <p className="mt-1.5 font-mono text-[11px] text-muted">
+                Covered by the {recommended.credits.toLocaleString()}-credit pack ·{' '}
+                {fmtCents(recommended.priceCents, recommended.currency)}
+              </p>
+            )}
+          </div>
+
+          {recommended && (
+            <button
+              onClick={() => onBuy(recommended.id)}
+              disabled={disabled || busyPackId !== null}
+              className="btn-primary focusable mt-4 w-full py-3 font-mono text-sm disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {busyPackId === recommended.id
+                ? 'Redirecting…'
+                : disabled
+                  ? 'Checkout unavailable'
+                  : `Buy ${recommended.credits.toLocaleString()} credits · ${fmtCents(recommended.priceCents, recommended.currency)} →`}
+            </button>
+          )}
+        </div>
+
+        {/* Packs */}
+        <div className="grid gap-4 sm:grid-cols-2">
+          {packs.map((p) => (
+            <PackCard
+              key={p.id}
+              pack={p}
+              minutes={p.credits / catalog.creditsPerMinute}
+              recommended={recommended?.id === p.id}
+              busy={busyPackId === p.id}
+              disabled={disabled || busyPackId !== null}
+              onBuy={() => onBuy(p.id)}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function PackCard({
+  pack,
+  minutes,
+  recommended,
+  busy,
+  disabled,
+  onBuy,
+}: {
+  pack: CreditPack
+  minutes: number
+  recommended: boolean
+  busy: boolean
+  disabled: boolean
+  onBuy: () => void
+}) {
+  const perCredit = pack.priceCents / 100 / pack.credits
+  return (
+    <motion.div
+      whileHover={{ y: -2 }}
+      className={`card relative flex flex-col p-5 transition-colors ${
+        recommended ? 'border-brand/45 ring-1 ring-brand/40' : ''
+      }`}
+    >
+      {recommended && (
+        <span className="absolute -top-2 left-5 rounded-pill bg-brand px-2 py-0.5 font-mono text-[10px] font-medium uppercase tracking-wide text-canvas">
+          Your pick
+        </span>
+      )}
+      <div className="flex items-baseline gap-1.5">
+        <span className="font-mono text-2xl font-medium text-primary">
+          {pack.credits.toLocaleString()}
+        </span>
+        <span className="font-mono text-xs text-muted">credits</span>
+      </div>
+      <div className="mt-1 font-mono text-[11px] text-muted">
+        ≈ {minutes.toFixed(1)} min at Balanced
+      </div>
+
+      <div className="mt-4 flex items-baseline gap-1.5">
+        <span className="font-mono text-xl font-medium text-primary">
+          {fmtCents(pack.priceCents, pack.currency)}
+        </span>
+        <span className="font-mono text-[11px] text-muted">
+          · ${perCredit.toFixed(3)} / credit
+        </span>
+      </div>
+
+      <button
+        onClick={onBuy}
+        disabled={disabled}
+        className={`focusable mt-4 w-full rounded-control py-2.5 font-mono text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+          recommended ? 'btn-primary' : 'btn-ghost'
+        }`}
+      >
+        {busy ? 'Redirecting…' : 'Buy credits'}
+      </button>
+    </motion.div>
+  )
+}
+
 /* ── Comparison disclosure ──────────────────────────────────────────────── */
 
 /**
@@ -474,7 +726,6 @@ function CompareDisclosure({
           : t.credits[c].toLocaleString(),
       ),
     })),
-    { feature: 'Weekly price', values: tiers.map((t) => fmtPrice(t.prices.weekly)) },
     { feature: 'Monthly price', values: tiers.map((t) => fmtPrice(t.prices.monthly)) },
     { feature: 'Yearly price', values: tiers.map((t) => fmtPrice(t.prices.yearly)) },
     ...TIER_META[1].features.map((f) => ({
@@ -748,4 +999,19 @@ function SectionMark({ children }: { children: ReactNode }) {
 
 function fmtPrice(dollars: number): string {
   return dollars === 0 ? 'Free' : `$${dollars.toLocaleString()}`
+}
+
+// Pinned to en-US on purpose: the catalog is priced in dollars, and letting the
+// visitor's locale format it turns $13.45 into "US$13.45" for a large slice of
+// the world — a different-looking price for the same charge.
+function fmtCents(cents: number, currency = 'usd'): string {
+  return (cents / 100).toLocaleString('en-US', {
+    style: 'currency',
+    currency: (currency || 'usd').toUpperCase(),
+  })
+}
+
+/** "4.5", "5", "0.5" — never "5.0". */
+function fmtMinutes(m: number): string {
+  return Number.isInteger(m) ? String(m) : m.toFixed(1)
 }

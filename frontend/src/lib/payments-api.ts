@@ -43,6 +43,77 @@ export interface CheckoutResponse {
   creditsGranted: number
 }
 
+/* ── One-time credit packs ──────────────────────────────────────────────────
+ * Buying credits outright, with no subscription: someone with a single 4-minute
+ * video to dub should be able to pay for that video and leave.
+ *
+ * The catalog below is a PLACEHOLDER. GET /v1/payments/credit-packs does not
+ * exist yet; getCreditPacks() asks for it and falls back to these numbers, so
+ * the page is complete today and switches to real server pricing the moment the
+ * endpoint ships — no UI change needed. `fromServer` says which one you are
+ * looking at.
+ */
+
+export interface CreditPack {
+  id: string
+  credits: number
+  priceCents: number
+  currency: string
+  /** Marks the pack the page highlights. */
+  popular?: boolean
+}
+
+export interface CreditPacksResponse {
+  packs: CreditPack[]
+  /** Credits a minute of source burns at Balanced quality. */
+  creditsPerMinute: number
+  /** Multiplier on creditsPerMinute, per quality key. */
+  qualityMultiplier: Record<string, number>
+  /** False when these are the built-in defaults rather than the API's. */
+  fromServer: boolean
+}
+
+export interface CreditCheckoutResponse {
+  url: string
+  packId: string
+  credits: number
+  priceCents: number
+}
+
+const DEFAULT_CREDIT_PACKS: Omit<CreditPacksResponse, 'fromServer'> = {
+  packs: [
+    { id: 'pack_120', credits: 120, priceCents: 699, currency: 'usd' },
+    { id: 'pack_240', credits: 240, priceCents: 1345, currency: 'usd', popular: true },
+    { id: 'pack_600', credits: 600, priceCents: 3190, currency: 'usd' },
+    { id: 'pack_1500', credits: 1500, priceCents: 7450, currency: 'usd' },
+  ],
+  // 53 credits a minute at Balanced: a 4½-minute clip lands on the 240-credit
+  // pack from both directions — the estimator rounds 238.5 up to 240, and the
+  // 240 pack advertises ≈4.5 minutes back.
+  creditsPerMinute: 53,
+  qualityMultiplier: { fast: 0.5, balanced: 1, studio: 2 },
+}
+
+/**
+ * What a clip of this length costs in credits, rounded to a figure a human can
+ * hold in their head. Kept here next to the tariff it uses, so the estimator on
+ * the Plans page and any other caller cannot drift apart.
+ */
+export function creditsForMinutes(
+  minutes: number,
+  quality: string,
+  tariff: Pick<CreditPacksResponse, 'creditsPerMinute' | 'qualityMultiplier'>,
+): number {
+  const raw = minutes * tariff.creditsPerMinute * (tariff.qualityMultiplier[quality] ?? 1)
+  return Math.max(10, Math.round(raw / 10) * 10)
+}
+
+/** The cheapest pack that covers `credits`, or the largest one if none does. */
+export function packFor(credits: number, packs: CreditPack[]): CreditPack | undefined {
+  const sorted = [...packs].sort((a, b) => a.credits - b.credits)
+  return sorted.find((p) => p.credits >= credits) ?? sorted[sorted.length - 1]
+}
+
 export interface Subscription {
   id: string
   userId: number
@@ -118,6 +189,36 @@ export function getPlans(): Promise<PlansResponse> {
   return authJson<PlansResponse>('/payments/plans', {}, 'Could not load plans')
 }
 
+/**
+ * The one-time credit catalog, server-first.
+ *
+ * A missing endpoint is the expected case right now, not an error worth
+ * surfacing: anything that fails falls through to the defaults above so the
+ * page still renders real numbers. Only a response that actually carries packs
+ * is treated as the server's.
+ */
+export async function getCreditPacks(): Promise<CreditPacksResponse> {
+  try {
+    const res = await authJson<Partial<CreditPacksResponse>>(
+      '/payments/credit-packs',
+      {},
+      'Could not load credit packs',
+    )
+    if (Array.isArray(res.packs) && res.packs.length > 0) {
+      return {
+        packs: res.packs,
+        creditsPerMinute:
+          Number(res.creditsPerMinute) || DEFAULT_CREDIT_PACKS.creditsPerMinute,
+        qualityMultiplier: res.qualityMultiplier ?? DEFAULT_CREDIT_PACKS.qualityMultiplier,
+        fromServer: true,
+      }
+    }
+  } catch {
+    /* endpoint not deployed yet, or the user is signed out — use the defaults */
+  }
+  return { ...DEFAULT_CREDIT_PACKS, fromServer: false }
+}
+
 // ── Checkout ──────────────────────────────────────────────────────────────
 export function getCheckoutUrl(
   tier: Exclude<PlanTier, 'FREE'>,
@@ -127,6 +228,15 @@ export function getCheckoutUrl(
     `/payments/checkout?tier=${tier}&cycle=${cycle}`,
     {},
     'Could not start checkout',
+  )
+}
+
+/** Checkout for a single credit pack — a one-off payment, no subscription. */
+export function getCreditCheckoutUrl(packId: string): Promise<CreditCheckoutResponse> {
+  return authJson<CreditCheckoutResponse>(
+    `/payments/checkout/credits?pack=${encodeURIComponent(packId)}`,
+    {},
+    'Could not start checkout for this credit pack',
   )
 }
 

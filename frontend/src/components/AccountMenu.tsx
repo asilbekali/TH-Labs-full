@@ -90,7 +90,7 @@ export default function AccountMenu({
         aria-expanded={open}
         aria-label="Account menu"
         className={`focusable grid ${size} place-items-center rounded-full text-xs font-bold text-white shadow-md ring-2 ring-transparent transition-shadow hover:ring-brand/40`}
-        style={{ background: 'var(--grad-brand)' }}
+        style={{ background: 'var(--grad-brand-deep)' }}
       >
         {initials(user.name, user.email)}
       </button>
