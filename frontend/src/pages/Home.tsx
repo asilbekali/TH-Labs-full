@@ -127,7 +127,7 @@ export default function Home() {
             value={catalog.length > 0 ? `${catalog.length} languages` : 'Loading languages…'}
           />
           <HeroChip
-            tint={dubbingDown ? 'danger' : 'cyan'}
+            tint={dubbingDown ? 'danger' : 'iris'}
             icon={ICON.bolt}
             value={
               dubbingDown
@@ -148,8 +148,8 @@ export default function Home() {
         className="grid grid-cols-1 gap-6 md:grid-cols-3"
       >
         <QuickStartCard tint="brand" title="Dub a video" sub="From a file you upload" icon={ICON.video} onClick={() => openPreset('video')} />
-        <QuickStartCard tint="cyan" title="Dub a podcast" sub="Audio only, studio quality" icon={ICON.mic} onClick={() => openPreset('podcast')} />
-        <QuickStartCard tint="magenta" title="Clone a voice" sub="Keeps the original speaker" icon={ICON.userCheck} onClick={() => openPreset('voice')} />
+        <QuickStartCard tint="iris" title="Dub a podcast" sub="Audio only, studio quality" icon={ICON.mic} onClick={() => openPreset('podcast')} />
+        <QuickStartCard tint="rose" title="Clone a voice" sub="Keeps the original speaker" icon={ICON.userCheck} onClick={() => openPreset('voice')} />
       </motion.div>
 
       {/* ── C · Active runs (only when something is actually running) ──────── */}
@@ -451,13 +451,13 @@ function QuickStartCard({
   icon,
   onClick,
 }: {
-  tint: 'brand' | 'cyan' | 'magenta'
+  tint: 'brand' | 'iris' | 'rose'
   title: string
   sub: string
   icon: string
   onClick: () => void
 }) {
-  const tintClass = { brand: 'bg-brand/12 text-brand', cyan: 'bg-cyan/12 text-cyan', magenta: 'bg-magenta/12 text-magenta' }[tint]
+  const tintClass = { brand: 'bg-brand/12 text-brand', iris: 'bg-iris/12 text-iris', rose: 'bg-rose/12 text-rose' }[tint]
   return (
     <motion.button
       variants={rise}
@@ -488,10 +488,10 @@ function SectionHead({ label }: { label: string }) {
   )
 }
 
-function HeroChip({ tint, value, icon }: { tint: 'brand' | 'cyan' | 'danger'; value: string; icon: string }) {
+function HeroChip({ tint, value, icon }: { tint: 'brand' | 'iris' | 'danger'; value: string; icon: string }) {
   const tintClass = {
     brand: 'bg-brand/12 text-brand',
-    cyan: 'bg-cyan/12 text-cyan',
+    iris: 'bg-iris/12 text-iris',
     danger: 'bg-danger/12 text-danger',
   }[tint]
   return (

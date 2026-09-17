@@ -1,4 +1,16 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+// The Studio (02).
+//
+// Layout is a workbench, not a form: on the left a deck of four steps where
+// only the one you are working on is open and every other step still shows the
+// value it holds, on the right a monitor that draws the dub as a chain of
+// stages — the same chain before the run (the route your options have chosen)
+// and during it (the route filling in). Between them, a run bar that always
+// states the price before you commit to it.
+//
+// The pipeline logic below — the credit gate, job creation, SSE/polling, the
+// mirror into the works library — is unchanged from the previous design. Only
+// the presentation is new.
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
@@ -13,10 +25,23 @@ import AnimatedNumber from "../components/AnimatedNumber";
 import ScrollColumn from "../components/layout/ScrollColumn";
 import Page from "../components/Page";
 import LogoMark from "../components/brand/LogoMark";
+import StepCard from "../components/studio/StepCard";
+import PipelineFlow from "../components/studio/PipelineFlow";
+import type { FlowNode } from "../components/studio/PipelineFlow";
+import TourOverlay from "../components/onboarding/TourOverlay";
+import type { TourStep } from "../components/onboarding/TourOverlay";
 import { useIsDesktop } from "../hooks/useMediaQuery";
 import { rise, stagger } from "../lib/motion";
 import { createJob, mediaUrl, pipelineDown, pollJob, subscribeJob } from "../lib/api";
 import type { Job } from "../lib/types";
+import { useAuth } from "../lib/auth";
+import {
+  STUDIO_TOUR,
+  accountKey,
+  hasSeenTour,
+  markTourSeen,
+  shouldAutoStartTour,
+} from "../lib/onboarding";
 import { useWallet, QUALITY_COST } from "../lib/wallet";
 import { useCanDub, useCommitDub, useHealth, useLanguages } from "../lib/queries";
 import { useWorks, workTitle } from "../lib/works";
@@ -29,6 +54,8 @@ const QUALITIES = [
 ];
 
 const SAMPLE_LANGS = ["uz", "ru", "es", "fr", "de"];
+
+type StepId = "source" | "languages" | "options" | "quality";
 
 // Best-effort source length for the credit gate. Sample clips are short (within
 // the free-dub cap); for a real upload we read the media's metadata duration.
@@ -57,6 +84,7 @@ async function probeDurationSeconds(file: File | null): Promise<number> {
 export default function Studio() {
   const { balance } = useWallet();
   const { works, addWork, updateWork } = useWorks();
+  const { user, ready: authReady } = useAuth();
 
   // Cached by TanStack Query, so switching pages does not refetch the catalog
   // and the health chip stays live across the whole session.
@@ -184,7 +212,8 @@ export default function Studio() {
   const isSampleRun = useSample && !file;
   const sampleLangNote = isSampleRun && !SAMPLE_LANGS.includes(targetLang);
   const cost = QUALITY_COST[quality] ?? 10;
-  const canStart = !!(file || isSampleRun) && !!targetLang;
+  const sourceReady = !!(file || isSampleRun);
+  const canStart = sourceReady && !!targetLang;
 
   const lastWork = works[0];
 
@@ -300,13 +329,13 @@ export default function Studio() {
   const leftScrollRef = useRef<HTMLDivElement>(null);
   const rightScrollRef = useRef<HTMLDivElement>(null);
 
-  // Reset both columns to the top when a run begins or the status changes (§7).
+  // Reset both columns to the top when a run begins or the status changes.
   useEffect(() => {
     rightScrollRef.current?.scrollTo({ top: 0 });
     leftScrollRef.current?.scrollTo({ top: 0 });
   }, [job?.status]);
 
-  // Elapsed clock while a run is live, for the repurposed Estimate card (§7).
+  // Elapsed clock while a run is live.
   const [elapsed, setElapsed] = useState(0);
   const runStartRef = useRef<number | null>(null);
   useEffect(() => {
@@ -321,7 +350,7 @@ export default function Studio() {
     return () => window.clearInterval(id);
   }, [running]);
 
-  // Auto-advancing tips carousel (§7).
+  // Auto-advancing tips carousel.
   const [tip, setTip] = useState(0);
   useEffect(() => {
     const id = window.setInterval(
@@ -336,12 +365,270 @@ export default function Studio() {
   const barPct =
     balance > 0 ? Math.min(100, Math.round((cost / balance) * 100)) : 100;
 
-  // ── Config cards (shared by desktop shell + mobile stack) ────────────────
-  const configCards = (
+  // ── The step deck ────────────────────────────────────────────────────────
+  // One step open at a time, and a record of which steps the user has actually
+  // set themselves — steps 02–04 ship with working defaults, so a tick there
+  // has to mean "you chose this", not "this has a value".
+  const [openStep, setOpenStep] = useState<StepId | null>("source");
+  const [touched, setTouched] = useState<Record<string, boolean>>({});
+  const markTouched = useCallback(
+    (id: StepId) => setTouched((t) => (t[id] ? t : { ...t, [id]: true })),
+    [],
+  );
+  const toggleStep = useCallback(
+    (id: StepId) => setOpenStep((prev) => (prev === id ? null : id)),
+    [],
+  );
+
+  // Hand the user to the next decision the moment they have a source, once per
+  // upload — never yanking them somewhere else if they opened a step on purpose.
+  const advancedRef = useRef(false);
+  useEffect(() => {
+    if (!sourceReady) {
+      advancedRef.current = false;
+      return;
+    }
+    if (advancedRef.current) return;
+    advancedRef.current = true;
+    setOpenStep((prev) => (prev === "source" ? "languages" : prev));
+  }, [sourceReady]);
+
+  const langName = useCallback(
+    (code: string) =>
+      code === "auto"
+        ? "Auto-detect"
+        : (languages.find((l) => l.code === code)?.name ?? code.toUpperCase()),
+    [languages],
+  );
+  const langFlag = useCallback(
+    (code: string) =>
+      code === "auto" ? "🌐" : (languages.find((l) => l.code === code)?.flag ?? "🏳️"),
+    [languages],
+  );
+
+  const optionSummary = [
+    voiceClone ? "Voice clone" : "Generic voice",
+    keepBackground ? "Keep background" : "Speech only",
+    lipSync ? "Lip sync" : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  const sourceSummary = file
+    ? `${file.name} · ${(file.size / 1_048_576).toFixed(1)} MB`
+    : isSampleRun
+      ? "Built-in sample clip"
+      : "Nothing chosen yet";
+
+  // ── Onboarding walkthrough ───────────────────────────────────────────────
+  const key = accountKey(user?.id);
+  const [tourOpen, setTourOpen] = useState(false);
+  // Returning users get a quieter Guide button; first-timers who skipped keep
+  // the same entry point, just without the automatic open.
+  const [tourSeen, setTourSeen] = useState(() => hasSeenTour(STUDIO_TOUR, key));
+
+  const closeTour = useCallback(() => {
+    setTourOpen(false);
+    // Finishing and skipping mean the same thing here: do not open by itself
+    // again. Nobody wants to be taught the same page twice.
+    markTourSeen(STUDIO_TOUR, key);
+    setTourSeen(true);
+  }, [key]);
+
+  const autoStartedRef = useRef(false);
+  useEffect(() => {
+    if (!authReady || autoStartedRef.current || job) return;
+    if (!shouldAutoStartTour(STUDIO_TOUR, key, user?.createdAt)) return;
+    autoStartedRef.current = true;
+    // Let the page's entrance animation land first, so the spotlight measures
+    // elements that have stopped moving.
+    const t = window.setTimeout(() => setTourOpen(true), 650);
+    return () => window.clearTimeout(t);
+  }, [authReady, key, user?.createdAt, job]);
+
+  const tourSteps = useMemo<TourStep[]>(
+    () => [
+      {
+        id: "welcome",
+        title: "Welcome to the Studio",
+        body: "This is where a clip becomes a dub: four short decisions on the left, the run on the right. Ninety seconds and you will know the whole thing.",
+        note: "← → to move · Esc to leave",
+      },
+      {
+        id: "source",
+        target: "tour-source",
+        prefer: "right",
+        onEnter: () => setOpenStep("source"),
+        title: "01 · Bring in a clip",
+        body: "Drop a video or audio file here, or click to browse — MP4, MOV, WAV and MP3 all work. Nothing to hand? Switch on the built-in sample clip and every other control behaves exactly the same.",
+      },
+      {
+        id: "languages",
+        target: "tour-languages",
+        prefer: "right",
+        onEnter: () => setOpenStep("languages"),
+        title: "02 · Choose the languages",
+        body: "Leave the source on Auto-detect if you are not sure — the transcriber works it out. Set the target to what you want to hear; the round button between them swaps the pair.",
+      },
+      {
+        id: "options",
+        target: "tour-options",
+        prefer: "right",
+        onEnter: () => setOpenStep("options"),
+        title: "03 · Voice and mix",
+        body: "Keep the original speaker's voice instead of a narrator, keep the music and ambience behind the speech, and turn on lip sync when the speaker is on camera.",
+      },
+      {
+        id: "quality",
+        target: "tour-quality",
+        prefer: "right",
+        onEnter: () => setOpenStep("quality"),
+        title: "04 · Quality, and what it costs",
+        body: "Fast skips the heavy stages, Studio runs all of them. This is the one setting that moves the price — the credit figure updates as you switch.",
+      },
+      {
+        id: "monitor",
+        target: "tour-monitor",
+        prefer: "left",
+        title: "Watch the route",
+        body: "This panel draws your dub as a chain of stages. Right now it shows the route your options have chosen — greyed-out links are the stages you switched off. During a run each link fills in live, and the finished video, its transcript and the download land here too.",
+      },
+      {
+        id: "cost",
+        target: "tour-cost",
+        prefer: "left",
+        title: "Know the price first",
+        body: "What this run costs and what your balance looks like afterwards, before you commit. If you are short, the link to top up is right there.",
+      },
+      {
+        id: "run",
+        target: "tour-run",
+        prefer: "top",
+        title: "Start the dub",
+        body: "The button stays disabled until there is a clip to work on. Underneath it, a live line tells you whether the dubbing pipeline is actually up — worth a glance before a long run.",
+      },
+      {
+        id: "done",
+        title: "That is the whole loop",
+        body: "Every finished dub is saved to My works, so you can come back to it, download it again, or reuse its settings. Open this walkthrough whenever you like from the Guide button.",
+      },
+    ],
+    [],
+  );
+
+  // ── Preview / live flow nodes ────────────────────────────────────────────
+  const previewNodes: FlowNode[] = useMemo(
+    () => [
+      { key: "asr", label: "Transcribe", sub: "Whisper", state: "idle" },
+      {
+        key: "nmt",
+        label: "Translate",
+        sub: targetLang.toUpperCase(),
+        state: "idle",
+      },
+      {
+        key: "tts",
+        label: "Clone voice",
+        sub: voiceClone ? "same speaker" : "off",
+        state: voiceClone ? "idle" : "skipped",
+      },
+      {
+        key: "lipsync",
+        label: "Sync lips",
+        sub: lipSync ? "on camera" : "off",
+        state: lipSync ? "idle" : "skipped",
+      },
+      {
+        key: "separation",
+        label: "Mix",
+        sub: keepBackground ? "keep music" : "speech only",
+        state: keepBackground ? "idle" : "skipped",
+      },
+    ],
+    [targetLang, voiceClone, lipSync, keepBackground],
+  );
+
+  const liveNodes: FlowNode[] = useMemo(
+    () =>
+      (job?.stages ?? []).map((s) => ({
+        key: s.key,
+        label: s.label,
+        state: s.status === "pending" ? "idle" : s.status,
+      })),
+    [job],
+  );
+
+  const stepsDone = [
+    sourceReady,
+    !!touched.languages,
+    !!touched.options,
+    !!touched.quality,
+  ].filter(Boolean).length;
+
+  // ── Left column: header, step deck, run bar ──────────────────────────────
+  const deckHeader = (
+    <div className="flex items-end justify-between gap-3 px-1">
+      <div className="min-w-0">
+        <span className="font-mono text-[10px] font-medium uppercase tracking-[0.14em] text-brand">
+          / 02 — Studio
+        </span>
+        <div className="mt-1 flex items-center gap-2">
+          <span className="font-mono text-[13px] font-medium text-primary">
+            Set up your dub
+          </span>
+          <span className="font-mono text-[11px] text-muted">
+            {stepsDone}/4
+          </span>
+        </div>
+        <div className="mt-1.5 flex gap-1">
+          {[0, 1, 2, 3].map((i) => (
+            <motion.span
+              key={i}
+              initial={false}
+              animate={{ opacity: i < stepsDone ? 1 : 0.35 }}
+              className={`h-1 w-8 rounded-full ${i < stepsDone ? "bg-brand" : "bg-strong"}`}
+            />
+          ))}
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={() => setTourOpen(true)}
+        title="Show the walkthrough"
+        className={`focusable inline-flex shrink-0 items-center gap-1.5 rounded-pill border px-3 py-1.5 font-mono text-[11px] transition-colors ${
+          tourSeen
+            ? "border-subtle text-muted hover:border-brand/40 hover:text-brand"
+            : "border-brand/40 bg-brand/[0.08] text-brand"
+        }`}
+      >
+        <svg
+          viewBox="0 0 24 24"
+          className="h-3.5 w-3.5"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <path d="M9.1 9a3 3 0 1 1 4.2 2.7c-.8.4-1.3 1.2-1.3 2.1v.2M12 17.5h.01" />
+          <circle cx="12" cy="12" r="9" />
+        </svg>
+        Guide
+      </button>
+    </div>
+  );
+
+  const stepDeck = (
     <>
-      {/* 01 Source */}
-      <div className="card space-y-3 p-5">
-        <GroupLabel n="01" title="Source" />
+      <StepCard
+        n="01"
+        title="Source"
+        summary={sourceSummary}
+        done={sourceReady}
+        open={openStep === "source"}
+        onToggle={() => toggleStep("source")}
+        tour="tour-source"
+      >
         <Uploader file={file} onFile={setFile} disabled={running} />
         <button
           type="button"
@@ -358,23 +645,43 @@ export default function Studio() {
           <span>Use the built-in sample clip</span>
           <SwitchTrack on={isSampleRun} />
         </button>
-      </div>
+      </StepCard>
 
-      {/* 02 Languages */}
-      <div className="card space-y-3 p-5">
-        <GroupLabel n="02" title="Languages" />
+      <StepCard
+        n="02"
+        title="Languages"
+        summary={
+          <span className="flex items-center gap-1.5">
+            <span aria-hidden>{langFlag(sourceLang)}</span>
+            {langName(sourceLang)}
+            <span className="text-brand">→</span>
+            <span aria-hidden>{langFlag(targetLang)}</span>
+            {langName(targetLang)}
+          </span>
+        }
+        done={!!touched.languages}
+        open={openStep === "languages"}
+        onToggle={() => toggleStep("languages")}
+        tour="tour-languages"
+      >
         <div className="relative space-y-3">
           <LanguageSelect
             label="Source language"
             languages={languages}
             value={sourceLang}
-            onChange={setSourceLang}
+            onChange={(v) => {
+              setSourceLang(v);
+              markTouched("languages");
+            }}
             allowAuto
           />
           <div className="flex justify-center">
             <motion.button
               type="button"
-              onClick={swapLangs}
+              onClick={() => {
+                swapLangs();
+                markTouched("languages");
+              }}
               disabled={sourceLang === "auto"}
               whileTap={{ rotate: 180 }}
               aria-label="Swap source and target languages"
@@ -397,7 +704,10 @@ export default function Studio() {
             label="Target language"
             languages={languages}
             value={targetLang}
-            onChange={setTargetLang}
+            onChange={(v) => {
+              setTargetLang(v);
+              markTouched("languages");
+            }}
           />
         </div>
         {sampleLangNote && (
@@ -422,21 +732,33 @@ export default function Studio() {
             </span>
           </div>
         )}
-      </div>
+      </StepCard>
 
-      {/* 03 Options */}
-      <div className="card space-y-2.5 p-5">
-        <GroupLabel n="03" title="Options" />
+      <StepCard
+        n="03"
+        title="Voice & mix"
+        summary={optionSummary}
+        done={!!touched.options}
+        open={openStep === "options"}
+        onToggle={() => toggleStep("options")}
+        tour="tour-options"
+      >
         <OptionToggle
           checked={voiceClone}
-          onChange={setVoiceClone}
+          onChange={(v) => {
+            setVoiceClone(v);
+            markTouched("options");
+          }}
           title="Voice cloning"
           description="Preserve the original speaker's voice instead of a generic narrator."
           icon={<path d="M3 12h3l2-6 3 15 3-12 2 5h4" />}
         />
         <OptionToggle
           checked={keepBackground}
-          onChange={setKeepBackground}
+          onChange={(v) => {
+            setKeepBackground(v);
+            markTouched("options");
+          }}
           title="Keep background & effects"
           description="Dub over the original music/ambience instead of replacing it; the original speech is removed (Demucs)."
           icon={
@@ -445,22 +767,34 @@ export default function Studio() {
         />
         <OptionToggle
           checked={lipSync}
-          onChange={setLipSync}
-          accent="cyan"
+          onChange={(v) => {
+            setLipSync(v);
+            markTouched("options");
+          }}
+          accent="iris"
           title="Lip sync (optional)"
           description="Reshape the speaker's mouth to match the translated speech (Wav2Lip)."
           icon={<path d="M3 12c3-3 15-3 18 0-3 4-15 4-18 0zM7 12h10" />}
         />
-      </div>
+      </StepCard>
 
-      {/* 04 Quality */}
-      <div className="card space-y-3 p-5">
-        <GroupLabel n="04" title="Quality" />
+      <StepCard
+        n="04"
+        title="Quality"
+        summary={`${QUALITIES.find((q) => q.key === quality)?.label ?? quality} · ${cost} credits`}
+        done={!!touched.quality}
+        open={openStep === "quality"}
+        onToggle={() => toggleStep("quality")}
+        tour="tour-quality"
+      >
         <div className="flex rounded-control border border-subtle bg-sunken p-1">
           {QUALITIES.map((q) => (
             <button
               key={q.key}
-              onClick={() => setQuality(q.key)}
+              onClick={() => {
+                setQuality(q.key);
+                markTouched("quality");
+              }}
               disabled={running}
               className="focusable relative flex-1 rounded-[10px] px-3 py-2 font-mono text-xs font-medium transition-colors"
             >
@@ -487,13 +821,22 @@ export default function Studio() {
           {quality === "studio" &&
             "Highest fidelity — full pipeline. Best quality, slowest."}
         </p>
-      </div>
+      </StepCard>
     </>
   );
 
-  // ── The pinned CTA footer (start button + pipeline health line) ──────────
+  // ── The pinned run bar (price + start + pipeline health) ─────────────────
   const ctaBlock = (
-    <div className="space-y-2">
+    <div data-tour="tour-run" className="card space-y-2.5 p-3.5">
+      <div className="flex items-baseline justify-between gap-2 px-0.5">
+        <span className="font-mono text-[11px] uppercase tracking-[0.12em] text-muted">
+          This run
+        </span>
+        <span className="font-mono text-[11px] text-secondary">
+          <span className={short ? "text-danger" : "text-primary"}>{cost}</span>{" "}
+          of {balance.toLocaleString()} credits
+        </span>
+      </div>
       <button
         onClick={start}
         disabled={busy || running || !canStart}
@@ -506,7 +849,9 @@ export default function Studio() {
           ? "Starting…"
           : running
             ? `Dubbing… ${overall}%`
-            : `Start dubbing · ${cost} →`}
+            : canStart
+              ? `Start dubbing · ${cost} →`
+              : "Add a clip to start"}
       </button>
       {/* Three honest states: unreachable, running simulated stages, or live.
           An unreachable API used to fall back to a fabricated "simulation"
@@ -532,7 +877,7 @@ export default function Studio() {
     </div>
   );
 
-  // ── Right column content (idle blocks vs. live run) ──────────────────────
+  // ── Right column content (idle monitor vs. live run) ─────────────────────
   const rightContent = (
     <>
       {error && (
@@ -550,80 +895,73 @@ export default function Studio() {
             transition={{ duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
             className="space-y-4"
           >
-            {/* Output empty state */}
-            <div className="card relative grid h-[340px] place-items-center overflow-hidden p-8 text-center">
-              <LogoMark className="pointer-events-none absolute -bottom-10 -right-10 h-[180px] w-[180px] text-primary/[0.045]" />
+            {/* The monitor: the route this dub will take, drawn from the
+                options as they stand. */}
+            <div
+              data-tour="tour-monitor"
+              className="card relative overflow-hidden p-6"
+            >
+              <LogoMark className="pointer-events-none absolute -bottom-16 -right-14 h-[200px] w-[200px] text-primary/[0.04]" />
               <div className="relative">
-                <h3 className="font-mono text-lg font-medium text-primary">
-                  Your dub will appear here
-                </h3>
-                <p className="mx-auto mt-2 max-w-sm text-sm text-secondary">
-                  Configure the pipeline on the left and start a run — every
-                  stage streams live.
-                </p>
-                <button
-                  onClick={() => {
-                    setUseSample(true);
-                    setFile(null);
-                  }}
-                  className="btn-ghost focusable mt-6 px-5 py-2.5 font-mono text-sm"
-                >
-                  Load the sample clip →
-                </button>
-              </div>
-            </div>
+                <div className="flex items-center justify-between gap-3">
+                  <SectionMark>Route</SectionMark>
+                  <span className="font-mono text-[11px] text-muted">
+                    {sourceReady ? "Ready when you are" : "Waiting for a clip"}
+                  </span>
+                </div>
 
-            {/* How it works */}
-            <div className="card p-5">
-              <SectionMark>How it works</SectionMark>
-              <div className="mt-3 space-y-1">
-                {pipelinePreview(
-                  voiceClone,
-                  lipSync,
-                  keepBackground,
-                  targetLang,
-                ).map((s) => (
-                  <div
-                    key={s.name}
-                    className={`flex items-center gap-3 rounded-xl px-2 py-1.5 ${s.skipped ? "opacity-45" : ""}`}
+                <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2">
+                  <LangBadge flag={langFlag(sourceLang)} label={langName(sourceLang)} />
+                  <motion.svg
+                    animate={{ x: [0, 4, 0] }}
+                    transition={{ duration: 2.4, repeat: Infinity, ease: "easeInOut" }}
+                    viewBox="0 0 24 24"
+                    className="h-5 w-5 text-brand"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
                   >
-                    <span
-                      className={`icon-tile h-8 w-8 shrink-0 ${s.skipped ? "bg-sunken text-muted" : "bg-brand/12 text-brand"}`}
+                    <path d="M5 12h14M13 6l6 6-6 6" />
+                  </motion.svg>
+                  <LangBadge
+                    flag={langFlag(targetLang)}
+                    label={langName(targetLang)}
+                    accent
+                  />
+                  <span className="ml-auto truncate font-mono text-[11px] text-muted">
+                    {sourceSummary}
+                  </span>
+                </div>
+
+                <div className="mt-6">
+                  <PipelineFlow nodes={previewNodes} />
+                </div>
+
+                <p className="mt-5 border-t border-subtle pt-4 text-center text-[13px] text-secondary">
+                  {sourceReady
+                    ? "Start the run and these stages fill in live — the finished video, its transcript and the download all land here."
+                    : "Add a clip on the left, or load the sample, and this route becomes a dub."}
+                </p>
+                {!sourceReady && (
+                  <div className="mt-3 text-center">
+                    <button
+                      onClick={() => {
+                        setUseSample(true);
+                        setFile(null);
+                      }}
+                      className="btn-ghost focusable px-5 py-2.5 font-mono text-sm"
                     >
-                      <svg
-                        viewBox="0 0 24 24"
-                        className="h-4 w-4"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="1.6"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        {s.icon}
-                      </svg>
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <span
-                        className={`font-mono text-xs font-medium ${s.skipped ? "text-muted line-through" : "text-primary"}`}
-                      >
-                        {s.name}
-                      </span>
-                      <span className="ml-2 text-xs text-secondary">
-                        · {s.desc}
-                      </span>
-                    </div>
-                    {s.skipped && (
-                      <span className="rounded-full bg-sunken px-2 py-0.5 font-mono text-[10px] text-muted">
-                        skipped
-                      </span>
-                    )}
+                      Load the sample clip →
+                    </button>
                   </div>
-                ))}
+                )}
               </div>
             </div>
 
             {/* Estimate */}
-            <div className="card p-5">
+            <div data-tour="tour-cost" className="card p-5">
               <SectionMark>Estimate</SectionMark>
               <div className="mt-3 flex items-end justify-between">
                 <div>
@@ -663,95 +1001,109 @@ export default function Studio() {
               </div>
             </div>
 
-            {/* Recent dubs */}
-            {works.length > 0 && (
-              <div className="card p-5">
-                <div className="flex items-center justify-between">
-                  <SectionMark>Recent dubs</SectionMark>
-                  <Link
-                    to="/works"
-                    className="font-mono text-[11px] text-brand hover:underline"
-                  >
-                    View all →
-                  </Link>
-                </div>
-                <div className="mt-3 space-y-2">
-                  {works.slice(0, 3).map((w) => (
-                    <div key={w.id} className="flex items-center gap-3">
-                      <span
-                        className="h-10 w-14 shrink-0 rounded-lg"
-                        style={{ background: gradientFor(w.id) }}
-                      />
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate text-sm font-medium text-primary">
-                          {workTitle(w)}
+            {/* Two columns only when there is actually a second card to fill
+                them — a lone Tips card stranded at half width looks broken. */}
+            <div className={`grid gap-4 ${works.length > 0 ? "xl:grid-cols-2" : ""}`}>
+              {/* Recent dubs */}
+              {works.length > 0 && (
+                <div className="card p-5">
+                  <div className="flex items-center justify-between">
+                    <SectionMark>Recent dubs</SectionMark>
+                    <Link
+                      to="/works"
+                      className="font-mono text-[11px] text-brand hover:underline"
+                    >
+                      View all →
+                    </Link>
+                  </div>
+                  <div className="mt-3 space-y-2">
+                    {works.slice(0, 3).map((w) => (
+                      <div key={w.id} className="flex items-center gap-3">
+                        <span
+                          className="h-10 w-14 shrink-0 rounded-lg"
+                          style={{ background: gradientFor(w.id) }}
+                        />
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-sm font-medium text-primary">
+                            {workTitle(w)}
+                          </div>
+                          <div className="font-mono text-[11px] text-muted">
+                            {w.sourceLang.toUpperCase()}→
+                            {w.targetLang.toUpperCase()} ·{" "}
+                            {fmtDur(w.durationSec)}
+                          </div>
                         </div>
-                        <div className="font-mono text-[11px] text-muted">
-                          {w.sourceLang.toUpperCase()}→
-                          {w.targetLang.toUpperCase()} · {fmtDur(w.durationSec)}
-                        </div>
-                      </div>
-                      {w.outputUrl && (
-                        <a
-                          href={mediaUrl(w.outputUrl)}
-                          download
-                          aria-label="Download"
-                          className="focusable grid h-8 w-8 place-items-center rounded-full text-muted hover:bg-sunken hover:text-primary"
-                        >
-                          <svg
-                            viewBox="0 0 24 24"
-                            className="h-4 w-4"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="1.6"
-                            strokeLinecap="round"
-                            strokeLinejoin="round"
+                        {w.outputUrl && (
+                          <a
+                            href={mediaUrl(w.outputUrl)}
+                            download
+                            aria-label="Download"
+                            className="focusable grid h-8 w-8 place-items-center rounded-full text-muted hover:bg-sunken hover:text-primary"
                           >
-                            <path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14" />
-                          </svg>
-                        </a>
-                      )}
-                    </div>
-                  ))}
+                            <svg
+                              viewBox="0 0 24 24"
+                              className="h-4 w-4"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="1.6"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            >
+                              <path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14" />
+                            </svg>
+                          </a>
+                        )}
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
 
-            {/* Tips */}
-            <div className="card p-5">
-              <SectionMark>Tips</SectionMark>
-              <div className="mt-3 flex items-start gap-3">
-                <span className="icon-tile mt-0.5 h-8 w-8 shrink-0 bg-warn/15 text-warn">
-                  <svg
-                    viewBox="0 0 24 24"
-                    className="h-4 w-4"
-                    fill="currentColor"
-                  >
-                    <path d="m12 3 2.4 5.3 5.8.5-4.4 3.8 1.3 5.6L12 20.9 6.9 18.8l1.3-5.6L3.8 8.8l5.8-.5z" />
-                  </svg>
-                </span>
-                <AnimatePresence mode="wait">
-                  <motion.p
-                    key={tip}
-                    initial={{ opacity: 0, y: 6 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -6 }}
-                    transition={{ duration: 0.3 }}
-                    className="min-h-[2.5rem] flex-1 text-sm text-secondary"
-                  >
-                    {TIPS[tip]}
-                  </motion.p>
-                </AnimatePresence>
-              </div>
-              <div className="mt-3 flex gap-1.5">
-                {TIPS.map((_, i) => (
+              {/* Tips */}
+              <div className="card p-5">
+                <SectionMark>Tips</SectionMark>
+                <div className="mt-3 flex items-start gap-3">
+                  <span className="icon-tile mt-0.5 h-8 w-8 shrink-0 bg-warn/15 text-warn">
+                    <svg
+                      viewBox="0 0 24 24"
+                      className="h-4 w-4"
+                      fill="currentColor"
+                    >
+                      <path d="m12 3 2.4 5.3 5.8.5-4.4 3.8 1.3 5.6L12 20.9 6.9 18.8l1.3-5.6L3.8 8.8l5.8-.5z" />
+                    </svg>
+                  </span>
+                  <AnimatePresence mode="wait">
+                    <motion.p
+                      key={tip}
+                      initial={{ opacity: 0, y: 6 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -6 }}
+                      transition={{ duration: 0.3 }}
+                      className="min-h-[2.5rem] flex-1 text-sm text-secondary"
+                    >
+                      {TIPS[tip]}
+                    </motion.p>
+                  </AnimatePresence>
+                </div>
+                <div className="mt-3 flex items-center justify-between gap-3">
+                  <div className="flex gap-1.5">
+                    {TIPS.map((_, i) => (
+                      <button
+                        key={i}
+                        onClick={() => setTip(i)}
+                        aria-label={`Tip ${i + 1}`}
+                        className={`h-1.5 rounded-full transition-all ${i === tip ? "w-5 bg-brand" : "w-1.5 bg-strong"}`}
+                      />
+                    ))}
+                  </div>
                   <button
-                    key={i}
-                    onClick={() => setTip(i)}
-                    aria-label={`Tip ${i + 1}`}
-                    className={`h-1.5 rounded-full transition-all ${i === tip ? "w-5 bg-brand" : "w-1.5 bg-strong"}`}
-                  />
-                ))}
+                    type="button"
+                    onClick={() => setTourOpen(true)}
+                    className="focusable font-mono text-[11px] text-brand hover:underline"
+                  >
+                    Replay the guide →
+                  </button>
+                </div>
               </div>
             </div>
           </motion.div>
@@ -763,59 +1115,57 @@ export default function Studio() {
             transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
             className="space-y-4"
           >
-            {/* Job header with ring progress */}
-            <div className="card flex items-center justify-between gap-3 p-5">
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-medium text-primary">
-                    {running
-                      ? "Running pipeline"
-                      : completed
-                        ? "Dub complete"
-                        : failed
-                          ? "Pipeline failed"
-                          : "Queued"}
-                  </span>
-                  <span
-                    className={`rounded-full px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide ${job.simulated ? "bg-warn/15 text-warn" : "bg-success/15 text-success"}`}
-                  >
-                    {job.simulated ? "simulation" : "live"}
-                  </span>
+            {/* The same monitor, now carrying the real run. */}
+            <div data-tour="tour-monitor" className="card p-5">
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium text-primary">
+                      {running
+                        ? "Running pipeline"
+                        : completed
+                          ? "Dub complete"
+                          : failed
+                            ? "Pipeline failed"
+                            : "Queued"}
+                    </span>
+                    <span
+                      className={`rounded-full px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide ${job.simulated ? "bg-warn/15 text-warn" : "bg-success/15 text-success"}`}
+                    >
+                      {job.simulated ? "simulation" : "live"}
+                    </span>
+                  </div>
+                  <div className="mt-1 truncate font-mono text-xs text-muted">
+                    job {job.id} · {job.filename ?? "sample"} · →
+                    {targetLang.toUpperCase()}
+                  </div>
                 </div>
-                <div className="mt-1 truncate font-mono text-xs text-muted">
-                  job {job.id} · {job.filename ?? "sample"} · →
-                  {targetLang.toUpperCase()}
+                <div className="flex items-center gap-3">
+                  <RingProgress value={overall} />
+                  {(completed || failed) && (
+                    <button
+                      onClick={reset}
+                      className="btn-ghost focusable px-4 py-2 font-mono text-sm"
+                    >
+                      New dub
+                    </button>
+                  )}
                 </div>
               </div>
-              <div className="flex items-center gap-3">
-                <RingProgress value={overall} />
-                {(completed || failed) && (
-                  <button
-                    onClick={reset}
-                    className="btn-ghost focusable px-4 py-2 font-mono text-sm"
-                  >
-                    New dub
-                  </button>
-                )}
-              </div>
-            </div>
 
-            {/* Estimate, repurposed during/after a run */}
-            <div className="card flex items-center justify-between gap-3 p-5">
-              <div>
-                <SectionMark>Estimate</SectionMark>
-                <div className="mt-2 font-mono text-sm text-secondary">
-                  Spent <span className="text-primary">{cost}</span> ·{" "}
-                  {stageProgress.done}/{stageProgress.total} stages
-                </div>
+              <div className="mt-5">
+                <PipelineFlow nodes={liveNodes} />
               </div>
-              <div className="text-right font-mono">
-                <div className="text-2xl font-medium text-primary">
-                  {fmtElapsed(elapsed)}
-                </div>
-                <div className="text-[10px] uppercase tracking-[0.12em] text-muted">
+
+              <div className="mt-5 flex items-center justify-between border-t border-subtle pt-4 font-mono text-[11px] text-muted">
+                <span>
+                  {stageProgress.done}/{stageProgress.total} stages · {cost}{" "}
+                  credits
+                </span>
+                <span>
+                  <span className="text-primary">{fmtElapsed(elapsed)}</span>{" "}
                   elapsed
-                </div>
+                </span>
               </div>
             </div>
 
@@ -852,26 +1202,32 @@ export default function Studio() {
     </>
   );
 
-  // ── Desktop: fixed two-column shell (§2) ─────────────────────────────────
+  const tour = (
+    <TourOverlay steps={tourSteps} open={tourOpen} onClose={closeTour} />
+  );
+
+  // ── Desktop: fixed two-column shell ──────────────────────────────────────
   if (isDesktop) {
     return (
       <Page className="h-full min-h-0">
         <div className="grid h-full min-h-0 grid-cols-[380px_minmax(0,1fr)] gap-6">
-          <aside className="grid min-h-0 grid-rows-[minmax(0,1fr)_auto]">
-            <ScrollColumn ref={leftScrollRef} className="space-y-4 pr-0.5">
-              {configCards}
+          <aside className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)_auto] gap-3">
+            {deckHeader}
+            <ScrollColumn ref={leftScrollRef} className="space-y-2.5 pr-0.5">
+              {stepDeck}
             </ScrollColumn>
-            <div className="pt-4">{ctaBlock}</div>
+            <div>{ctaBlock}</div>
           </aside>
           <ScrollColumn ref={rightScrollRef} className="space-y-4 pr-0.5">
             {rightContent}
           </ScrollColumn>
         </div>
+        {tour}
       </Page>
     );
   }
 
-  // ── Mobile: single scrolling stack (§11) ─────────────────────────────────
+  // ── Mobile: single scrolling stack ───────────────────────────────────────
   return (
     <Page className="space-y-4 pb-28">
       <motion.div
@@ -882,7 +1238,7 @@ export default function Studio() {
       >
         <StatusChip tint="brand" label="Credits" value={`${balance}`} />
         <StatusChip
-          tint={running ? "warn" : "cyan"}
+          tint={running ? "warn" : "iris"}
           label="Pipeline"
           value={
             running
@@ -893,7 +1249,7 @@ export default function Studio() {
           }
         />
         <StatusChip
-          tint="magenta"
+          tint="rose"
           label="Last dub"
           value={
             lastWork
@@ -902,10 +1258,16 @@ export default function Studio() {
           }
         />
       </motion.div>
-      {configCards}
+      {deckHeader}
+      <div className="space-y-2.5">{stepDeck}</div>
       {rightContent}
-      {/* Fixed CTA bar above the tab bar */}
-      <div className="glass fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+3.5rem)] z-30 flex items-center gap-3 px-4 py-2.5">
+      {/* Fixed CTA bar above the tab bar. It is the run control on mobile — the
+          desktop run card would be a second Start button on the same screen —
+          so it carries the walkthrough's anchor too. */}
+      <div
+        data-tour="tour-run"
+        className="glass fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+3.5rem)] z-30 flex items-center gap-3 px-4 py-2.5"
+      >
         <span className="font-mono text-sm text-secondary">{cost} credits</span>
         <button
           onClick={start}
@@ -919,61 +1281,18 @@ export default function Studio() {
               : "Start dubbing →"}
         </button>
       </div>
+      {tour}
     </Page>
   );
 }
 
-// ── Tips + pipeline preview data ───────────────────────────────────────────
+// ── Tips ───────────────────────────────────────────────────────────────────
 const TIPS = [
   "Keep clips under a couple of minutes for the fastest turnaround.",
   "Voice cloning needs clear, single-speaker audio to match the original best.",
   "Lip sync earns its cost on close-up talking-head footage, less so on voiceover.",
   "The built-in sample ships translations for UZ, RU, ES, FR and DE.",
 ];
-
-function pipelinePreview(
-  voiceClone: boolean,
-  lipSync: boolean,
-  keepBackground: boolean,
-  targetLang: string,
-) {
-  return [
-    {
-      name: "Transcribe",
-      desc: "speech to text (Whisper)",
-      icon: <path d="M4 6h16M4 12h10M4 18h7" />,
-      skipped: false,
-    },
-    {
-      name: "Translate",
-      desc: `into ${targetLang.toUpperCase()} (NLLB)`,
-      icon: (
-        <path d="M4 5h7M8 3v2c0 4-2 7-5 8m3-4c0 3 3 5 6 6M14 20l4-9 4 9M15.5 17h5" />
-      ),
-      skipped: false,
-    },
-    {
-      name: "Clone voice",
-      desc: "keep the speaker",
-      icon: <path d="M3 12h3l2-6 3 15 3-12 2 5h4" />,
-      skipped: !voiceClone,
-    },
-    {
-      name: "Sync lips",
-      desc: "match the mouth",
-      icon: <path d="M3 12c3-3 15-3 18 0-3 4-15 4-18 0zM7 12h10" />,
-      skipped: !lipSync,
-    },
-    {
-      name: "Mix",
-      desc: "keep music & effects",
-      icon: (
-        <path d="M9 18V5l12-2v13M6 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0zm15-2a3 3 0 1 1-6 0 3 3 0 0 1 6 0z" />
-      ),
-      skipped: !keepBackground,
-    },
-  ];
-}
 
 // ── Small presentational helpers ───────────────────────────────────────────
 function fmtDur(sec: number | null): string {
@@ -990,14 +1309,38 @@ function fmtElapsed(ms: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-// The animated 44×24 switch track (§9) — animates transform, not left.
-function SwitchTrack({ on, accent }: { on: boolean; accent?: "cyan" }) {
+// The language pair on the monitor — flag, name, and the target in brand.
+function LangBadge({
+  flag,
+  label,
+  accent,
+}: {
+  flag: string
+  label: string
+  accent?: boolean
+}) {
+  return (
+    <span className="inline-flex items-center gap-2">
+      <span className="grid h-9 w-9 place-items-center rounded-control bg-sunken text-lg" aria-hidden>
+        {flag}
+      </span>
+      <span
+        className={`font-mono text-sm font-medium ${accent ? "text-brand" : "text-primary"}`}
+      >
+        {label}
+      </span>
+    </span>
+  );
+}
+
+// The animated 44×24 switch track — animates transform, not left.
+function SwitchTrack({ on, accent }: { on: boolean; accent?: "iris" }) {
   return (
     <span
       className={`relative h-6 w-11 shrink-0 rounded-full transition-colors duration-200 ${
         on
-          ? accent === "cyan"
-            ? "bg-cyan"
+          ? accent === "iris"
+            ? "bg-iris"
             : "bg-brand"
           : "bg-sunken shadow-[inset_0_0_0_1px_rgb(var(--c-border-strong))]"
       }`}
@@ -1051,14 +1394,14 @@ function StatusChip({
   label,
   value,
 }: {
-  tint: "brand" | "cyan" | "magenta" | "warn";
+  tint: "brand" | "iris" | "rose" | "warn";
   label: string;
   value: string;
 }) {
   const tintClass = {
     brand: "text-brand",
-    cyan: "text-cyan",
-    magenta: "text-magenta",
+    iris: "text-iris",
+    rose: "text-rose",
     warn: "text-warn",
   }[tint];
   return (
@@ -1075,19 +1418,7 @@ function StatusChip({
   );
 }
 
-// `01 SOURCE` — index in brand, word in muted, uppercase mono (§4).
-function GroupLabel({ n, title }: { n: string; title: string }) {
-  return (
-    <div className="flex items-center gap-2">
-      <span className="font-mono text-[10px] text-brand">{n}</span>
-      <span className="font-mono text-[10px] font-medium uppercase tracking-[0.12em] text-muted">
-        {title}
-      </span>
-    </div>
-  );
-}
-
-// `/ SECTION` marker (§4).
+// `/ SECTION` marker.
 function SectionMark({ children }: { children: ReactNode }) {
   return (
     <span className="font-mono text-[10px] font-medium uppercase tracking-[0.12em] text-muted">

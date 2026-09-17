@@ -27,6 +27,8 @@ import {
   canDub,
   commitDub,
   getCheckoutUrl,
+  getCreditCheckoutUrl,
+  getCreditPacks,
   getCredits,
   getHistory,
   getPlans,
@@ -36,6 +38,8 @@ import {
   type CanDubResult,
   type CheckoutResponse,
   type CommitDubResult,
+  type CreditCheckoutResponse,
+  type CreditPacksResponse,
   type CreditsResponse,
   type HistoryResponse,
   type PlansResponse,
@@ -108,6 +112,21 @@ export function usePlans(): UseQueryResult<PlansResponse> {
   return useQuery({ queryKey: qk.plans(), queryFn: getPlans, staleTime: 5 * 60_000 })
 }
 
+/**
+ * GET /v1/payments/credit-packs — the one-time credit catalog.
+ *
+ * Never fails: the client falls back to the built-in pricing when the endpoint
+ * is not deployed, so this query has no error state to render. Cached like the
+ * plan catalog because it changes about as often.
+ */
+export function useCreditPacks(): UseQueryResult<CreditPacksResponse> {
+  return useQuery({
+    queryKey: qk.creditPacks(),
+    queryFn: getCreditPacks,
+    staleTime: 5 * 60_000,
+  })
+}
+
 /** GET /v1/payments/subscription. */
 export function useSubscription(enabled = true): UseQueryResult<{ subscription: Subscription | null }> {
   return useQuery({ queryKey: qk.subscription(), queryFn: getSubscription, enabled })
@@ -142,6 +161,15 @@ export function useCheckout(): UseMutationResult<
   { tier: Exclude<PlanTier, 'FREE'>; cycle: BillingCycle }
 > {
   return useMutation({ mutationFn: ({ tier, cycle }) => getCheckoutUrl(tier, cycle) })
+}
+
+/** Same as useCheckout, for a one-time credit pack rather than a subscription. */
+export function useCreditCheckout(): UseMutationResult<
+  CreditCheckoutResponse,
+  Error,
+  { packId: string }
+> {
+  return useMutation({ mutationFn: ({ packId }) => getCreditCheckoutUrl(packId) })
 }
 
 /** POST /v1/payments/subscription/cancel (at period end). */

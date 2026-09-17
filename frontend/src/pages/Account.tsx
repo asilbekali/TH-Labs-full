@@ -94,7 +94,7 @@ export default function Account() {
           <div className="flex items-center gap-4">
             <span
               className="grid h-14 w-14 shrink-0 place-items-center rounded-full text-lg font-bold text-white shadow-md"
-              style={{ background: "var(--grad-brand)" }}
+              style={{ background: "var(--grad-brand-deep)" }}
             >
               {initials}
             </span>
@@ -160,7 +160,7 @@ export default function Account() {
           >
             <div
               className="absolute inset-0 -z-10"
-              style={{ background: "var(--grad-brand)" }}
+              style={{ background: "var(--grad-brand-deep)" }}
             />
             <div className="text-xs font-semibold uppercase tracking-[0.14em] text-white/85">
               Balance
@@ -171,7 +171,7 @@ export default function Account() {
             </div>
             <Link
               to="/plans"
-              className="focusable mt-5 inline-flex rounded-control bg-[rgb(250_249_245)] px-5 py-2.5 text-sm font-medium text-[rgb(30_29_27)] hover:bg-white"
+              className="focusable mt-5 inline-flex rounded-control bg-[rgb(248_250_253)] px-5 py-2.5 text-sm font-medium text-[rgb(15_23_35)] hover:bg-white"
             >
               Manage plan &amp; credits
             </Link>

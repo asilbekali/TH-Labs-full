@@ -3,9 +3,10 @@
 // A dub's thumbnail would ideally be a frame from the source video, but the
 // pipeline does not extract one, so a card falls back to a gradient derived
 // from the job id: same id → same artwork, forever, with no image request.
-// Hues stay inside the warm Claude family (clay → terracotta → tan → olive) so
-// a wall of these still reads as one palette.
-const HUES = [18, 24, 12, 32, 8, 40]
+// Hues stay inside the Ishkor family — the glaze itself (192°) through
+// turquoise and into the iris end (168–252°) — so a wall of these reads as one
+// palette in both themes instead of a fruit salad.
+const HUES = [192, 176, 205, 168, 222, 252]
 
 function hash(id: string): number {
   let h = 2166136261

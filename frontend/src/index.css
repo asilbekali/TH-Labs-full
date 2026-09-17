@@ -52,19 +52,29 @@
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
-   TH-Labs — dual-theme design tokens (Tailwind v4, CSS-first)
+   TH-Labs — "Ishkor": dual-theme design tokens (Tailwind v4, CSS-first)
 
-   The visual language follows Claude: warm and paper-like rather than the
-   cool glassy SaaS default. Light mode is a cream canvas (#F0EEE6) with
-   slightly-lifted ivory cards; dark mode is warm charcoal, never blue-black.
-   The single accent is Claude's clay/terracotta — used sparingly, on flat
-   fills instead of gradients, so it stays a signal rather than decoration.
+   The palette is ours, and it comes from where the product does. Ishkor is the
+   ash glaze of Rishtan pottery — the deep turquoise-cobalt that a Fergana
+   workshop fires onto white clay. That gives us a signature nobody else in
+   this category is using, and a natural pair of modes:
 
-   Every color is a raw "R G B" channel triplet so Tailwind can apply /alpha;
-   the themes swap the triplets and components never hardcode a hex. The
-   accent slots keep their historical names (`cyan`, `magenta`) because they
-   are referenced across every page — only the values changed, to the two
-   warm companions in Claude's palette (cactus green and dusty rose).
+     Light — PORCELAIN. A cool bone-white canvas (#EDF1F5) with cards fired a
+     shade brighter, ink-navy type, and the glaze as the one saturated colour.
+     Not grey: there is blue in the white, the way there is in real porcelain.
+
+     Dark — INK. Deep blue-black (#0B0F16), never neutral charcoal, with the
+     glaze lifted to a bright turquoise that actually glows against it. The
+     mode is a different firing of the same two materials, not an inversion.
+
+   Two companions carry the rest: IRIS (indigo-violet) and ROSE (deep pink),
+   spaced far enough around the wheel to stay legible next to the glaze and
+   next to success/warn/danger.
+
+   Every colour is a raw "R G B" channel triplet so Tailwind can apply /alpha;
+   the themes swap the triplets and components never hardcode a hex. Both
+   modes are tuned so text, not just decoration, clears WCAG AA on its own
+   background — including the two accents.
    ───────────────────────────────────────────────────────────────────────── */
 
 @theme {
@@ -89,18 +99,19 @@
 
   --color-brand: rgb(var(--c-brand-500));
   --color-brand-400: rgb(var(--c-brand-400));
-  --color-cyan: rgb(var(--c-accent-cyan));
-  --color-magenta: rgb(var(--c-accent-magenta));
+  --color-iris: rgb(var(--c-accent-iris));
+  --color-rose: rgb(var(--c-accent-rose));
 
   --color-success: rgb(var(--c-success));
   --color-warn: rgb(var(--c-warn));
   --color-danger: rgb(var(--c-danger));
   --color-info: rgb(var(--c-info));
 
-  /* Radii — tightened from the previous 20px/14px. Claude's surfaces are
-     softened rectangles, not capsules; only true pills use --radius-pill. */
-  --radius-card: 0.875rem;     /* 14px */
-  --radius-control: 0.625rem;  /* 10px */
+  /* Radii — a touch rounder than before (16px cards), which is what keeps a
+     dense two-column workbench from reading as a spreadsheet. Only true pills
+     use --radius-pill. */
+  --radius-card: 1rem;         /* 16px */
+  --radius-control: 0.6875rem; /* 11px */
   --radius-pill: 999px;
 
   /* Motion */
@@ -108,84 +119,105 @@
   --ease-exit: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* ── Light theme (default) ─────────────────────────────────────────────── */
+/* ── Light theme · PORCELAIN (default) ─────────────────────────────────── */
 :root,
 :root[data-theme='light'] {
   color-scheme: light;
 
-  --c-canvas: 240 238 230;        /* #F0EEE6 — Claude's cream paper */
-  --c-surface: 250 249 245;       /* #FAF9F5 — ivory card, not pure white */
-  --c-raised: 255 254 252;
-  --c-sunken: 235 232 222;
+  --c-canvas: 237 241 245;        /* #EDF1F5 — bone white with blue in it */
+  --c-surface: 250 251 253;       /* #FAFBFD — the card, fired brighter */
+  --c-raised: 255 255 255;
+  --c-sunken: 228 233 240;        /* #E4E9F0 — pressed wells and tracks */
 
-  --c-border-subtle: 226 222 210;
-  --c-border-strong: 205 199 184;
+  --c-border-subtle: 219 226 234;
+  --c-border-strong: 194 204 217;
 
-  --c-text-primary: 30 29 27;     /* #1E1D1B — warm near-black */
-  --c-text-secondary: 91 87 79;
-  --c-text-muted: 138 132 121;
+  --c-text-primary: 15 23 35;     /* #0F1723 — ink navy, not black */
+  --c-text-secondary: 72 87 105;
+  --c-text-muted: 122 136 155;
 
-  --c-brand-500: 193 95 60;       /* #C15F3C — clay, darkened for AA on cream */
-  --c-brand-400: 217 119 87;      /* #D97757 — Claude orange */
-  --c-accent-cyan: 74 129 118;    /* cactus green — the cool companion */
-  --c-accent-magenta: 166 100 91; /* dusty rose */
+  --c-brand-500: 11 102 133;      /* #0B6685 — ishkor glaze, AA on porcelain */
+  --c-brand-400: 14 120 152;      /* #0E7898 — one firing lighter (hover) */
+  --c-accent-iris: 79 79 196;     /* #4F4FC4 — indigo-violet */
+  --c-accent-rose: 183 58 110;    /* #B73A6E — deep pink */
 
-  --c-success: 61 126 94;
-  --c-warn: 176 118 32;
-  --c-danger: 187 63 51;
-  --c-info: 74 111 150;
+  --c-success: 17 116 85;
+  --c-warn: 158 96 6;
+  --c-danger: 190 45 51;
+  --c-info: 29 105 178;
 
-  /* Claude's surfaces are flat. This stays a gradient only because a handful
-     of components (the balance card, the logo wordmark) need a fill with
-     depth; it is a two-stop warm ramp, not a rainbow. */
-  --grad-brand: linear-gradient(120deg, rgb(193 95 60) 0%, rgb(217 119 87) 100%);
+  /* Surfaces are flat; these two ramps exist for the handful of components
+     that need a fill with depth. `--grad-brand` follows the theme (so a
+     progress bar or the wordmark reads correctly against this canvas), while
+     `--grad-brand-deep` stays dark in BOTH modes because white type sits on
+     it — the avatar and the balance card. */
+  --grad-brand: linear-gradient(120deg, rgb(11 102 133) 0%, rgb(16 140 152) 100%);
+  --grad-brand-deep: linear-gradient(120deg, rgb(11 90 120) 0%, rgb(14 126 140) 100%);
 
-  /* Shadows are tinted with the canvas's warmth so cards do not look grey. */
-  --shadow-sm: 0 1px 2px rgb(75 60 45 / 0.05), 0 1px 3px rgb(75 60 45 / 0.04);
-  --shadow-md: 0 4px 12px -4px rgb(75 60 45 / 0.10), 0 2px 5px -2px rgb(75 60 45 / 0.06);
-  --shadow-lg: 0 20px 40px -18px rgb(75 60 45 / 0.18), 0 6px 16px -10px rgb(75 60 45 / 0.12);
+  /* Shadows carry the canvas's blue, so cards sit on paper rather than smog. */
+  --shadow-sm: 0 1px 2px rgb(17 38 66 / 0.06), 0 1px 3px rgb(17 38 66 / 0.04);
+  --shadow-md: 0 4px 12px -4px rgb(17 38 66 / 0.12), 0 2px 5px -2px rgb(17 38 66 / 0.07);
+  --shadow-lg: 0 20px 40px -18px rgb(17 38 66 / 0.20), 0 6px 16px -10px rgb(17 38 66 / 0.13);
+
+  --ambient:
+    radial-gradient(56rem 56rem at 2% -14%, rgb(var(--c-brand-400) / 0.15), transparent 60%),
+    radial-gradient(46rem 46rem at 104% -2%, rgb(var(--c-accent-iris) / 0.09), transparent 56%),
+    radial-gradient(44rem 32rem at 62% 110%, rgb(var(--c-brand-400) / 0.09), transparent 60%);
 
   /* surface treatments (used by component classes) */
-  --card-bg: rgb(250 249 245);
+  --card-bg: rgb(250 251 253);
+  --card-sheen: 0 0 rgb(0 0 0 / 0); /* the glaze highlight is a dark-mode trick */
   --card-shadow: var(--shadow-sm);
-  --rail-bg: rgb(250 249 245 / 0.78);
+  --rail-bg: rgb(250 251 253 / 0.78);
 }
 
-/* ── Dark theme ────────────────────────────────────────────────────────── */
+/* ── Dark theme · INK ──────────────────────────────────────────────────── */
 :root[data-theme='dark'] {
   color-scheme: dark;
 
-  --c-canvas: 20 20 19;           /* #141413 — warm charcoal, never blue-black */
-  --c-surface: 31 30 29;          /* #1F1E1D */
-  --c-raised: 42 41 39;           /* #2A2927 */
-  --c-sunken: 26 25 24;
+  --c-canvas: 11 15 22;           /* #0B0F16 — blue-black, never neutral grey */
+  --c-surface: 18 24 33;          /* #121821 */
+  --c-raised: 27 34 46;           /* #1B222E */
+  --c-sunken: 14 19 27;
 
-  --c-border-subtle: 55 53 50;
-  --c-border-strong: 79 76 71;
+  --c-border-subtle: 35 45 60;
+  --c-border-strong: 57 71 91;
 
-  --c-text-primary: 245 244 239;  /* #F5F4EF — warm off-white */
-  --c-text-secondary: 179 174 164;
-  --c-text-muted: 133 128 119;
+  --c-text-primary: 233 238 245;  /* #E9EEF5 — cool off-white */
+  --c-text-secondary: 163 176 194;
+  --c-text-muted: 117 130 149;
 
-  --c-brand-500: 217 119 87;      /* #D97757 — Claude orange reads best on dark */
-  --c-brand-400: 232 150 121;
-  --c-accent-cyan: 122 168 156;   /* cactus green, lifted */
-  --c-accent-magenta: 201 142 132;
+  --c-brand-500: 45 178 214;      /* #2DB2D6 — the glaze, lifted so it glows */
+  --c-brand-400: 109 209 236;     /* #6DD1EC */
+  --c-accent-iris: 139 139 246;   /* #8B8BF6 */
+  --c-accent-rose: 234 133 178;   /* #EA85B2 */
 
-  --c-success: 106 168 129;
-  --c-warn: 216 163 74;
-  --c-danger: 224 108 95;
-  --c-info: 130 165 202;
+  --c-success: 61 191 142;
+  --c-warn: 232 173 74;
+  --c-danger: 240 113 103;
+  --c-info: 109 169 234;
 
-  --grad-brand: linear-gradient(120deg, rgb(193 95 60) 0%, rgb(217 119 87) 100%);
+  /* Bright here, because on ink a deep ramp would disappear; the deep ramp is
+     kept separately for the surfaces that carry white type. */
+  --grad-brand: linear-gradient(120deg, rgb(35 156 196) 0%, rgb(78 214 205) 100%);
+  --grad-brand-deep: linear-gradient(120deg, rgb(11 90 120) 0%, rgb(14 126 140) 100%);
 
-  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.35);
-  --shadow-md: 0 6px 18px -10px rgb(0 0 0 / 0.5);
-  --shadow-lg: 0 24px 48px -22px rgb(0 0 0 / 0.62);
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.45);
+  --shadow-md: 0 6px 18px -10px rgb(0 0 0 / 0.6);
+  --shadow-lg: 0 24px 48px -22px rgb(0 0 0 / 0.7);
 
-  --card-bg: rgb(31 30 29);
+  --ambient:
+    radial-gradient(56rem 56rem at 2% -14%, rgb(var(--c-brand-500) / 0.13), transparent 62%),
+    radial-gradient(46rem 46rem at 104% -2%, rgb(var(--c-accent-iris) / 0.10), transparent 58%),
+    radial-gradient(44rem 32rem at 62% 110%, rgb(var(--c-brand-500) / 0.07), transparent 60%);
+
+  --card-bg: rgb(18 24 33);
+  /* The glaze highlight: a 1px light line along the top of every card, the way
+     a fired surface catches the light. It is what stops the dark mode from
+     looking like flat construction paper. */
+  --card-sheen: inset 0 1px 0 rgb(198 228 245 / 0.06);
   --card-shadow: var(--shadow-sm);
-  --rail-bg: rgb(31 30 29 / 0.78);
+  --rail-bg: rgb(18 24 33 / 0.78);
 }
 
 html { scroll-behavior: smooth; }
@@ -216,16 +248,16 @@ body {
   transition: background-color 0.25s var(--ease-exit), color 0.25s var(--ease-exit);
 }
 
-/* Ambient warmth behind everything. Claude's canvas is close to flat, so this
-   is a whisper — just enough to keep a large empty page from reading as grey. */
+/* The glaze pooling in the corners — three whispers of colour, never a
+   gradient you could name. Each theme mixes its own (see --ambient): on
+   porcelain the pools have to be drawn with the LIGHTER glaze, because a dark
+   teal at low alpha over white just reads as grey. */
 body::before {
   content: '';
   position: fixed;
   inset: 0;
   z-index: -2;
-  background:
-    radial-gradient(52rem 52rem at 6% -10%, rgb(var(--c-brand-500) / 0.06), transparent 62%),
-    radial-gradient(44rem 44rem at 100% 2%, rgb(var(--c-accent-cyan) / 0.045), transparent 58%);
+  background: var(--ambient);
   transition: opacity 0.25s var(--ease-exit);
 }
 
@@ -241,8 +273,8 @@ body::before {
 
 /* ── Reusable component classes ─────────────────────────────────────────── */
 @layer components {
-  /* Kept as a gradient for the one-word accents in page titles, but it is now
-     a short clay→orange ramp rather than a violet-to-cyan sweep. */
+  /* The one-word accent in page titles. Follows the theme, so it is a deep
+     glaze on porcelain and a bright one on ink. */
   .gradient-text {
     background: var(--grad-brand);
     -webkit-background-clip: text;
@@ -256,12 +288,13 @@ body::before {
     backdrop-filter: blur(16px);
   }
 
-  /* Soft rounded surface card — the core bento primitive. */
+  /* Soft rounded surface card — the core bento primitive. The sheen is the
+     fired-glaze highlight along the top edge (dark mode only; see tokens). */
   .card {
     background: var(--card-bg);
     border: 1px solid rgb(var(--c-border-subtle));
     border-radius: var(--radius-card);
-    box-shadow: var(--card-shadow);
+    box-shadow: var(--card-shadow), var(--card-sheen);
   }
 
   .card-hover {
@@ -271,15 +304,17 @@ body::before {
   .card-hover:hover {
     transform: translateY(-2px);
     border-color: rgb(var(--c-border-strong));
-    box-shadow: var(--shadow-md);
+    box-shadow: var(--shadow-md), var(--card-sheen);
   }
 
-  /* Flat clay fill — Claude's primary button does not glow or gradient-shift.
-     Feedback is a small darkening plus a 1px lift. */
+  /* A flat glaze fill — no glow, no gradient-shift. Feedback is one firing
+     lighter plus a 1px lift. The label is the canvas colour, which is how the
+     same rule gives porcelain type on deep glaze in light mode and ink type on
+     bright glaze in dark: contrast holds in both without a second token. */
   .btn-primary {
     position: relative;
     background: rgb(var(--c-brand-500));
-    color: rgb(250 249 245);
+    color: rgb(var(--c-canvas));
     font-weight: 500;
     border-radius: var(--radius-control);
     box-shadow: var(--shadow-sm);

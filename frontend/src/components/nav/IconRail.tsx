@@ -67,11 +67,14 @@ export default function IconRail({
                     <motion.span
                       layoutId="rail-active"
                       transition={{ type: 'spring', stiffness: 380, damping: 32 }}
-                      className="absolute inset-0 rounded-full bg-[#1A1922] dark:bg-brand"
+                      className="absolute inset-0 rounded-full bg-[rgb(15_23_35)] dark:bg-brand"
                     />
                   )}
                   {!isActive && <span className="absolute inset-0 rounded-full bg-sunken transition-colors group-hover/nav:bg-subtle" />}
-                  <span className={`relative z-10 ${isActive ? 'text-white' : 'text-secondary transition-colors group-hover/nav:text-primary'}`}>
+                  {/* Active: a white glyph on the ink pill in light mode, and
+                      an ink glyph on the bright glaze pill in dark — the fill
+                      inverts between themes, so the glyph has to as well. */}
+                  <span className={`relative z-10 ${isActive ? 'text-white dark:text-canvas' : 'text-secondary transition-colors group-hover/nav:text-primary'}`}>
                     <RailSvg icon={item.icon} className="h-[17px] w-[17px]" />
                   </span>
                 </>
