@@ -21,6 +21,7 @@ import { API_NAME, API_VERSION } from './version';
 // Override with a comma-separated CORS_ORIGINS when an origin changes — the
 // Studio's Modal URL in particular is account-scoped and will differ per
 // deployment.
+
 const DEFAULT_CORS_ORIGINS = [
   'https://isoqovjorabek2--th-labs-dubbing-web.modal.run',
   'http://localhost:5173',
