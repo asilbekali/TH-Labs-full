@@ -2,6 +2,8 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import Page from "../components/Page";
+import SpotlightCard from "../components/SpotlightCard";
+import MagneticButton from "../components/MagneticButton";
 import { MarkDivider } from "../components/brand/LogoMark";
 import { rise, stagger } from "../lib/motion";
 import { useAuth } from "../lib/auth";
@@ -90,7 +92,7 @@ export default function Account() {
         className="grid gap-6 lg:grid-cols-[1.5fr_1fr]"
       >
         {/* Profile */}
-        <motion.div variants={rise} className="card p-6">
+        <SpotlightCard className="p-6">
           <div className="flex items-center gap-4">
             <span
               className="grid h-14 w-14 shrink-0 place-items-center rounded-full text-lg font-bold text-white shadow-md"
@@ -142,42 +144,41 @@ export default function Account() {
               </p>
             )}
 
-            <button
+            <MagneticButton
               type="submit"
               disabled={!dirty || save.isPending}
               className="btn-primary focusable px-5 py-2.5 text-sm disabled:opacity-50"
             >
               {save.isPending ? "Saving…" : "Save changes"}
-            </button>
+            </MagneticButton>
           </form>
-        </motion.div>
+        </SpotlightCard>
 
         {/* Side column */}
         <div className="space-y-6">
+          {/* Same treatment as the Studio's run card: a deep surface with the
+              mesh drifting behind it, so the one number that matters on this
+              page is also the one thing on it that moves. */}
           <motion.div
             variants={rise}
-            className="relative overflow-hidden rounded-[var(--radius-card)] p-6 text-white shadow-[var(--shadow-lg)]"
+            className="deep-card aurora grain p-6 shadow-[var(--shadow-lg)]"
           >
-            <div
-              className="absolute inset-0 -z-10"
-              style={{ background: "var(--grad-brand-deep)" }}
-            />
-            <div className="text-xs font-semibold uppercase tracking-[0.14em] text-white/85">
+            <div className="above text-xs font-semibold uppercase tracking-[0.14em] on-deep-dim">
               Balance
             </div>
-            <div className="mt-3 text-4xl font-bold">{balance}</div>
-            <div className="mt-1 text-sm text-white/85">
+            <div className="above mt-3 text-4xl font-bold">{balance}</div>
+            <div className="above mt-1 text-sm on-deep-dim">
               credits · {planInfo.name} plan
             </div>
             <Link
               to="/plans"
-              className="focusable mt-5 inline-flex rounded-control bg-[rgb(248_250_253)] px-5 py-2.5 text-sm font-medium text-[rgb(15_23_35)] hover:bg-white"
+              className="btn-on-deep focusable above mt-5 inline-flex px-5 py-2.5 text-sm"
             >
               Manage plan &amp; credits
             </Link>
           </motion.div>
 
-          <motion.div variants={rise} className="card p-6">
+          <SpotlightCard className="p-6">
             <div className="text-sm font-semibold text-primary">Session</div>
             <p className="mt-1 text-sm text-muted">Sign out of this device.</p>
             <button
@@ -205,7 +206,7 @@ export default function Account() {
               </svg>
               {loggingOut ? "Signing out…" : "Sign out"}
             </button>
-          </motion.div>
+          </SpotlightCard>
         </div>
       </motion.div>
     </Page>

@@ -9,7 +9,11 @@
 //
 // The pipeline logic below — the credit gate, job creation, SSE/polling, the
 // mirror into the works library — is unchanged from the previous design. Only
-// the presentation is new.
+// the presentation is new: "Deep Violet", the loud end of the palette (see the
+// Studio block in index.css). The right column is a bento grid — three stat
+// tiles over the monitor, the estimate and the tips — and the run card is the
+// single saturated surface: deep violet, a mesh of light turning behind it,
+// pale type in both themes.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Link, useLocation } from "react-router-dom";
@@ -26,13 +30,30 @@ import ScrollColumn from "../components/layout/ScrollColumn";
 import Page from "../components/Page";
 import LogoMark from "../components/brand/LogoMark";
 import StepCard from "../components/studio/StepCard";
+import StatTile from "../components/studio/StatTile";
+import MagneticButton from "../components/MagneticButton";
+import Equalizer from "../components/studio/Equalizer";
+import ThinkingOrbs from "../components/ThinkingOrbs";
 import PipelineFlow from "../components/studio/PipelineFlow";
 import type { FlowNode } from "../components/studio/PipelineFlow";
 import TourOverlay from "../components/onboarding/TourOverlay";
 import type { TourStep } from "../components/onboarding/TourOverlay";
 import { useIsDesktop } from "../hooks/useMediaQuery";
-import { rise, stagger } from "../lib/motion";
-import { createJob, mediaUrl, pipelineDown, pollJob, subscribeJob } from "../lib/api";
+import { usePointerSpotlight } from "../hooks/usePointerSpotlight";
+import {
+  EASE_ENTRANCE,
+  EASE_EXIT,
+  rise,
+  stagger,
+  tapScale,
+} from "../lib/motion";
+import {
+  createJob,
+  mediaUrl,
+  pipelineDown,
+  pollJob,
+  subscribeJob,
+} from "../lib/api";
 import type { Job } from "../lib/types";
 import { useAuth } from "../lib/auth";
 import {
@@ -43,7 +64,12 @@ import {
   shouldAutoStartTour,
 } from "../lib/onboarding";
 import { useWallet, QUALITY_COST } from "../lib/wallet";
-import { useCanDub, useCommitDub, useHealth, useLanguages } from "../lib/queries";
+import {
+  useCanDub,
+  useCommitDub,
+  useHealth,
+  useLanguages,
+} from "../lib/queries";
 import { useWorks, workTitle } from "../lib/works";
 import { gradientFor } from "../lib/thumb";
 
@@ -168,6 +194,12 @@ export default function Studio() {
       (active.reduce((a, s) => a + s.progress, 0) / active.length) * 100,
     );
   }, [job]);
+
+  // The stage the pipeline is on right now — what the orbs are thinking about.
+  const activeStage = useMemo(
+    () => job?.stages.find((s) => s.status === "running")?.label ?? null,
+    [job],
+  );
 
   const stageProgress = useMemo(() => {
     if (!job) return { done: 0, total: 0 };
@@ -402,7 +434,9 @@ export default function Studio() {
   );
   const langFlag = useCallback(
     (code: string) =>
-      code === "auto" ? "🌐" : (languages.find((l) => l.code === code)?.flag ?? "🏳️"),
+      code === "auto"
+        ? "🌐"
+        : (languages.find((l) => l.code === code)?.flag ?? "🏳️"),
     [languages],
   );
 
@@ -565,36 +599,61 @@ export default function Studio() {
     !!touched.quality,
   ].filter(Boolean).length;
 
+  // ═══════════════════════════════════════════════════════════════════════
+  // Presentation — "Fired Glaze"
+  //
+  // The screen is a bento: a 380px setup rail on the left (deck header, the
+  // four steps, and the one saturated surface on the page carrying the run
+  // button), and on the right a grid of tiles that starts with three
+  // at-a-glance stats and opens into the monitor.
+  //
+  // Nothing below reaches into the pipeline. Every value it draws — cost,
+  // balance, health, stages, elapsed — was computed above and is untouched.
+  // ═══════════════════════════════════════════════════════════════════════
+
   // ── Left column: header, step deck, run bar ──────────────────────────────
   const deckHeader = (
     <div className="flex items-end justify-between gap-3 px-1">
       <div className="min-w-0">
-        <span className="font-mono text-[10px] font-medium uppercase tracking-[0.14em] text-brand">
+        <span className="font-mono text-[10px] font-medium uppercase tracking-[0.16em] text-brand">
           / 02 — Studio
         </span>
-        <div className="mt-1 flex items-center gap-2">
+        <div className="mt-1 flex items-baseline gap-2">
           <span className="font-mono text-[13px] font-medium text-primary">
             Set up your dub
           </span>
           <span className="font-mono text-[11px] text-muted">
-            {stepsDone}/4
+            <AnimatedNumber value={stepsDone} duration={350} />
+            /4
           </span>
         </div>
-        <div className="mt-1.5 flex gap-1">
+        {/* The progress rail. Each segment fills with the signature ramp when
+            its step is answered — a spring, so a step that flips back to
+            unanswered visibly drains rather than blinking off. */}
+        <div className="mt-2 flex gap-1.5">
           {[0, 1, 2, 3].map((i) => (
-            <motion.span
+            <span
               key={i}
-              initial={false}
-              animate={{ opacity: i < stepsDone ? 1 : 0.35 }}
-              className={`h-1 w-8 rounded-full ${i < stepsDone ? "bg-brand" : "bg-strong"}`}
-            />
+              className="relative h-1 w-8 overflow-hidden rounded-full bg-sunken"
+            >
+              <motion.span
+                className="absolute inset-0 rounded-full fill-signature"
+                initial={false}
+                animate={{ scaleX: i < stepsDone ? 1 : 0 }}
+                style={{ originX: 0 }}
+                transition={{ type: "spring", stiffness: 300, damping: 30 }}
+              />
+            </span>
           ))}
         </div>
       </div>
-      <button
+      <motion.button
         type="button"
         onClick={() => setTourOpen(true)}
         title="Show the walkthrough"
+        whileHover={{ y: -2 }}
+        whileTap={tapScale}
+        transition={{ type: "spring", stiffness: 400, damping: 26 }}
         className={`focusable inline-flex shrink-0 items-center gap-1.5 rounded-pill border px-3 py-1.5 font-mono text-[11px] transition-colors ${
           tourSeen
             ? "border-subtle text-muted hover:border-brand/40 hover:text-brand"
@@ -614,7 +673,7 @@ export default function Studio() {
           <circle cx="12" cy="12" r="9" />
         </svg>
         Guide
-      </button>
+      </motion.button>
     </div>
   );
 
@@ -640,7 +699,7 @@ export default function Studio() {
             setUseSample(next);
             if (next) setFile(null);
           }}
-          className="focusable flex w-full items-center justify-between gap-2.5 rounded-control border border-subtle bg-sunken px-3.5 py-3 text-left text-sm text-secondary disabled:opacity-60"
+          className="focusable group flex w-full items-center justify-between gap-2.5 rounded-control border border-subtle bg-sunken px-3.5 py-3 text-left text-sm text-secondary transition-colors hover:border-brand/35 disabled:opacity-60"
         >
           <span>Use the built-in sample clip</span>
           <SwitchTrack on={isSampleRun} />
@@ -675,7 +734,13 @@ export default function Studio() {
             }}
             allowAuto
           />
-          <div className="flex justify-center">
+          {/* The swap control sits on the hairline between the two selects, so
+              the pair reads as one instrument rather than two fields. */}
+          <div className="relative flex justify-center">
+            <span
+              aria-hidden
+              className="absolute inset-x-6 top-1/2 h-px -translate-y-1/2 bg-subtle"
+            />
             <motion.button
               type="button"
               onClick={() => {
@@ -683,9 +748,11 @@ export default function Studio() {
                 markTouched("languages");
               }}
               disabled={sourceLang === "auto"}
-              whileTap={{ rotate: 180 }}
+              whileHover={{ scale: 1.08 }}
+              whileTap={{ rotate: 180, scale: 0.94 }}
+              transition={{ type: "spring", stiffness: 420, damping: 24 }}
               aria-label="Swap source and target languages"
-              className="focusable -my-1 grid h-9 w-9 place-items-center rounded-full border border-subtle bg-surface text-secondary shadow-sm transition-colors hover:border-brand/50 hover:text-brand disabled:opacity-40"
+              className="focusable relative -my-1 grid h-9 w-9 place-items-center rounded-full border border-subtle bg-surface text-secondary shadow-sm transition-colors hover:border-brand/50 hover:text-brand disabled:opacity-40"
             >
               <svg
                 viewBox="0 0 24 24"
@@ -711,7 +778,12 @@ export default function Studio() {
           />
         </div>
         {sampleLangNote && (
-          <div className="flex items-start gap-2.5 rounded-lg border border-warn/25 bg-warn/[0.07] px-3 py-2.5 text-xs text-warn">
+          <motion.div
+            initial={{ opacity: 0, y: -6 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.25, ease: EASE_ENTRANCE }}
+            className="flex items-start gap-2.5 rounded-lg border border-warn/25 bg-warn/[0.07] px-3 py-2.5 text-xs text-warn"
+          >
             <span className="icon-tile mt-px h-6 w-6 shrink-0 bg-warn/15 text-warn">
               <svg
                 viewBox="0 0 24 24"
@@ -730,7 +802,7 @@ export default function Studio() {
               DE. Pick one of those to hear a real translation, or upload your
               own clip for full NLLB translation.
             </span>
-          </div>
+          </motion.div>
         )}
       </StepCard>
 
@@ -771,7 +843,7 @@ export default function Studio() {
             setLipSync(v);
             markTouched("options");
           }}
-          accent="iris"
+          accent="magenta"
           title="Lip sync (optional)"
           description="Reshape the speaker's mouth to match the translated speech (Wav2Lip)."
           icon={<path d="M3 12c3-3 15-3 18 0-3 4-15 4-18 0zM7 12h10" />}
@@ -798,11 +870,14 @@ export default function Studio() {
               disabled={running}
               className="focusable relative flex-1 rounded-[10px] px-3 py-2 font-mono text-xs font-medium transition-colors"
             >
+              {/* One pill that slides between the three options — the same
+                  element, so the movement is a layout animation rather than a
+                  fade between two pills. */}
               {quality === q.key && (
                 <motion.span
                   layoutId="quality-pill"
-                  transition={{ type: "spring", stiffness: 400, damping: 32 }}
-                  className="absolute inset-0 rounded-[10px] bg-brand/15 shadow-[inset_0_0_0_1px_rgb(var(--c-brand-500)/0.4)]"
+                  transition={{ type: "spring", stiffness: 420, damping: 34 }}
+                  className="absolute inset-0 rounded-[10px] bg-brand/15 shadow-[inset_0_0_0_1px_rgb(var(--c-brand-500)/0.45)]"
                 />
               )}
               <span
@@ -813,60 +888,146 @@ export default function Studio() {
             </button>
           ))}
         </div>
-        <p className="text-[11px] leading-relaxed text-muted">
-          {quality === "fast" &&
-            "Fastest — skips separation & voice cloning. Best for long videos."}
-          {quality === "balanced" &&
-            "Balanced — separation + voice cloning on."}
-          {quality === "studio" &&
-            "Highest fidelity — full pipeline. Best quality, slowest."}
-        </p>
+        {/* The blurb swaps with the setting, so the sentence tracks the pill
+            instead of sitting there as static help text. */}
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.p
+            key={quality}
+            initial={{ opacity: 0, y: 5 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -5 }}
+            transition={{ duration: 0.2 }}
+            className="text-[11px] leading-relaxed text-muted"
+          >
+            {quality === "fast" &&
+              "Fastest — skips separation & voice cloning. Best for long videos."}
+            {quality === "balanced" &&
+              "Balanced — separation + voice cloning on."}
+            {quality === "studio" &&
+              "Highest fidelity — full pipeline. Best quality, slowest."}
+          </motion.p>
+        </AnimatePresence>
       </StepCard>
     </>
   );
 
-  // ── The pinned run bar (price + start + pipeline health) ─────────────────
+  // ── The run card ─────────────────────────────────────────────────────────
+  // The one saturated surface on the screen: deep glaze, a mesh of light
+  // turning slowly behind it, film grain over the top so the gradient never
+  // bands. Everything here is porcelain type on a fired ground — which is why
+  // the card looks the same in both themes instead of inverting.
   const ctaBlock = (
-    <div data-tour="tour-run" className="card space-y-2.5 p-3.5">
-      <div className="flex items-baseline justify-between gap-2 px-0.5">
-        <span className="font-mono text-[11px] uppercase tracking-[0.12em] text-muted">
+    <div data-tour="tour-run" className="deep-card aurora grain space-y-3 p-4">
+      {running && <span className="beam" aria-hidden />}
+
+      <div className="above flex items-center justify-between gap-2">
+        <span className="font-mono text-[10px] uppercase tracking-[0.16em] on-deep-dim">
           This run
         </span>
-        <span className="font-mono text-[11px] text-secondary">
-          <span className={short ? "text-danger" : "text-primary"}>{cost}</span>{" "}
-          of {balance.toLocaleString()} credits
+        <span className="flex items-center gap-2 font-mono text-[11px] on-deep-dim">
+          {running ? (
+            <ThinkingOrbs size={20} speed={7} />
+          ) : (
+            <Equalizer idle className="text-white/70" />
+          )}
+          <span>
+            <span
+              className={
+                short
+                  ? "font-medium text-[rgb(var(--mesh-c))]"
+                  : "font-medium text-white"
+              }
+            >
+              {cost}
+            </span>{" "}
+            / {balance.toLocaleString()} cr
+          </span>
         </span>
       </div>
-      <button
+
+      <MagneticButton
         onClick={start}
         disabled={busy || running || !canStart}
         title={
           !canStart ? "Choose a source and a target language first" : undefined
         }
-        className="btn-primary focusable w-full py-3.5 font-mono text-sm disabled:cursor-not-allowed disabled:opacity-60"
+        className="btn-on-deep focusable above w-full py-3.5 font-mono text-sm"
       >
-        {busy
-          ? "Starting…"
-          : running
-            ? `Dubbing… ${overall}%`
-            : canStart
-              ? `Start dubbing · ${cost} →`
-              : "Add a clip to start"}
-      </button>
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.span
+            key={busy ? "busy" : running ? "run" : canStart ? "go" : "idle"}
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -6 }}
+            transition={{ duration: 0.18 }}
+            className="flex items-center justify-center gap-2"
+          >
+            {(busy || running) && <ThinkingOrbs size={18} speed={6.5} />}
+            {busy
+              ? "Starting…"
+              : running
+                ? `Dubbing… ${overall}%`
+                : canStart
+                  ? `Start dubbing · ${cost} →`
+                  : "Add a clip to start"}
+          </motion.span>
+        </AnimatePresence>
+      </MagneticButton>
+
+      {/* A rail under the button while the pipeline is live, so the run card
+          itself reports progress without the eye going anywhere. */}
+      <AnimatePresence initial={false}>
+        {running && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            className="above overflow-hidden"
+          >
+            <div className="h-1 overflow-hidden rounded-full bg-white/15">
+              <motion.div
+                className="h-full rounded-full bg-white/85"
+                initial={false}
+                animate={{ width: `${overall}%` }}
+                transition={{ duration: 0.5, ease: EASE_ENTRANCE }}
+              />
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Three honest states: unreachable, running simulated stages, or live.
           An unreachable API used to fall back to a fabricated "simulation"
           status, which looked identical to a real simulated pipeline. */}
       {(health || healthFailed) && (
-        <p className="flex items-center justify-center gap-1.5 text-center font-mono text-[11px] text-muted">
-          <span
-            className={`h-1.5 w-1.5 rounded-full ${
-              healthFailed
-                ? "bg-danger"
-                : health!.stages.some((s) => s.mode === "real")
-                  ? "bg-success"
-                  : "bg-warn"
-            }`}
-          />
+        <p className="above flex items-center justify-center gap-1.5 text-center font-mono text-[11px] on-deep-dim">
+          <span className="relative flex h-1.5 w-1.5">
+            {!healthFailed && (
+              <motion.span
+                aria-hidden
+                className={`absolute inset-0 rounded-full ${
+                  health!.stages.some((s) => s.mode === "real")
+                    ? "bg-success"
+                    : "bg-warn"
+                }`}
+                animate={{ scale: [1, 2.6, 1], opacity: [0.6, 0, 0.6] }}
+                transition={{
+                  duration: 2.4,
+                  repeat: Infinity,
+                  ease: "easeOut",
+                }}
+              />
+            )}
+            <span
+              className={`relative h-1.5 w-1.5 rounded-full ${
+                healthFailed
+                  ? "bg-danger"
+                  : health!.stages.some((s) => s.mode === "real")
+                    ? "bg-success"
+                    : "bg-warn"
+              }`}
+            />
+          </span>
           {healthFailed
             ? "Dubbing service unreachable"
             : health!.stages.some((s) => s.mode === "real")
@@ -877,32 +1038,119 @@ export default function Studio() {
     </div>
   );
 
+  // ── The stat row ─────────────────────────────────────────────────────────
+  // Three small tiles across the top of the bento. They answer the questions
+  // you would otherwise scroll to find: what can I spend, what is the pipeline
+  // doing, and what did I last make.
+  const statRow = (
+    <motion.div
+      variants={stagger}
+      initial="hidden"
+      animate="show"
+      className="bento bento-3"
+    >
+      <StatTile
+        label="Credits"
+        tint="brand"
+        value={<AnimatedNumber value={balance} />}
+        foot={short ? "short for this run" : `${after.toLocaleString()} after`}
+        icon={
+          <svg
+            viewBox="0 0 24 24"
+            className="h-3.5 w-3.5"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <circle cx="12" cy="12" r="9" />
+            <path d="M12 7v10M9.5 9.5h5M9.5 14.5h5" />
+          </svg>
+        }
+      />
+      <StatTile
+        label="Pipeline"
+        tint={
+          failed ? "warn" : running ? "brand" : completed ? "success" : "magenta"
+        }
+        value={
+          running
+            ? `${stageProgress.done}/${stageProgress.total} stages`
+            : completed
+              ? "Complete"
+              : failed
+                ? "Failed"
+                : "Idle"
+        }
+        foot={
+          running
+            ? `${overall}% · ${fmtElapsed(elapsed)}`
+            : `${quality} · ${cost} cr`
+        }
+        icon={<Equalizer idle={!running} className="h-3.5 text-current" />}
+      />
+      <StatTile
+        label="Last dub"
+        tint="gold"
+        value={
+          lastWork
+            ? `${lastWork.sourceLang.toUpperCase()} → ${lastWork.targetLang.toUpperCase()}`
+            : "None yet"
+        }
+        foot={lastWork ? workTitle(lastWork) : "your first run lands here"}
+        icon={
+          <svg
+            viewBox="0 0 24 24"
+            className="h-3.5 w-3.5"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M3 7.5 12 3l9 4.5-9 4.5z" />
+            <path d="M3 12l9 4.5L21 12M3 16.5 12 21l9-4.5" />
+          </svg>
+        }
+      />
+    </motion.div>
+  );
+
   // ── Right column content (idle monitor vs. live run) ─────────────────────
   const rightContent = (
     <>
-      {error && (
-        <div className="card border-danger/30 bg-danger/10 px-5 py-4 text-sm text-danger">
-          {error}
-        </div>
-      )}
+      {statRow}
+
+      <AnimatePresence initial={false}>
+        {error && (
+          <motion.div
+            initial={{ opacity: 0, y: -8, height: 0 }}
+            animate={{ opacity: 1, y: 0, height: "auto" }}
+            exit={{ opacity: 0, y: -8, height: 0 }}
+            transition={{ duration: 0.25, ease: EASE_ENTRANCE }}
+            className="overflow-hidden"
+          >
+            <div className="card border-danger/30 bg-danger/10 px-5 py-4 text-sm text-danger">
+              {error}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <AnimatePresence mode="wait">
         {!job ? (
           <motion.div
             key="idle"
             initial={{ opacity: 1 }}
-            exit={{ opacity: 0, scale: 0.98 }}
-            transition={{ duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
-            className="space-y-4"
+            exit={{ opacity: 0, scale: 0.98, filter: "blur(4px)" }}
+            transition={{ duration: 0.28, ease: EASE_EXIT }}
+            className="bento"
           >
             {/* The monitor: the route this dub will take, drawn from the
                 options as they stand. */}
-            <div
-              data-tour="tour-monitor"
-              className="card relative overflow-hidden p-6"
-            >
-              <LogoMark className="pointer-events-none absolute -bottom-16 -right-14 h-[200px] w-[200px] text-primary/[0.04]" />
-              <div className="relative">
+            <MonitorCard tour="tour-monitor">
+              <div className="above">
                 <div className="flex items-center justify-between gap-3">
                   <SectionMark>Route</SectionMark>
                   <span className="font-mono text-[11px] text-muted">
@@ -911,10 +1159,18 @@ export default function Studio() {
                 </div>
 
                 <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2">
-                  <LangBadge flag={langFlag(sourceLang)} label={langName(sourceLang)} />
+                  <LangBadge
+                    key={sourceLang}
+                    flag={langFlag(sourceLang)}
+                    label={langName(sourceLang)}
+                  />
                   <motion.svg
-                    animate={{ x: [0, 4, 0] }}
-                    transition={{ duration: 2.4, repeat: Infinity, ease: "easeInOut" }}
+                    animate={{ x: [0, 5, 0], opacity: [0.55, 1, 0.55] }}
+                    transition={{
+                      duration: 2.4,
+                      repeat: Infinity,
+                      ease: "easeInOut",
+                    }}
                     viewBox="0 0 24 24"
                     className="h-5 w-5 text-brand"
                     fill="none"
@@ -926,6 +1182,7 @@ export default function Studio() {
                     <path d="M5 12h14M13 6l6 6-6 6" />
                   </motion.svg>
                   <LangBadge
+                    key={targetLang}
                     flag={langFlag(targetLang)}
                     label={langName(targetLang)}
                     accent
@@ -939,131 +1196,100 @@ export default function Studio() {
                   <PipelineFlow nodes={previewNodes} />
                 </div>
 
-                <p className="mt-5 border-t border-subtle pt-4 text-center text-[13px] text-secondary">
+                <div className="rule-signature mt-5" />
+                <p className="mt-4 text-center text-[13px] text-secondary">
                   {sourceReady
                     ? "Start the run and these stages fill in live — the finished video, its transcript and the download all land here."
                     : "Add a clip on the left, or load the sample, and this route becomes a dub."}
                 </p>
                 {!sourceReady && (
                   <div className="mt-3 text-center">
-                    <button
+                    <motion.button
                       onClick={() => {
                         setUseSample(true);
                         setFile(null);
                       }}
+                      whileHover={{ y: -2 }}
+                      whileTap={tapScale}
+                      transition={{
+                        type: "spring",
+                        stiffness: 400,
+                        damping: 26,
+                      }}
                       className="btn-ghost focusable px-5 py-2.5 font-mono text-sm"
                     >
                       Load the sample clip →
-                    </button>
+                    </motion.button>
                   </div>
                 )}
               </div>
-            </div>
+            </MonitorCard>
 
-            {/* Estimate */}
-            <div data-tour="tour-cost" className="card p-5">
-              <SectionMark>Estimate</SectionMark>
-              <div className="mt-3 flex items-end justify-between">
-                <div>
-                  <div className="font-mono text-4xl font-medium text-primary">
-                    <AnimatedNumber value={cost} />
-                    <span className="ml-1.5 font-mono text-sm text-muted">
-                      credits
-                    </span>
+            {/* Estimate + Tips side by side — the price of the decision you
+                just made, next to the thing worth knowing while you make it. */}
+            <div className="bento xl:grid-cols-[1.15fr_0.85fr]">
+              <div data-tour="tour-cost" className="card sheen p-5">
+                <SectionMark>Estimate</SectionMark>
+                <div className="mt-3 flex items-end justify-between">
+                  <div>
+                    <div className="font-mono text-4xl font-medium text-primary">
+                      <AnimatedNumber value={cost} />
+                      <span className="ml-1.5 font-mono text-sm text-muted">
+                        credits
+                      </span>
+                    </div>
+                    <AnimatePresence mode="wait" initial={false}>
+                      <motion.div
+                        key={quality}
+                        initial={{ opacity: 0, y: 4 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -4 }}
+                        transition={{ duration: 0.18 }}
+                        className="mt-0.5 font-mono text-[11px] uppercase tracking-[0.13em] text-muted"
+                      >
+                        {quality} run
+                      </motion.div>
+                    </AnimatePresence>
                   </div>
-                  <div className="mt-0.5 font-mono text-[11px] uppercase tracking-[0.12em] text-muted">
-                    {quality} run
-                  </div>
-                </div>
-                {short && (
-                  <Link
-                    to="/plans"
-                    className="font-mono text-xs text-danger underline-offset-2 hover:underline"
-                  >
-                    Top up in Plans →
-                  </Link>
-                )}
-              </div>
-              <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-sunken">
-                <div
-                  className={`h-full rounded-full ${short ? "bg-danger" : ""}`}
-                  style={{
-                    width: `${barPct}%`,
-                    background: short ? undefined : "var(--grad-brand)",
-                  }}
-                />
-              </div>
-              <div className="mt-2 flex justify-between font-mono text-[11px] text-muted">
-                <span>Balance {balance.toLocaleString()}</span>
-                <span className={short ? "text-danger" : ""}>
-                  After {after.toLocaleString()}
-                </span>
-              </div>
-            </div>
-
-            {/* Two columns only when there is actually a second card to fill
-                them — a lone Tips card stranded at half width looks broken. */}
-            <div className={`grid gap-4 ${works.length > 0 ? "xl:grid-cols-2" : ""}`}>
-              {/* Recent dubs */}
-              {works.length > 0 && (
-                <div className="card p-5">
-                  <div className="flex items-center justify-between">
-                    <SectionMark>Recent dubs</SectionMark>
+                  {short && (
                     <Link
-                      to="/works"
-                      className="font-mono text-[11px] text-brand hover:underline"
+                      to="/plans"
+                      className="font-mono text-xs text-danger underline-offset-2 hover:underline"
                     >
-                      View all →
+                      Top up in Plans →
                     </Link>
-                  </div>
-                  <div className="mt-3 space-y-2">
-                    {works.slice(0, 3).map((w) => (
-                      <div key={w.id} className="flex items-center gap-3">
-                        <span
-                          className="h-10 w-14 shrink-0 rounded-lg"
-                          style={{ background: gradientFor(w.id) }}
-                        />
-                        <div className="min-w-0 flex-1">
-                          <div className="truncate text-sm font-medium text-primary">
-                            {workTitle(w)}
-                          </div>
-                          <div className="font-mono text-[11px] text-muted">
-                            {w.sourceLang.toUpperCase()}→
-                            {w.targetLang.toUpperCase()} ·{" "}
-                            {fmtDur(w.durationSec)}
-                          </div>
-                        </div>
-                        {w.outputUrl && (
-                          <a
-                            href={mediaUrl(w.outputUrl)}
-                            download
-                            aria-label="Download"
-                            className="focusable grid h-8 w-8 place-items-center rounded-full text-muted hover:bg-sunken hover:text-primary"
-                          >
-                            <svg
-                              viewBox="0 0 24 24"
-                              className="h-4 w-4"
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth="1.6"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                            >
-                              <path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14" />
-                            </svg>
-                          </a>
-                        )}
-                      </div>
-                    ))}
-                  </div>
+                  )}
                 </div>
-              )}
+                <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-sunken">
+                  <motion.div
+                    className={`h-full rounded-full ${short ? "bg-danger" : "fill-signature"}`}
+                    initial={false}
+                    animate={{ width: `${barPct}%` }}
+                    transition={{ type: "spring", stiffness: 220, damping: 30 }}
+                  />
+                </div>
+                <div className="mt-2 flex justify-between font-mono text-[11px] text-muted">
+                  <span>Balance {balance.toLocaleString()}</span>
+                  <span className={short ? "text-danger" : ""}>
+                    After {after.toLocaleString()}
+                  </span>
+                </div>
+              </div>
 
               {/* Tips */}
-              <div className="card p-5">
+              <div className="card sheen p-5">
                 <SectionMark>Tips</SectionMark>
                 <div className="mt-3 flex items-start gap-3">
-                  <span className="icon-tile mt-0.5 h-8 w-8 shrink-0 bg-warn/15 text-warn">
+                  <motion.span
+                    className="icon-tile mt-0.5 h-8 w-8 shrink-0 bg-warn/15 text-warn"
+                    animate={{ rotate: [0, -8, 8, 0] }}
+                    transition={{
+                      duration: 5,
+                      repeat: Infinity,
+                      ease: "easeInOut",
+                      times: [0, 0.1, 0.2, 1],
+                    }}
+                  >
                     <svg
                       viewBox="0 0 24 24"
                       className="h-4 w-4"
@@ -1071,14 +1297,14 @@ export default function Studio() {
                     >
                       <path d="m12 3 2.4 5.3 5.8.5-4.4 3.8 1.3 5.6L12 20.9 6.9 18.8l1.3-5.6L3.8 8.8l5.8-.5z" />
                     </svg>
-                  </span>
+                  </motion.span>
                   <AnimatePresence mode="wait">
                     <motion.p
                       key={tip}
-                      initial={{ opacity: 0, y: 6 }}
+                      initial={{ opacity: 0, y: 8 }}
                       animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: -6 }}
-                      transition={{ duration: 0.3 }}
+                      exit={{ opacity: 0, y: -8 }}
+                      transition={{ duration: 0.3, ease: EASE_ENTRANCE }}
                       className="min-h-[2.5rem] flex-1 text-sm text-secondary"
                     >
                       {TIPS[tip]}
@@ -1092,7 +1318,7 @@ export default function Studio() {
                         key={i}
                         onClick={() => setTip(i)}
                         aria-label={`Tip ${i + 1}`}
-                        className={`h-1.5 rounded-full transition-all ${i === tip ? "w-5 bg-brand" : "w-1.5 bg-strong"}`}
+                        className={`h-1.5 rounded-full transition-all duration-300 ${i === tip ? "w-5 bg-brand" : "w-1.5 bg-strong hover:bg-brand/50"}`}
                       />
                     ))}
                   </div>
@@ -1106,34 +1332,122 @@ export default function Studio() {
                 </div>
               </div>
             </div>
+
+            {/* Recent dubs — full width under the pair, and only when there is
+                something to show. */}
+            {works.length > 0 && (
+              <div className="card sheen p-5">
+                <div className="flex items-center justify-between">
+                  <SectionMark>Recent dubs</SectionMark>
+                  <Link
+                    to="/works"
+                    className="font-mono text-[11px] text-brand hover:underline"
+                  >
+                    View all →
+                  </Link>
+                </div>
+                <motion.div
+                  variants={stagger}
+                  initial="hidden"
+                  animate="show"
+                  className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3"
+                >
+                  {works.slice(0, 3).map((w) => (
+                    <motion.div
+                      key={w.id}
+                      variants={rise}
+                      whileHover={{ y: -2 }}
+                      transition={{
+                        type: "spring",
+                        stiffness: 380,
+                        damping: 26,
+                      }}
+                      className="group flex items-center gap-3 rounded-control border border-subtle bg-sunken/60 p-2 transition-colors hover:border-brand/35"
+                    >
+                      <span
+                        className="thumb-grad h-10 w-14 shrink-0 rounded-lg"
+                        style={{ backgroundImage: gradientFor(w.id) }}
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-sm font-medium text-primary">
+                          {workTitle(w)}
+                        </div>
+                        <div className="font-mono text-[11px] text-muted">
+                          {w.sourceLang.toUpperCase()}→
+                          {w.targetLang.toUpperCase()} · {fmtDur(w.durationSec)}
+                        </div>
+                      </div>
+                      {w.outputUrl && (
+                        <a
+                          href={mediaUrl(w.outputUrl)}
+                          download
+                          aria-label="Download"
+                          className="focusable grid h-8 w-8 shrink-0 place-items-center rounded-full text-muted opacity-0 transition-opacity hover:bg-surface hover:text-brand focus-visible:opacity-100 group-hover:opacity-100"
+                        >
+                          <svg
+                            viewBox="0 0 24 24"
+                            className="h-4 w-4"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="1.6"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          >
+                            <path d="M12 3v12m0 0 4-4m-4 4-4-4M5 21h14" />
+                          </svg>
+                        </a>
+                      )}
+                    </motion.div>
+                  ))}
+                </motion.div>
+              </div>
+            )}
           </motion.div>
         ) : (
           <motion.div
             key="live"
-            initial={{ opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
-            className="space-y-4"
+            initial={{ opacity: 0, y: 14, filter: "blur(4px)" }}
+            animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+            transition={{ duration: 0.35, ease: EASE_ENTRANCE }}
+            className="bento"
           >
-            {/* The same monitor, now carrying the real run. */}
-            <div data-tour="tour-monitor" className="card p-5">
+            {/* The same monitor, now carrying the real run. While the pipeline
+                is live the card wears a glaze halo and a travelling hairline —
+                the two cues that say "this is working" without a spinner. */}
+            <div
+              data-tour="tour-monitor"
+              className={`card relative overflow-hidden p-5 transition-shadow duration-500 ${
+                running ? "running-halo" : ""
+              }`}
+            >
+              {running && <span className="beam" aria-hidden />}
               <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium text-primary">
-                      {running
-                        ? "Running pipeline"
-                        : completed
-                          ? "Dub complete"
-                          : failed
-                            ? "Pipeline failed"
-                            : "Queued"}
-                    </span>
+                    <AnimatePresence mode="wait" initial={false}>
+                      <motion.span
+                        key={job.status}
+                        initial={{ opacity: 0, y: 5 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -5 }}
+                        transition={{ duration: 0.2 }}
+                        className="text-sm font-medium text-primary"
+                      >
+                        {running
+                          ? "Running pipeline"
+                          : completed
+                            ? "Dub complete"
+                            : failed
+                              ? "Pipeline failed"
+                              : "Queued"}
+                      </motion.span>
+                    </AnimatePresence>
                     <span
                       className={`rounded-full px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide ${job.simulated ? "bg-warn/15 text-warn" : "bg-success/15 text-success"}`}
                     >
                       {job.simulated ? "simulation" : "live"}
                     </span>
+                    {running && <Equalizer className="text-brand" />}
                   </div>
                   <div className="mt-1 truncate font-mono text-xs text-muted">
                     job {job.id} · {job.filename ?? "sample"} · →
@@ -1141,17 +1455,74 @@ export default function Studio() {
                   </div>
                 </div>
                 <div className="flex items-center gap-3">
-                  <RingProgress value={overall} />
+                  <RingProgress value={overall} live={running} />
                   {(completed || failed) && (
-                    <button
+                    <motion.button
                       onClick={reset}
+                      initial={{ opacity: 0, scale: 0.9 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      whileHover={{ y: -2 }}
+                      whileTap={tapScale}
+                      transition={{
+                        type: "spring",
+                        stiffness: 400,
+                        damping: 26,
+                      }}
                       className="btn-ghost focusable px-4 py-2 font-mono text-sm"
                     >
                       New dub
-                    </button>
+                    </motion.button>
                   )}
                 </div>
               </div>
+
+              {/* The thinking orbs — the loading state proper. While a stage
+                  is being worked on the cluster turns over a warm wash and
+                  names the stage; the percentage next to it is the only claim
+                  about rate, and it comes from the pipeline itself. */}
+              <AnimatePresence initial={false}>
+                {running && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: "auto" }}
+                    exit={{ opacity: 0, height: 0 }}
+                    transition={{ duration: 0.3, ease: EASE_ENTRANCE }}
+                    className="overflow-hidden"
+                  >
+                    <div className="mt-5 flex items-center gap-4 rounded-card border border-brand/20 bg-brand/[0.06] px-4 py-3.5">
+                      <ThinkingOrbs
+                        size={64}
+                        speed={11}
+                        label={
+                          activeStage
+                            ? `Working on ${activeStage}`
+                            : "Pipeline working"
+                        }
+                      />
+                      <div className="min-w-0 flex-1">
+                        <AnimatePresence mode="wait" initial={false}>
+                          <motion.div
+                            key={activeStage ?? "queued"}
+                            initial={{ opacity: 0, y: 6 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, y: -6 }}
+                            transition={{ duration: 0.22 }}
+                            className="truncate text-sm font-medium text-primary"
+                          >
+                            {activeStage ?? "Queued — waiting for a worker"}
+                          </motion.div>
+                        </AnimatePresence>
+                        <div className="mt-1 font-mono text-[11px] text-muted">
+                          {overall}% · stage{" "}
+                          {Math.min(stageProgress.done + 1, stageProgress.total)}{" "}
+                          of{" "}
+                          {stageProgress.total} · {fmtElapsed(elapsed)}
+                        </div>
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
 
               <div className="mt-5">
                 <PipelineFlow nodes={liveNodes} />
@@ -1170,24 +1541,39 @@ export default function Studio() {
             </div>
 
             {completed && (
-              <div className="space-y-4">
-                <VideoCompare
-                  sourceUrl={job.result.source_url ?? undefined}
-                  outputUrl={job.result.output_url ?? undefined}
-                  simulated={job.simulated}
-                />
+              <motion.div
+                variants={stagger}
+                initial="hidden"
+                animate="show"
+                className="bento"
+              >
+                <motion.div variants={rise}>
+                  <VideoCompare
+                    sourceUrl={job.result.source_url ?? undefined}
+                    outputUrl={job.result.output_url ?? undefined}
+                    simulated={job.simulated}
+                  />
+                </motion.div>
                 {job.result.output_url && (
-                  <a
+                  <motion.a
+                    variants={rise}
                     href={job.result.output_url}
                     download
-                    className="btn-primary focusable inline-flex px-5 py-2.5 font-mono text-sm"
+                    whileHover={{ y: -2 }}
+                    whileTap={tapScale}
+                    transition={{ type: "spring", stiffness: 400, damping: 26 }}
+                    className="btn-primary focusable inline-flex w-fit px-5 py-2.5 font-mono text-sm"
                   >
                     ↓ Download dubbed video
-                  </a>
+                  </motion.a>
                 )}
-                <ResultMetrics m={job.result.metrics} />
-                <SegmentTable segments={job.result.segments} />
-              </div>
+                <motion.div variants={rise}>
+                  <ResultMetrics m={job.result.metrics} />
+                </motion.div>
+                <motion.div variants={rise}>
+                  <SegmentTable segments={job.result.segments} />
+                </motion.div>
+              </motion.div>
             )}
 
             <div className="card p-5">
@@ -1210,15 +1596,19 @@ export default function Studio() {
   if (isDesktop) {
     return (
       <Page className="h-full min-h-0">
-        <div className="grid h-full min-h-0 grid-cols-[380px_minmax(0,1fr)] gap-6">
-          <aside className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)_auto] gap-3">
+        {/* The deck is a RANGE, not a fixed 380px: at 1024px a hard 380 leaves
+            the monitor column too narrow to hold its bento row, and the shell
+            starts scrolling sideways. It shrinks to 300 before the layout has
+            to give anything else up. */}
+        <div className="grid h-full min-h-0 grid-cols-[clamp(300px,26vw,380px)_minmax(0,1fr)] gap-4 xl:gap-6">
+          <aside className="grid min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)_auto] gap-3">
             {deckHeader}
             <ScrollColumn ref={leftScrollRef} className="space-y-2.5 pr-0.5">
               {stepDeck}
             </ScrollColumn>
             <div>{ctaBlock}</div>
           </aside>
-          <ScrollColumn ref={rightScrollRef} className="space-y-4 pr-0.5">
+          <ScrollColumn ref={rightScrollRef} className="min-w-0 space-y-4 pr-0.5">
             {rightContent}
           </ScrollColumn>
         </div>
@@ -1228,58 +1618,43 @@ export default function Studio() {
   }
 
   // ── Mobile: single scrolling stack ───────────────────────────────────────
+  // The run card is the fixed bar above the tab bar instead of a card in the
+  // flow, so the deep surface moves there and the deck keeps the full width.
   return (
-    <Page className="space-y-4 pb-28">
-      <motion.div
-        variants={stagger}
-        initial="hidden"
-        animate="show"
-        className="grid grid-cols-3 gap-3"
-      >
-        <StatusChip tint="brand" label="Credits" value={`${balance}`} />
-        <StatusChip
-          tint={running ? "warn" : "iris"}
-          label="Pipeline"
-          value={
-            running
-              ? `${stageProgress.done}/${stageProgress.total}`
-              : completed
-                ? "Done"
-                : "Idle"
-          }
-        />
-        <StatusChip
-          tint="rose"
-          label="Last dub"
-          value={
-            lastWork
-              ? `${lastWork.sourceLang.toUpperCase()}→${lastWork.targetLang.toUpperCase()}`
-              : "None"
-          }
-        />
-      </motion.div>
-      {deckHeader}
-      <div className="space-y-2.5">{stepDeck}</div>
-      {rightContent}
-      {/* Fixed CTA bar above the tab bar. It is the run control on mobile — the
-          desktop run card would be a second Start button on the same screen —
-          so it carries the walkthrough's anchor too. */}
-      <div
-        data-tour="tour-run"
-        className="glass fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+3.5rem)] z-30 flex items-center gap-3 px-4 py-2.5"
-      >
-        <span className="font-mono text-sm text-secondary">{cost} credits</span>
-        <button
-          onClick={start}
-          disabled={busy || running || !canStart}
-          className="btn-primary focusable ml-auto px-6 py-2.5 font-mono text-sm disabled:opacity-60"
+    <Page>
+      <div className="space-y-4 pb-36">
+        {deckHeader}
+        <div className="space-y-2.5">{stepDeck}</div>
+        {rightContent}
+        <div
+          data-tour="tour-run"
+          className="fixed inset-x-3 bottom-[calc(env(safe-area-inset-bottom)+3.75rem)] z-30"
         >
-          {busy
-            ? "Starting…"
-            : running
-              ? `Dubbing… ${overall}%`
-              : "Start dubbing →"}
-        </button>
+          <div className="deep-card aurora grain flex items-center gap-3 px-3.5 py-2.5">
+            {running && <span className="beam" aria-hidden />}
+            <span className="above flex min-w-0 flex-col">
+              <span className="font-mono text-[10px] uppercase tracking-[0.14em] on-deep-dim">
+                {running ? `${overall}% · ${fmtElapsed(elapsed)}` : "This run"}
+              </span>
+              <span className="font-mono text-sm font-medium text-white">
+                {cost} credits
+              </span>
+            </span>
+            <MagneticButton
+              onClick={start}
+              disabled={busy || running || !canStart}
+              strength={4}
+              className="btn-on-deep focusable above ml-auto inline-flex shrink-0 items-center gap-2 px-5 py-2.5 font-mono text-sm"
+            >
+              {(busy || running) && <ThinkingOrbs size={16} speed={6.5} />}
+              {busy
+                ? "Starting…"
+                : running
+                  ? `Dubbing… ${overall}%`
+                  : "Start dubbing →"}
+            </MagneticButton>
+          </div>
+        </div>
       </div>
       {tour}
     </Page>
@@ -1309,19 +1684,65 @@ function fmtElapsed(ms: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-// The language pair on the monitor — flag, name, and the target in brand.
+/**
+ * The idle monitor's shell: a card with the pointer-tracked glaze pool, a slow
+ * sweep on hover, and the logo turning behind it at a speed you only notice if
+ * you stare. Split out so the spotlight hook has its own element to write to.
+ */
+function MonitorCard({
+  tour,
+  children,
+}: {
+  tour?: string;
+  children: ReactNode;
+}) {
+  const spot = usePointerSpotlight<HTMLDivElement>();
+  return (
+    <div
+      ref={spot.ref}
+      data-tour={tour}
+      onPointerEnter={spot.onPointerEnter}
+      onPointerMove={spot.onPointerMove}
+      className="card spotlight sheen relative overflow-hidden p-6"
+    >
+      <motion.div
+        aria-hidden
+        className="pointer-events-none absolute -bottom-16 -right-14"
+        animate={{ rotate: 360 }}
+        transition={{ duration: 160, repeat: Infinity, ease: "linear" }}
+      >
+        <LogoMark className="h-[200px] w-[200px] text-primary/[0.045]" />
+      </motion.div>
+      {children}
+    </div>
+  );
+}
+
+// The language pair on the monitor — flag, name, and the target in brand. The
+// badge re-mounts on a language change (it is keyed by code), which is what
+// gives the flag its little pop when you pick a different language.
 function LangBadge({
   flag,
   label,
   accent,
 }: {
-  flag: string
-  label: string
-  accent?: boolean
+  flag: string;
+  label: string;
+  accent?: boolean;
 }) {
   return (
-    <span className="inline-flex items-center gap-2">
-      <span className="grid h-9 w-9 place-items-center rounded-control bg-sunken text-lg" aria-hidden>
+    <motion.span
+      initial={{ opacity: 0, scale: 0.9 }}
+      animate={{ opacity: 1, scale: 1 }}
+      transition={{ type: "spring", stiffness: 420, damping: 24 }}
+      className="inline-flex items-center gap-2"
+    >
+      <span
+        className={`grid h-9 w-9 place-items-center rounded-control text-lg ${
+          accent ? "bg-brand/12 ring-1 ring-brand/25" : "bg-sunken"
+        }`}
+        aria-hidden
+      >
         {flag}
       </span>
       <span
@@ -1329,18 +1750,18 @@ function LangBadge({
       >
         {label}
       </span>
-    </span>
+    </motion.span>
   );
 }
 
 // The animated 44×24 switch track — animates transform, not left.
-function SwitchTrack({ on, accent }: { on: boolean; accent?: "iris" }) {
+function SwitchTrack({ on, accent }: { on: boolean; accent?: "magenta" }) {
   return (
     <span
-      className={`relative h-6 w-11 shrink-0 rounded-full transition-colors duration-200 ${
+      className={`relative h-6 w-11 shrink-0 rounded-full transition-colors duration-300 ${
         on
-          ? accent === "iris"
-            ? "bg-iris"
+          ? accent === "magenta"
+            ? "bg-magenta"
             : "bg-brand"
           : "bg-sunken shadow-[inset_0_0_0_1px_rgb(var(--c-border-strong))]"
       }`}
@@ -1354,12 +1775,22 @@ function SwitchTrack({ on, accent }: { on: boolean; accent?: "iris" }) {
   );
 }
 
-// Circular ring showing overall progress.
-function RingProgress({ value }: { value: number }) {
+// Circular ring showing overall progress. While the run is live a second,
+// fainter ring turns behind it, so a stage that takes a minute still looks
+// like something is happening at 0% movement.
+function RingProgress({ value, live }: { value: number; live?: boolean }) {
   const r = 18;
   const c = 2 * Math.PI * r;
   return (
     <div className="relative grid h-12 w-12 place-items-center">
+      {live && (
+        <motion.span
+          aria-hidden
+          className="absolute inset-0 rounded-full border-2 border-transparent border-t-brand/45"
+          animate={{ rotate: 360 }}
+          transition={{ duration: 2.4, repeat: Infinity, ease: "linear" }}
+        />
+      )}
       <svg viewBox="0 0 44 44" className="h-12 w-12 -rotate-90">
         <circle
           cx="22"
@@ -1378,50 +1809,22 @@ function RingProgress({ value }: { value: number }) {
           strokeWidth="3.5"
           strokeLinecap="round"
           strokeDasharray={c}
+          initial={false}
           animate={{ strokeDashoffset: c * (1 - value / 100) }}
-          transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
+          transition={{ duration: 0.6, ease: EASE_ENTRANCE }}
         />
       </svg>
       <span className="absolute font-mono text-[11px] font-medium text-primary">
-        {value}
+        <AnimatedNumber value={value} duration={500} />
       </span>
     </div>
-  );
-}
-
-function StatusChip({
-  tint,
-  label,
-  value,
-}: {
-  tint: "brand" | "iris" | "rose" | "warn";
-  label: string;
-  value: string;
-}) {
-  const tintClass = {
-    brand: "text-brand",
-    iris: "text-iris",
-    rose: "text-rose",
-    warn: "text-warn",
-  }[tint];
-  return (
-    <motion.div variants={rise} className="card p-3">
-      <div className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted">
-        {label}
-      </div>
-      <div
-        className={`mt-0.5 truncate font-mono text-sm font-medium ${tintClass}`}
-      >
-        {value}
-      </div>
-    </motion.div>
   );
 }
 
 // `/ SECTION` marker.
 function SectionMark({ children }: { children: ReactNode }) {
   return (
-    <span className="font-mono text-[10px] font-medium uppercase tracking-[0.12em] text-muted">
+    <span className="font-mono text-[10px] font-medium uppercase tracking-[0.13em] text-muted">
       / {children}
     </span>
   );
