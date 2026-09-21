@@ -16,6 +16,7 @@ import { PaymentModule } from './payment/payment.module';
 import { LanguagesModule } from './languages/languages.module';
 import { HealthModule } from './health/health.module';
 import { PriceTokenModule } from './price-token/price-token.module';
+import { AuditModule } from './audit/audit.module';
 
 @Module({
   imports: [
@@ -26,6 +27,12 @@ import { PriceTokenModule } from './price-token/price-token.module';
     MailModule,
     UsersModule,
     AuthModule,
+    // Before AdminModule on purpose. AdminController owns `/admin/:id`, which
+    // matches any single segment — including `/admin/logs`. Routes register in
+    // module-import order, so importing the audit log first is what keeps its
+    // paths reachable. Moving this line below AdminModule silently breaks the
+    // activity feed.
+    AuditModule,
     AdminModule,
     CommunityModule,
     PaymentModule,

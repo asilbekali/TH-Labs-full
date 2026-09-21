@@ -24,13 +24,14 @@ import { Prisma } from '@prisma/client';
 import type { Request } from 'express';
 
 import { PaymentService } from './payment.service';
-import { StripeService } from './stripe.service';
-import { StripeWebhookHandler } from './webhook.handler';
+import { DodoService } from './dodo.service';
+import { DodoWebhookHandler } from './webhook.handler';
 import { PrismaService } from '../prisma/prisma.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../common/decorators/current-user.decorator';
 import { CheckoutQueryDto } from './dto/checkout-query.dto';
+import { CreditCheckoutQueryDto } from './dto/credit-checkout-query.dto';
 import { CanDubDto } from './dto/can-dub.dto';
 import { CommitDubDto } from './dto/commit-dub.dto';
 import { PaginationQueryDto } from './dto/pagination-query.dto';
@@ -42,8 +43,8 @@ export class PaymentController {
 
   constructor(
     private readonly payments: PaymentService,
-    private readonly stripe: StripeService,
-    private readonly webhook: StripeWebhookHandler,
+    private readonly dodo: DodoService,
+    private readonly webhook: DodoWebhookHandler,
     private readonly prisma: PrismaService,
   ) {}
 
@@ -54,52 +55,60 @@ export class PaymentController {
     return this.payments.getPlans();
   }
 
-  // Stripe posts here. Public, but every payload is signature-verified and
-  // idempotency-guarded before any credits move. Needs the raw request body,
-  // enabled via `rawBody: true` in main.ts.
+  @Get('credit-packs')
+  @ApiOperation({ summary: 'One-time credit packs and the per-minute tariff (public)' })
+  getCreditPacks() {
+    return this.payments.getCreditPacks();
+  }
+
+  // Dodo Payments posts here. Public, but every payload is signature-verified
+  // and idempotency-guarded before any credits move. Needs the raw request
+  // body, enabled via `rawBody: true` in main.ts.
   @Post('webhook')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Stripe webhook (public, raw body, signature-verified)' })
-  async handleWebhook(
-    @Req() req: RawBodyRequest<Request>,
-    @Headers('stripe-signature') signature: string | undefined,
-  ) {
+  @ApiOperation({
+    summary: 'Dodo Payments webhook (public, raw body, signature-verified)',
+  })
+  async handleWebhook(@Req() req: RawBodyRequest<Request>) {
     const raw = req.rawBody;
     if (!raw) {
       throw new BadRequestException('Missing raw request body for webhook.');
     }
 
-    // 1. Verify — anything that doesn't verify is a 400 and is never processed.
-    const event = this.stripe.constructEvent(raw, signature);
+    // 1. Verify — anything that doesn't verify is a 400 and is never
+    //    processed. The Standard Webhooks signature covers all three
+    //    webhook-* headers plus the exact bytes, so we hand it the raw body.
+    const event = this.dodo.constructEvent(raw, req.headers);
 
-    // 2. Idempotency, before any business logic. The unique constraint on
-    //    stripeEventId — not an `if` check — is what makes this safe against
-    //    Stripe's retries.
+    // 2. Idempotency, before any business logic. `webhook-id` is stable across
+    //    the provider's retries of one event, and the unique constraint on it
+    //    — not an `if` check — is what makes this safe under concurrency.
+    const eventId = String(req.headers['webhook-id']);
     try {
       await this.prisma.webhookEvent.create({
-        data: { stripeEventId: event.id, type: event.type },
+        data: { eventId, type: event.type },
       });
     } catch (err) {
       if (
         err instanceof Prisma.PrismaClientKnownRequestError &&
         err.code === 'P2002'
       ) {
-        this.logger.debug(`Duplicate webhook ${event.id} ignored`);
+        this.logger.debug(`Duplicate webhook ${eventId} ignored`);
         return { received: true, duplicate: true };
       }
       throw err;
     }
 
-    // 3. Dispatch. If it throws, drop the idempotency marker so Stripe's retry
+    // 3. Dispatch. If it throws, drop the idempotency marker so the retry
     //    reprocesses the event, and surface a 500.
     try {
       await this.webhook.dispatch(event);
     } catch (err) {
       await this.prisma.webhookEvent
-        .delete({ where: { stripeEventId: event.id } })
+        .delete({ where: { eventId } })
         .catch(() => undefined);
       this.logger.error(
-        `Webhook ${event.type} (${event.id}) failed: ${
+        `Webhook ${event.type} (${eventId}) failed: ${
           err instanceof Error ? err.message : err
         }`,
       );
@@ -113,10 +122,30 @@ export class PaymentController {
   @Get('checkout')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get a Stripe Payment Link for a plan (auth)' })
+  @ApiOperation({ summary: 'Get a Dodo Payments checkout URL for a plan (auth)' })
   @ApiOkResponse({ description: '{ url } — redirect the user here to pay' })
   checkout(@CurrentUser() user: AuthenticatedUser, @Query() q: CheckoutQueryDto) {
     return this.payments.getCheckoutUrl(user.id, q.tier, q.cycle);
+  }
+
+  @Get('checkout/credits')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Checkout URL for a one-time credit pack (auth)' })
+  @ApiOkResponse({ description: '{ url } — redirect the user here to pay' })
+  creditCheckout(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query() q: CreditCheckoutQueryDto,
+  ) {
+    return this.payments.getCreditCheckoutUrl(user.id, q.pack);
+  }
+
+  @Get('portal')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: "Link into Dodo's customer portal (auth)" })
+  portal(@CurrentUser() user: AuthenticatedUser) {
+    return this.payments.getCustomerPortalUrl(user.id);
   }
 
   @Get('subscription')

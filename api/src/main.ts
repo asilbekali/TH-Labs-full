@@ -46,8 +46,9 @@ function corsOrigins(): string[] {
 
 async function bootstrap() {
   // rawBody: true keeps the untouched request buffer on `req.rawBody`, which the
-  // Stripe webhook needs — signature verification silently fails on a body that
-  // the JSON parser has already re-serialized.
+  // Dodo Payments webhook needs — the Standard Webhooks signature covers the
+  // exact bytes, and verification silently fails on a body that the JSON parser
+  // has already re-serialized.
   const app = await NestFactory.create(AppModule, { rawBody: true });
 
   const PORT = Number(process.env.PORT) || 3001;
