@@ -3,14 +3,16 @@
 // The whole page is the real billing API (NestJS, /v1/payments): prices, credit
 // grants, the free-dub allowance and the per-quality tariff all come from
 // GET /payments/plans, the subscription and payment rows from the user's own
-// account. Checkout is a Stripe-hosted Payment Link — the API returns the URL
-// (carrying this user's client_reference_id) and we hand the browser over, so
-// card data never touches this origin and only the publishable key is shipped.
+// account. Checkout is Dodo-hosted — the API opens a checkout session stamped
+// with this user's id and returns its URL, and we hand the browser over, so
+// card data never touches this origin and no payment key is shipped at all.
 import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { AnimatePresence, LayoutGroup, motion } from 'framer-motion'
 import Page from '../components/Page'
 import AnimatedNumber from '../components/AnimatedNumber'
+import MagneticButton from '../components/MagneticButton'
+import { usePointerSpotlight } from '../hooks/usePointerSpotlight'
 import Toast from '../components/Toast'
 import { EASE_ENTRANCE, rise, stagger } from '../lib/motion'
 import { useWallet } from '../lib/wallet'
@@ -23,15 +25,11 @@ import {
   usePlans,
   useSubscription,
 } from '../lib/queries'
-import {
-  isStripeLiveMode,
-  isStripeTestMode,
-  paymentLinkMode,
-  stripeUnavailableReason,
-} from '../lib/stripe'
-import { creditsForMinutes, packFor } from '../lib/payments-api'
+import { checkoutUnavailableReason, isTestCheckoutUrl, unbuyablePlans } from '../lib/dodo'
+import { creditsForMinutes, getCustomerPortalUrl, packFor } from '../lib/payments-api'
 import type {
   BillingCycle,
+  CheckoutInfo,
   CreditPack,
   CreditPacksResponse,
   PaymentRow,
@@ -150,29 +148,36 @@ export default function Plans() {
   const [cycle, setCycle] = useState<Cycle>('monthly')
   const [showCompare, setShowCompare] = useState(false)
   const [toast, setToast] = useState<{ id: number; msg: string } | null>(null)
+  const [portalBusy, setPortalBusy] = useState(false)
 
   const tiers = plansQuery.data ? buildTiers(plansQuery.data.plans) : []
   const subscription = subscriptionQuery.data?.subscription ?? null
   const history = historyQuery.data?.items ?? []
 
-  const stripeBlocked = stripeUnavailableReason()
+  // Whether money can move is the server's answer, not a guess from a
+  // build-time key: only the API knows which Dodo products are configured and
+  // whether the webhook that grants the credits is wired up at all.
+  const checkoutInfo: CheckoutInfo | undefined = plansQuery.data?.checkout
+  const checkoutBlocked = checkoutUnavailableReason(checkoutInfo)
+  const missingProducts = unbuyablePlans(checkoutInfo)
 
-  // The links the API actually hands out decide whether money moves — trust
-  // them over the publishable key, and say so when the two disagree.
-  const linkMode = paymentLinkMode(
-    (plansQuery.data?.plans ?? []).map((p) => p.stripeLinkUrl),
+  // A configured payment link keeps whichever host it was copied from, so a
+  // live-mode API can still be handing out test links. Say so when they
+  // disagree rather than printing a confident badge over the wrong one.
+  const linkIsTest = (plansQuery.data?.plans ?? []).some((p) =>
+    isTestCheckoutUrl(p.dodoLinkUrl),
   )
-  const inTestCheckout = linkMode === 'test' || (linkMode === null && isStripeTestMode)
-  const modeMismatch = linkMode !== null && linkMode === 'test' && isStripeLiveMode
+  const inTestCheckout = checkoutInfo?.mode === 'test' || linkIsTest
+  const modeMismatch = checkoutInfo?.mode === 'live' && linkIsTest
 
   const activeTier: PlanTier =
     subscription && subscription.status === 'ACTIVE' ? (subscription.plan?.tier ?? 'FREE') : 'FREE'
   const activeCycle = subscription?.plan?.cycle
 
-  // Redirect to the Stripe-hosted Payment Link. Payment Links own the whole
-  // checkout UI — no client-side Stripe SDK needed.
+  // Hand the browser to Dodo's hosted checkout. Dodo owns the whole payment
+  // UI — there is no client-side SDK to load.
   async function startCheckout(t: UiTier) {
-    if (t.tier === 'FREE' || stripeBlocked) return
+    if (t.tier === 'FREE' || checkoutBlocked) return
     try {
       const api = CYCLES.find((c) => c.key === cycle)!.api
       const { url } = await checkout.mutateAsync({
@@ -185,12 +190,12 @@ export default function Plans() {
     }
   }
 
-  // One-time pack purchase. Same handover as a subscription — the API returns a
-  // Stripe-hosted URL and the browser goes there — so card data never touches
-  // this origin. Until /payments/checkout/credits exists this surfaces as a
-  // toast rather than a silent no-op.
+  // One-time pack purchase. Same handover as a subscription — the API returns
+  // a Dodo-hosted URL and the browser goes there — so card data never touches
+  // this origin. A pack with no Dodo product configured surfaces as a toast
+  // rather than a silent no-op.
   async function buyCredits(packId: string) {
-    if (stripeBlocked) return
+    if (checkoutBlocked) return
     try {
       const { url } = await creditCheckout.mutateAsync({ packId })
       window.location.href = url
@@ -199,6 +204,24 @@ export default function Plans() {
         id: Date.now(),
         msg: e instanceof Error ? e.message : 'Could not start checkout',
       })
+    }
+  }
+
+  // Dodo's own portal, in a new tab: the user is mid-session here and should
+  // come back to it, not lose the page to an external redirect.
+  async function openPortal() {
+    if (portalBusy) return
+    setPortalBusy(true)
+    try {
+      const { url } = await getCustomerPortalUrl()
+      window.open(url, '_blank', 'noopener,noreferrer')
+    } catch (e) {
+      setToast({
+        id: Date.now(),
+        msg: e instanceof Error ? e.message : 'Could not open the billing portal',
+      })
+    } finally {
+      setPortalBusy(false)
     }
   }
 
@@ -223,21 +246,30 @@ export default function Plans() {
           database. Never let that be a surprise. */}
       {inTestCheckout && (
         <div className="rounded-card border border-warn/40 bg-warn/10 px-4 py-3 text-sm text-warn">
-          <strong className="font-medium">Stripe test mode.</strong> Checkout accepts test cards only — no
-          money moves. Swap the <code className="font-mono text-xs">STRIPE_LINK_*</code> Payment Links for
-          live ones to take real payments.
+          <strong className="font-medium">Dodo Payments test mode.</strong> Checkout accepts test cards
+          only — no money moves. Set{' '}
+          <code className="font-mono text-xs">DODO_PAYMENTS_ENVIRONMENT=live_mode</code> on the API, with
+          live products, to take real payments.
           {modeMismatch && (
             <>
               {' '}
-              <strong className="font-medium">This build has a live publishable key but test Payment
-              Links</strong> — one of the two is wrong.
+              <strong className="font-medium">The API is in live mode but some products are test
+              links</strong> — one of the two is wrong.
             </>
           )}
         </div>
       )}
-      {stripeBlocked && (
+      {checkoutBlocked && (
         <div className="rounded-card border border-danger/40 bg-danger/10 px-4 py-3 text-sm text-danger">
-          <strong className="font-medium">Checkout is unavailable.</strong> {stripeBlocked}
+          <strong className="font-medium">Checkout is unavailable.</strong> {checkoutBlocked}
+        </div>
+      )}
+      {/* Some plans buyable, others not: say which, so the disabled button on
+          one card is explained instead of reading as a bug. */}
+      {!checkoutBlocked && missingProducts.length > 0 && (
+        <div className="rounded-card border border-warn/40 bg-warn/10 px-4 py-3 text-sm text-warn">
+          <strong className="font-medium">Not every plan is on sale yet.</strong> No Dodo product is
+          configured for {missingProducts.join(', ')}.
         </div>
       )}
 
@@ -270,7 +302,7 @@ export default function Plans() {
                     cycle={cycle}
                     current={isCurrent(t)}
                     busy={checkout.isPending && checkout.variables?.tier === t.tier}
-                    disabled={!!stripeBlocked}
+                    disabled={!!checkoutBlocked}
                     onSelect={() => void startCheckout(t)}
                   />
                 ))}
@@ -295,7 +327,7 @@ export default function Plans() {
           <TopUpSection
             catalog={packsQuery.data}
             busyPackId={creditCheckout.isPending ? (creditCheckout.variables?.packId ?? null) : null}
-            disabled={!!stripeBlocked}
+            disabled={!!checkoutBlocked}
             onBuy={(packId) => void buyCredits(packId)}
           />
         </motion.div>
@@ -312,6 +344,8 @@ export default function Plans() {
             subscription={subscription}
             canceling={cancel.isPending}
             onCancel={() => void onCancel()}
+            onManage={() => void openPortal()}
+            openingPortal={portalBusy}
           />
         </motion.div>
 
@@ -321,7 +355,7 @@ export default function Plans() {
           </motion.div>
         )}
 
-        <StripeFooter live={linkMode === 'live' && isStripeLiveMode} />
+        <CheckoutFooter live={checkoutInfo?.mode === 'live' && !linkIsTest} />
       </motion.section>
 
       <AnimatePresence>
@@ -397,6 +431,7 @@ function TierCard({
   const dripNote =
     grants > 1 ? `${tier.perGrant[creditCycle].toLocaleString()} credits added every month` : null
 
+  const spot = usePointerSpotlight<HTMLDivElement>()
   const label = current
     ? 'Current plan'
     : busy
@@ -409,13 +444,17 @@ function TierCard({
 
   return (
     <motion.div
+      ref={spot.ref}
+      onPointerEnter={spot.onPointerEnter}
+      onPointerMove={spot.onPointerMove}
       variants={rise}
-      whileHover={{ y: -2 }}
-      className={`card relative flex flex-col p-6 ${featured ? 'border-brand/45 max-md:order-first' : ''} ${
+      whileHover={{ y: -3 }}
+      transition={{ type: 'spring', stiffness: 380, damping: 26 }}
+      className={`card spotlight sheen relative flex flex-col p-6 ${featured ? 'border-brand/45 max-md:order-first' : ''} ${
         current ? 'ring-1 ring-brand' : ''
       }`}
     >
-      <div className="flex items-center justify-between">
+      <div className="above flex items-center justify-between">
         <span className="font-mono text-[11px] font-medium uppercase tracking-[0.12em] text-muted">{tier.name}</span>
         {featured && (
           <span className="rounded-pill bg-brand/12 px-2.5 py-0.5 font-mono text-[10px] font-medium uppercase tracking-wide text-brand">
@@ -468,17 +507,17 @@ function TierCard({
         </ul>
       </div>
 
-      <button
+      <MagneticButton
         onClick={onSelect}
         disabled={current || busy || isFree || disabled}
-        className={`focusable mt-6 w-full rounded-control py-3 font-mono text-sm font-medium transition-colors disabled:cursor-default ${
+        className={`focusable above mt-6 w-full rounded-control py-3 font-mono text-sm font-medium transition-colors disabled:cursor-default ${
           current || isFree || disabled
             ? 'border border-subtle bg-sunken text-muted'
             : 'btn-primary'
         }`}
       >
         {label}
-      </button>
+      </MagneticButton>
     </motion.div>
   )
 }
@@ -627,7 +666,11 @@ function TopUpSection({
               minutes={p.credits / catalog.creditsPerMinute}
               recommended={recommended?.id === p.id}
               busy={busyPackId === p.id}
-              disabled={disabled || busyPackId !== null}
+              // `available === false` is the server saying it has no Dodo
+              // product for this pack. Undefined means the fallback catalog,
+              // which knows nothing either way — don't disable on that.
+              disabled={disabled || busyPackId !== null || p.available === false}
+              unavailable={p.available === false}
               onBuy={() => onBuy(p.id)}
             />
           ))}
@@ -643,6 +686,7 @@ function PackCard({
   recommended,
   busy,
   disabled,
+  unavailable,
   onBuy,
 }: {
   pack: CreditPack
@@ -650,13 +694,20 @@ function PackCard({
   recommended: boolean
   busy: boolean
   disabled: boolean
+  /** No Dodo product configured for this pack — the price is real, the button isn't. */
+  unavailable?: boolean
   onBuy: () => void
 }) {
+  const spot = usePointerSpotlight<HTMLDivElement>()
   const perCredit = pack.priceCents / 100 / pack.credits
   return (
     <motion.div
-      whileHover={{ y: -2 }}
-      className={`card relative flex flex-col p-5 transition-colors ${
+      ref={spot.ref}
+      onPointerEnter={spot.onPointerEnter}
+      onPointerMove={spot.onPointerMove}
+      whileHover={{ y: -3 }}
+      transition={{ type: 'spring', stiffness: 380, damping: 26 }}
+      className={`card spotlight sheen relative flex flex-col p-5 ${
         recommended ? 'border-brand/45 ring-1 ring-brand/40' : ''
       }`}
     >
@@ -684,15 +735,15 @@ function PackCard({
         </span>
       </div>
 
-      <button
+      <MagneticButton
         onClick={onBuy}
         disabled={disabled}
-        className={`focusable mt-4 w-full rounded-control py-2.5 font-mono text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+        className={`focusable above mt-4 w-full rounded-control py-2.5 font-mono text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
           recommended ? 'btn-primary' : 'btn-ghost'
         }`}
       >
-        {busy ? 'Redirecting…' : 'Buy credits'}
-      </button>
+        {busy ? 'Redirecting…' : unavailable ? 'Not available yet' : 'Buy credits'}
+      </MagneticButton>
     </motion.div>
   )
 }
@@ -885,10 +936,14 @@ function SubscriptionCard({
   subscription,
   canceling,
   onCancel,
+  onManage,
+  openingPortal,
 }: {
   subscription: Subscription | null
   canceling: boolean
   onCancel: () => void
+  onManage: () => void
+  openingPortal: boolean
 }) {
   if (!subscription || subscription.status === 'CANCELED' || subscription.status === 'EXPIRED') {
     return (
@@ -921,15 +976,28 @@ function SubscriptionCard({
         <div className="mt-1 font-mono text-[11px] text-muted">{renewText}</div>
       </div>
 
-      {!subscription.cancelAtPeriodEnd && (
+      <div className="flex flex-wrap items-center gap-2">
+        {/* Invoices and the card on file live with Dodo, not here — there is
+            nothing to gain from rebuilding that surface, and a receipt the
+            merchant of record issued is the one a customer needs. */}
         <button
-          onClick={onCancel}
-          disabled={canceling}
+          onClick={onManage}
+          disabled={openingPortal}
           className="focusable rounded-control border border-subtle bg-sunken px-4 py-2 font-mono text-xs text-secondary hover:text-primary disabled:opacity-60"
         >
-          {canceling ? 'Canceling…' : 'Cancel subscription'}
+          {openingPortal ? 'Opening…' : 'Invoices & payment method'}
         </button>
-      )}
+
+        {!subscription.cancelAtPeriodEnd && (
+          <button
+            onClick={onCancel}
+            disabled={canceling}
+            className="focusable rounded-control border border-subtle bg-sunken px-4 py-2 font-mono text-xs text-secondary hover:text-primary disabled:opacity-60"
+          >
+            {canceling ? 'Canceling…' : 'Cancel subscription'}
+          </button>
+        )}
+      </div>
     </div>
   )
 }
@@ -975,14 +1043,15 @@ function HistoryCard({ rows }: { rows: PaymentRow[] }) {
 
 /* ── Small pieces ───────────────────────────────────────────────────────── */
 
-// `live` is deliberately the AND of the key and the links: the badge is a claim
-// that real money moves, so anything less than both agreeing must not show it.
-function StripeFooter({ live }: { live: boolean }) {
+// `live` is deliberately the AND of the API's mode and the configured links:
+// the badge is a claim that real money moves, so anything less than both
+// agreeing must not show it.
+function CheckoutFooter({ live }: { live: boolean }) {
   return (
     <div className="flex flex-wrap items-center justify-between gap-3 rounded-card border border-subtle bg-sunken/50 px-5 py-4">
       <p className="font-mono text-xs text-muted">
-        Payments are processed by Stripe. Card details never reach this site, and credits are granted
-        automatically once Stripe confirms the payment.
+        Payments are processed by Dodo Payments, our merchant of record. Card details never reach this
+        site, and credits are granted automatically once Dodo confirms the payment.
       </p>
       {live && (
         <span className="shrink-0 rounded-pill bg-success/12 px-2.5 py-1 font-mono text-[10px] uppercase tracking-wide text-success">

@@ -24,15 +24,39 @@ export interface ServerPlan {
    * every credit figure in the UI renders as NaN.
    */
   grantsPerPeriod?: number
-  stripePriceId: string | null
-  stripeLinkUrl: string | null
+  /** The Dodo product this plan is sold as. Null means it cannot be bought. */
+  dodoProductId: string | null
+  /** Static payment link for the same product, when one is configured. */
+  dodoLinkUrl: string | null
   active: boolean
+}
+
+/**
+ * Whether money can actually move, as the API reports it.
+ *
+ * The browser cannot work this out for itself — there is no publishable key
+ * and no client SDK — and guessing was the old bug: a build could show a
+ * confident "live payments" badge over a checkout that took test cards.
+ */
+export interface CheckoutInfo {
+  provider: 'dodo'
+  mode: 'test' | 'live'
+  /** True when at least one paid plan has a Dodo product configured. */
+  configured: boolean
+  /** `TIER/CYCLE` for each paid plan still missing one. */
+  missingProducts: string[]
+  /** False when the API has no key, so checkout falls back to static links. */
+  apiConfigured: boolean
+  /** False when DODO_WEBHOOK_SECRET is unset — no purchase could grant credits. */
+  webhookConfigured: boolean
 }
 
 export interface PlansResponse {
   plans: ServerPlan[]
   qualityCost: Record<string, number>
   freeDubMaxSeconds: number
+  /** Absent on an API deployed before the Dodo switch. */
+  checkout?: CheckoutInfo
 }
 
 export interface CheckoutResponse {
@@ -47,11 +71,10 @@ export interface CheckoutResponse {
  * Buying credits outright, with no subscription: someone with a single 4-minute
  * video to dub should be able to pay for that video and leave.
  *
- * The catalog below is a PLACEHOLDER. GET /v1/payments/credit-packs does not
- * exist yet; getCreditPacks() asks for it and falls back to these numbers, so
- * the page is complete today and switches to real server pricing the moment the
- * endpoint ships — no UI change needed. `fromServer` says which one you are
- * looking at.
+ * GET /v1/payments/credit-packs serves this catalog, and the copy below is the
+ * fallback for an API deployed before that endpoint existed. The two must stay
+ * in step with api/src/payment/credit-packs.ts — the server's numbers are what
+ * a purchase actually grants. `fromServer` says which one you are looking at.
  */
 
 export interface CreditPack {
@@ -61,6 +84,12 @@ export interface CreditPack {
   currency: string
   /** Marks the pack the page highlights. */
   popular?: boolean
+  /**
+   * False when the API knows this pack but has no Dodo product for it. The
+   * price is still real information worth showing — the button is not.
+   * Undefined from the built-in fallback catalog, where nothing is known.
+   */
+  available?: boolean
 }
 
 export interface CreditPacksResponse {
@@ -192,10 +221,9 @@ export function getPlans(): Promise<PlansResponse> {
 /**
  * The one-time credit catalog, server-first.
  *
- * A missing endpoint is the expected case right now, not an error worth
- * surfacing: anything that fails falls through to the defaults above so the
- * page still renders real numbers. Only a response that actually carries packs
- * is treated as the server's.
+ * Anything that fails falls through to the defaults above so the page still
+ * renders real numbers rather than an error. Only a response that actually
+ * carries packs is treated as the server's.
  */
 export async function getCreditPacks(): Promise<CreditPacksResponse> {
   try {
@@ -253,6 +281,21 @@ export async function cancelSubscription(): Promise<{ subscription: Subscription
   )
   notifyCreditsChanged()
   return res
+}
+
+/**
+ * A link into Dodo's own customer portal — invoices, the card on file, and
+ * cancellation, all handled by Dodo rather than proxied through us.
+ *
+ * 400s until the user's first payment: the Dodo customer id is stamped on the
+ * account by the payment webhook, so before then there is no portal to open.
+ */
+export function getCustomerPortalUrl(): Promise<{ url: string }> {
+  return authJson<{ url: string }>(
+    '/payments/portal',
+    {},
+    'Could not open the billing portal',
+  )
 }
 
 // ── Credits & history ───────────────────────────────────────────────────────

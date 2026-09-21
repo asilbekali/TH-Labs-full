@@ -43,9 +43,18 @@ export default function AppShell({ children }: { children: ReactNode }) {
       <>
         <div className="grid h-screen grid-cols-[68px_minmax(0,1fr)] gap-4 overflow-hidden p-4">
           <IconRail className="h-full" onSignIn={onSignIn} />
-          <div className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] gap-3">
+          {/* `min-w-0` is load-bearing on BOTH of these, and the reason is easy
+              to miss: a grid item's automatic minimum size is its MIN-CONTENT
+              width, not zero. `minmax(0,1fr)` stops the TRACK from growing, but
+              an item whose content cannot shrink still overflows the track it
+              sits in — so one wide descendant (a `width: max-content` marquee
+              track, a long unbroken string) silently stretched this column to
+              several times the window and pushed every card off the right edge.
+              `min-w-0` opts the items out of that minimum; the tracks then
+              actually govern the width. */}
+          <div className="grid min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)] gap-3">
             <TopBar onSignIn={onSignIn} />
-            <div className="min-h-0">
+            <div className="min-h-0 min-w-0">
               {/* Studio and My works manage their own internal-scroll regions
                   (Studio's two columns + CTA; Works' fixed header/filter rows over
                   a scrolling results area). Other fixed routes scroll as a single
@@ -70,7 +79,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
           className="sticky top-4 my-4 ml-4 h-[calc(100vh-2rem)] self-start"
           onSignIn={onSignIn}
         />
-        <div className="min-w-0 flex-1">
+        <div className="min-w-0 flex-1 overflow-x-hidden">
           <header className="sticky top-0 z-30">
             <div className="wrap py-3.5">
               <TopBar onSignIn={onSignIn} />

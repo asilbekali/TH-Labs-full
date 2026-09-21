@@ -141,7 +141,7 @@ export function useCredits(page = 1, limit = 20, enabled = true): UseQueryResult
   })
 }
 
-/** GET /v1/payments/history — Stripe payment rows. */
+/** GET /v1/payments/history — the user's payment rows. */
 export function useHistory(page = 1, limit = 20, enabled = true): UseQueryResult<HistoryResponse> {
   return useQuery({
     queryKey: qk.history(page, limit),
@@ -151,9 +151,10 @@ export function useHistory(page = 1, limit = 20, enabled = true): UseQueryResult
 }
 
 /**
- * Ask the API for a Stripe-hosted checkout URL. A mutation rather than a query
- * because it is a deliberate user action with a side effect (the URL carries
- * the user's client_reference_id) and must never be replayed from cache.
+ * Ask the API for a Dodo-hosted checkout URL. A mutation rather than a query
+ * because it is a deliberate user action with a side effect (the API opens a
+ * checkout session stamped with this user's id) and must never be replayed
+ * from cache.
  */
 export function useCheckout(): UseMutationResult<
   CheckoutResponse,
@@ -211,8 +212,8 @@ export function useCommitDub(): UseMutationResult<
  * Bridge the imperative CREDITS_CHANGED_EVENT into cache invalidation.
  *
  * payments-api.ts fires that event from plain (non-hook) call sites, and the
- * balance also moves outside this app entirely — a Stripe webhook credits the
- * account after checkout completes on Stripe's domain. Mounted once at the
+ * balance also moves outside this app entirely — a Dodo webhook credits the
+ * account after checkout completes on Dodo's domain. Mounted once at the
  * app root.
  */
 export function usePaymentsInvalidation(): void {

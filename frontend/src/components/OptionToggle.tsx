@@ -15,13 +15,13 @@ export default function OptionToggle({
   title: string
   description: string
   icon?: ReactNode
-  accent?: 'brand' | 'iris'
+  accent?: 'brand' | 'magenta'
 }) {
   // A monotonically-increasing key so each toggle re-mounts (and replays) the
   // brand-tinted ripple that blooms from the knob.
   const [ripple, setRipple] = useState(0)
-  const isIris = accent === 'iris'
-  const rippleColor = isIris ? 'var(--c-accent-iris)' : 'var(--c-brand-500)'
+  const isMagenta = accent === 'magenta'
+  const rippleColor = isMagenta ? 'var(--c-accent-magenta)' : 'var(--c-brand-500)'
 
   return (
     <button
@@ -34,8 +34,8 @@ export default function OptionToggle({
       }}
       className={`focusable flex w-full items-start gap-3 rounded-2xl border p-4 text-left transition-colors ${
         checked
-          ? isIris
-            ? 'border-iris/40 bg-iris/[0.06]'
+          ? isMagenta
+            ? 'border-magenta/40 bg-magenta/[0.06]'
             : 'border-brand/40 bg-brand/[0.06]'
           : 'border-subtle bg-sunken hover:border-strong hover:bg-raised'
       }`}
@@ -44,8 +44,8 @@ export default function OptionToggle({
         <span
           className={`icon-tile mt-0.5 h-9 w-9 shrink-0 ${
             checked
-              ? isIris
-                ? 'bg-iris/12 text-iris'
+              ? isMagenta
+                ? 'bg-magenta/12 text-magenta'
                 : 'bg-brand/12 text-brand'
               : 'bg-surface text-secondary'
           }`}
@@ -59,12 +59,12 @@ export default function OptionToggle({
         <span className="flex items-center justify-between gap-3">
           <span className="text-sm font-semibold text-primary">{title}</span>
           {/* Track — 44×24. Off: sunken fill + inset strong border so it reads as
-              clearly off. On: solid brand (or iris). Knob animates via transform. */}
+              clearly off. On: solid brand (or magenta). Knob animates via transform. */}
           <span
             className={`relative h-6 w-11 shrink-0 overflow-hidden rounded-full transition-colors duration-200 ${
               checked
-                ? isIris
-                  ? 'bg-iris'
+                ? isMagenta
+                  ? 'bg-magenta'
                   : 'bg-brand'
                 : 'bg-sunken shadow-[inset_0_0_0_1px_rgb(var(--c-border-strong))]'
             }`}

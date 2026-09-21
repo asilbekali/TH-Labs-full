@@ -14,6 +14,10 @@ function maskFor(top: boolean, bottom: boolean): string {
  *
  * - `min-h-0` so it can actually shrink inside a CSS grid track (without this,
  *   grid children refuse to shrink and the whole shell overflows).
+ * - `overflow-x: hidden`, which is load-bearing: `overflow-y: auto` alone
+ *   computes `overflow-x` to `auto` as well, so any child a few pixels too wide
+ *   turns the column into a sideways scroller. The desktop shell is meant to be
+ *   fixed — it scrolls down, never across.
  * - Scrollbar hidden (`.no-scrollbar`) and a top/bottom fade mask that appears
  *   only when there is content clipped in that direction.
  * - Cards keep their natural heights — no flex-1, no spacers. The column ends
@@ -61,7 +65,7 @@ const ScrollColumn = forwardRef<HTMLDivElement, {
   return (
     <div
       ref={setRef}
-      className={`no-scrollbar h-full min-h-0 overflow-y-auto ${className}`}
+      className={`no-scrollbar h-full min-h-0 overflow-y-auto overflow-x-hidden ${className}`}
       style={{ WebkitMaskImage: mask, maskImage: mask }}
     >
       {children}

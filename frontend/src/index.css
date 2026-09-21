@@ -52,24 +52,22 @@
 }
 
 /* ─────────────────────────────────────────────────────────────────────────
-   TH-Labs — "Ishkor": dual-theme design tokens (Tailwind v4, CSS-first)
+   TH-Labs — "Violet": dual-theme design tokens (Tailwind v4, CSS-first)
 
-   The palette is ours, and it comes from where the product does. Ishkor is the
-   ash glaze of Rishtan pottery — the deep turquoise-cobalt that a Fergana
-   workshop fires onto white clay. That gives us a signature nobody else in
-   this category is using, and a natural pair of modes:
+   One saturated colour — violet — on grounds with no colour in them at all.
+   That contrast is the whole idea: white or near-black everywhere, so the
+   violet is the only thing in the room that is trying to get your attention,
+   and every accent tile, active pill and progress bar lands immediately.
 
-     Light — PORCELAIN. A cool bone-white canvas (#EDF1F5) with cards fired a
-     shade brighter, ink-navy type, and the glaze as the one saturated colour.
-     Not grey: there is blue in the white, the way there is in real porcelain.
+     Light — PAPER. Plain white cards on plain white (#FFFFFF), separated by
+     hairlines and a #F7F7F5 well rather than by a tinted canvas.
 
-     Dark — INK. Deep blue-black (#0B0F16), never neutral charcoal, with the
-     glaze lifted to a bright turquoise that actually glows against it. The
-     mode is a different firing of the same two materials, not an inversion.
+     Dark — NIGHT. A true near-black (#0A0A0C) with cards barely lifted off it
+     (#141418), no cast in either direction — not blue-black, not a tinted
+     grey. The violet lifts to #A78BFA here so it still glows on that ground.
 
-   Two companions carry the rest: IRIS (indigo-violet) and ROSE (deep pink),
-   spaced far enough around the wheel to stay legible next to the glaze and
-   next to success/warn/danger.
+   Two companions carry the rest: MAGENTA (rose) and GOLD (amber), the two
+   neighbours that stay legible beside violet without reaching for blue.
 
    Every colour is a raw "R G B" channel triplet so Tailwind can apply /alpha;
    the themes swap the triplets and components never hardcode a hex. Both
@@ -99,8 +97,8 @@
 
   --color-brand: rgb(var(--c-brand-500));
   --color-brand-400: rgb(var(--c-brand-400));
-  --color-iris: rgb(var(--c-accent-iris));
-  --color-rose: rgb(var(--c-accent-rose));
+  --color-magenta: rgb(var(--c-accent-magenta));
+  --color-gold: rgb(var(--c-accent-gold));
 
   --color-success: rgb(var(--c-success));
   --color-warn: rgb(var(--c-warn));
@@ -119,105 +117,106 @@
   --ease-exit: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-/* ── Light theme · PORCELAIN (default) ─────────────────────────────────── */
+/* ── Light theme · PAPER (default) ─────────────────────────────────────── */
 :root,
 :root[data-theme='light'] {
   color-scheme: light;
 
-  --c-canvas: 237 241 245;        /* #EDF1F5 — bone white with blue in it */
-  --c-surface: 250 251 253;       /* #FAFBFD — the card, fired brighter */
+  --c-canvas: 255 255 255;        /* #FFFFFF — paper, no tint at all */
+  --c-surface: 255 255 255;       /* the card is the same white; hairlines separate */
   --c-raised: 255 255 255;
-  --c-sunken: 228 233 240;        /* #E4E9F0 — pressed wells and tracks */
+  --c-sunken: 247 247 245;        /* #F7F7F5 — pressed wells and tracks */
 
-  --c-border-subtle: 219 226 234;
-  --c-border-strong: 194 204 217;
+  --c-border-subtle: 230 230 225;
+  --c-border-strong: 212 212 206;
 
-  --c-text-primary: 15 23 35;     /* #0F1723 — ink navy, not black */
-  --c-text-secondary: 72 87 105;
-  --c-text-muted: 122 136 155;
+  --c-text-primary: 11 11 12;     /* #0B0B0C — near-black ink */
+  --c-text-secondary: 95 96 102;
+  --c-text-muted: 120 121 128;
 
-  --c-brand-500: 11 102 133;      /* #0B6685 — ishkor glaze, AA on porcelain */
-  --c-brand-400: 14 120 152;      /* #0E7898 — one firing lighter (hover) */
-  --c-accent-iris: 79 79 196;     /* #4F4FC4 — indigo-violet */
-  --c-accent-rose: 183 58 110;    /* #B73A6E — deep pink */
+  --c-brand-500: 109 40 217;      /* #6D28D9 — violet, AA on white */
+  --c-brand-400: 139 92 246;      /* #8B5CF6 — one step brighter (hover) */
+  --c-accent-magenta: 190 18 60;  /* #BE123C — rose */
+  --c-accent-gold: 180 83 9;      /* #B45309 — amber */
 
-  --c-success: 17 116 85;
-  --c-warn: 158 96 6;
-  --c-danger: 190 45 51;
-  --c-info: 29 105 178;
+  --c-success: 21 128 61;
+  --c-warn: 180 83 9;
+  --c-danger: 185 28 28;
+  --c-info: 109 40 217;           /* the violet again — an info blue is still blue */
 
   /* Surfaces are flat; these two ramps exist for the handful of components
      that need a fill with depth. `--grad-brand` follows the theme (so a
      progress bar or the wordmark reads correctly against this canvas), while
      `--grad-brand-deep` stays dark in BOTH modes because white type sits on
      it — the avatar and the balance card. */
-  --grad-brand: linear-gradient(120deg, rgb(11 102 133) 0%, rgb(16 140 152) 100%);
-  --grad-brand-deep: linear-gradient(120deg, rgb(11 90 120) 0%, rgb(14 126 140) 100%);
+  --grad-brand: linear-gradient(120deg, rgb(91 33 182) 0%, rgb(124 58 237) 100%);
+  --grad-brand-deep: linear-gradient(120deg, rgb(76 29 149) 0%, rgb(109 40 217) 100%);
 
-  /* Shadows carry the canvas's blue, so cards sit on paper rather than smog. */
-  --shadow-sm: 0 1px 2px rgb(17 38 66 / 0.06), 0 1px 3px rgb(17 38 66 / 0.04);
-  --shadow-md: 0 4px 12px -4px rgb(17 38 66 / 0.12), 0 2px 5px -2px rgb(17 38 66 / 0.07);
-  --shadow-lg: 0 20px 40px -18px rgb(17 38 66 / 0.20), 0 6px 16px -10px rgb(17 38 66 / 0.13);
+  /* Neutral shadows: the ground has no hue, so a tinted shadow would be the
+     only colour cast on the page and would read as a printing error. */
+  --shadow-sm: 0 1px 2px rgb(11 11 12 / 0.06), 0 1px 3px rgb(11 11 12 / 0.04);
+  --shadow-md: 0 4px 12px -4px rgb(11 11 12 / 0.10), 0 2px 5px -2px rgb(11 11 12 / 0.06);
+  --shadow-lg: 0 24px 60px -20px rgb(11 11 12 / 0.18), 0 6px 16px -10px rgb(11 11 12 / 0.10);
 
   --ambient:
-    radial-gradient(56rem 56rem at 2% -14%, rgb(var(--c-brand-400) / 0.15), transparent 60%),
-    radial-gradient(46rem 46rem at 104% -2%, rgb(var(--c-accent-iris) / 0.09), transparent 56%),
-    radial-gradient(44rem 32rem at 62% 110%, rgb(var(--c-brand-400) / 0.09), transparent 60%);
+    radial-gradient(56rem 56rem at 2% -14%, rgb(var(--c-brand-400) / 0.13), transparent 60%),
+    radial-gradient(46rem 46rem at 104% -2%, rgb(var(--c-accent-magenta) / 0.07), transparent 56%),
+    radial-gradient(44rem 32rem at 62% 110%, rgb(var(--c-brand-400) / 0.08), transparent 60%);
 
   /* surface treatments (used by component classes) */
-  --card-bg: rgb(250 251 253);
-  --card-sheen: 0 0 rgb(0 0 0 / 0); /* the glaze highlight is a dark-mode trick */
+  --card-bg: rgb(255 255 255);
+  --card-sheen: 0 0 rgb(0 0 0 / 0); /* the top-edge highlight is a dark-mode trick */
   --card-shadow: var(--shadow-sm);
-  --rail-bg: rgb(250 251 253 / 0.78);
+  --rail-bg: rgb(255 255 255 / 0.85);
 }
 
-/* ── Dark theme · INK ──────────────────────────────────────────────────── */
+/* ── Dark theme · NIGHT ────────────────────────────────────────────────── */
 :root[data-theme='dark'] {
   color-scheme: dark;
 
-  --c-canvas: 11 15 22;           /* #0B0F16 — blue-black, never neutral grey */
-  --c-surface: 18 24 33;          /* #121821 */
-  --c-raised: 27 34 46;           /* #1B222E */
-  --c-sunken: 14 19 27;
+  --c-canvas: 10 10 12;           /* #0A0A0C — near-black, no cast either way */
+  --c-surface: 20 20 24;          /* #141418 — the card, barely lifted */
+  --c-raised: 28 28 32;           /* #1C1C20 */
+  --c-sunken: 13 13 15;
 
-  --c-border-subtle: 35 45 60;
-  --c-border-strong: 57 71 91;
+  --c-border-subtle: 38 38 46;
+  --c-border-strong: 58 58 69;
 
-  --c-text-primary: 233 238 245;  /* #E9EEF5 — cool off-white */
-  --c-text-secondary: 163 176 194;
-  --c-text-muted: 117 130 149;
+  --c-text-primary: 244 244 246;  /* #F4F4F6 */
+  --c-text-secondary: 163 163 174;
+  --c-text-muted: 128 128 142;
 
-  --c-brand-500: 45 178 214;      /* #2DB2D6 — the glaze, lifted so it glows */
-  --c-brand-400: 109 209 236;     /* #6DD1EC */
-  --c-accent-iris: 139 139 246;   /* #8B8BF6 */
-  --c-accent-rose: 234 133 178;   /* #EA85B2 */
+  --c-brand-500: 167 139 250;     /* #A78BFA — violet, lifted so it glows */
+  --c-brand-400: 196 181 253;     /* #C4B5FD */
+  --c-accent-magenta: 251 113 133; /* #FB7185 — rose */
+  --c-accent-gold: 251 191 36;    /* #FBBF24 — amber */
 
-  --c-success: 61 191 142;
-  --c-warn: 232 173 74;
-  --c-danger: 240 113 103;
-  --c-info: 109 169 234;
+  --c-success: 74 222 128;
+  --c-warn: 251 191 36;
+  --c-danger: 248 113 113;
+  --c-info: 167 139 250;
 
-  /* Bright here, because on ink a deep ramp would disappear; the deep ramp is
-     kept separately for the surfaces that carry white type. */
-  --grad-brand: linear-gradient(120deg, rgb(35 156 196) 0%, rgb(78 214 205) 100%);
-  --grad-brand-deep: linear-gradient(120deg, rgb(11 90 120) 0%, rgb(14 126 140) 100%);
+  /* Bright here, because on midnight a deep ramp would disappear; the deep
+     ramp is kept separately for the surfaces that carry pale type. */
+  --grad-brand: linear-gradient(120deg, rgb(91 33 182) 0%, rgb(139 92 246) 100%);
+  --grad-brand-deep: linear-gradient(120deg, rgb(76 29 149) 0%, rgb(109 40 217) 100%);
 
   --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.45);
   --shadow-md: 0 6px 18px -10px rgb(0 0 0 / 0.6);
   --shadow-lg: 0 24px 48px -22px rgb(0 0 0 / 0.7);
 
   --ambient:
-    radial-gradient(56rem 56rem at 2% -14%, rgb(var(--c-brand-500) / 0.13), transparent 62%),
-    radial-gradient(46rem 46rem at 104% -2%, rgb(var(--c-accent-iris) / 0.10), transparent 58%),
+    radial-gradient(56rem 56rem at 2% -14%, rgb(var(--c-brand-500) / 0.14), transparent 62%),
+    radial-gradient(46rem 46rem at 104% -2%, rgb(var(--c-accent-magenta) / 0.08), transparent 58%),
     radial-gradient(44rem 32rem at 62% 110%, rgb(var(--c-brand-500) / 0.07), transparent 60%);
 
-  --card-bg: rgb(18 24 33);
-  /* The glaze highlight: a 1px light line along the top of every card, the way
-     a fired surface catches the light. It is what stops the dark mode from
-     looking like flat construction paper. */
-  --card-sheen: inset 0 1px 0 rgb(198 228 245 / 0.06);
+  --card-bg: rgb(20 20 24);
+  /* The cut highlight: a 1px light line along the top of every card, the way
+     the wet face of a split fruit catches the light. It is what stops the dark
+     mode from looking like flat construction paper. */
+  --card-sheen: inset 0 1px 0 rgb(226 220 255 / 0.06);
   --card-shadow: var(--shadow-sm);
-  --rail-bg: rgb(18 24 33 / 0.78);
+  --rail-bg: rgb(20 20 24 / 0.82);
 }
 
 html { scroll-behavior: smooth; }
@@ -248,10 +247,10 @@ body {
   transition: background-color 0.25s var(--ease-exit), color 0.25s var(--ease-exit);
 }
 
-/* The glaze pooling in the corners — three whispers of colour, never a
-   gradient you could name. Each theme mixes its own (see --ambient): on
-   porcelain the pools have to be drawn with the LIGHTER glaze, because a dark
-   teal at low alpha over white just reads as grey. */
+/* The violet pooling in the corners — three whispers of colour, never a
+   gradient you could name. Each theme mixes its own (see --ambient): in light
+   mode the pools are drawn with the BRIGHTER violet, because #6D28D9 at low
+   alpha over white just reads as grey. */
 body::before {
   content: '';
   position: fixed;
@@ -274,7 +273,7 @@ body::before {
 /* ── Reusable component classes ─────────────────────────────────────────── */
 @layer components {
   /* The one-word accent in page titles. Follows the theme, so it is a deep
-     glaze on porcelain and a bright one on ink. */
+     deep violet on paper and a bright one on night. */
   .gradient-text {
     background: var(--grad-brand);
     -webkit-background-clip: text;
@@ -289,7 +288,7 @@ body::before {
   }
 
   /* Soft rounded surface card — the core bento primitive. The sheen is the
-     fired-glaze highlight along the top edge (dark mode only; see tokens). */
+     cut highlight along the top edge (dark mode only; see tokens). */
   .card {
     background: var(--card-bg);
     border: 1px solid rgb(var(--c-border-subtle));
@@ -307,10 +306,10 @@ body::before {
     box-shadow: var(--shadow-md), var(--card-sheen);
   }
 
-  /* A flat glaze fill — no glow, no gradient-shift. Feedback is one firing
-     lighter plus a 1px lift. The label is the canvas colour, which is how the
-     same rule gives porcelain type on deep glaze in light mode and ink type on
-     bright glaze in dark: contrast holds in both without a second token. */
+  /* A flat violet fill — no glow, no gradient-shift. Feedback is one step
+     brighter plus a 1px lift. The label is the canvas colour, which is how the
+     same rule gives white type on deep violet in light mode and near-black type
+     on bright violet in dark: contrast holds without a second token. */
   .btn-primary {
     position: relative;
     background: rgb(var(--c-brand-500));
@@ -471,4 +470,484 @@ body::before {
     transition-duration: 0.001ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* ═════════════════════════════════════════════════════════════════════════
+   STUDIO — "Deep Violet"
+   An evolution of the palette, not a second one. The Studio is the one screen
+   where the product is actually working, so it gets the loud end of the same
+   family: the violet poured thick into a single saturated surface, dark enough
+   to carry pale type in BOTH themes, and light that moves across it.
+
+   Everything below is additive. It defines new tokens and new component
+   classes; it overrides nothing the rest of the app reads, so /studio can look
+   like this while Home, Works and Plans stay exactly as they are.
+   ═════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* ── The deep firing ────────────────────────────────────────────────────
+     Theme-INVARIANT on purpose. This is the surface that carries blush type,
+     so it must be dark on stone and dark on midnight — an inverted copy in
+     light mode would put pale text on a pale card. Three stops down the violet
+     ramp, ending one step warm so the surface is not a flat wash. */
+  --deep: linear-gradient(142deg, #1B0B3A 0%, #4C1D95 48%, #6D28D9 100%);
+  --deep-edge: rgb(196 181 253 / 0.26);
+
+  /* The mesh that drifts over the deep surface. Fixed channels (not the
+     theme's brand triplets) so the hero card reads identically in both modes
+     instead of going flat in light mode. */
+  --mesh-a: 167 139 250;  /* violet at full brightness */
+  --mesh-b: 251 113 133;  /* rose */
+  --mesh-c: 251 191 36;   /* amber */
+
+  /* Type that sits ON the deep surface. */
+  --on-deep: 245 243 255;
+  --on-deep-dim: 199 191 226;
+
+  /* The signature three-colour ramp — violet through rose into amber. Used
+     for the progress rail, the active step spine and the estimate bar.
+     Follows the theme. */
+  --grad-signature: linear-gradient(112deg, rgb(var(--c-brand-500)) 0%, rgb(var(--c-accent-magenta)) 55%, rgb(var(--c-accent-gold)) 100%);
+
+  /* The light that crosses a card on hover. On stone a white sweep is
+     invisible, so light mode sweeps with the violet instead. */
+  --sheen-tint: rgb(var(--c-brand-400) / 0.18);
+  /* Pointer-tracked highlight strength. */
+  --spot-tint: rgb(var(--c-brand-400) / 0.11);
+  /* The halo under a card that is actively running. */
+  --run-halo: 0 0 0 1px rgb(var(--c-brand-500) / 0.38), 0 12px 44px -16px rgb(var(--c-brand-500) / 0.5);
+}
+
+:root[data-theme='dark'] {
+  --sheen-tint: rgb(226 220 255 / 0.12);
+  --spot-tint: rgb(var(--c-brand-400) / 0.14);
+}
+
+@layer components {
+  /* ── The deep card ──────────────────────────────────────────────────────
+     The one saturated surface on the page. Everything inside it is pale,
+     so it uses its own type tokens rather than the theme's. */
+  .deep-card {
+    position: relative;
+    isolation: isolate;
+    overflow: hidden;
+    border-radius: var(--radius-card);
+    background: var(--deep);
+    border: 1px solid var(--deep-edge);
+    color: rgb(var(--on-deep));
+    box-shadow: var(--shadow-lg), inset 0 1px 0 rgb(255 255 255 / 0.07);
+  }
+  .deep-card .on-deep-dim { color: rgb(var(--on-deep-dim)); }
+
+  /* ── Aurora ─────────────────────────────────────────────────────────────
+     Three blobs on a layer that turns and breathes behind the content. A slow
+     rotation reads as light moving across a glazed surface; a translate would
+     read as a background image sliding, which is the cheap version. */
+  .aurora::before {
+    content: '';
+    position: absolute;
+    inset: -45%;
+    z-index: -1;
+    background:
+      radial-gradient(34% 40% at 24% 26%, rgb(var(--mesh-a) / 0.55), transparent 64%),
+      radial-gradient(32% 36% at 76% 22%, rgb(var(--mesh-b) / 0.46), transparent 62%),
+      radial-gradient(40% 44% at 58% 84%, rgb(var(--mesh-c) / 0.30), transparent 66%);
+    animation: aurora-drift 26s linear infinite;
+    will-change: transform;
+  }
+  /* A quieter pour, for surfaces that still have to be read against. */
+  .aurora-soft::before { opacity: 0.45; animation-duration: 38s; }
+
+  @keyframes aurora-drift {
+    0%   { transform: rotate(0deg) scale(1.04); }
+    50%  { transform: rotate(180deg) scale(1.16); }
+    100% { transform: rotate(360deg) scale(1.04); }
+  }
+
+  /* ── Grain ──────────────────────────────────────────────────────────────
+     Fired ceramic is never perfectly smooth. A single tile of turbulence at
+     very low opacity stops the big gradient from banding, and is what keeps
+     the deep card from looking like a CSS gradient. */
+  .grain::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    opacity: 0.32;
+    mix-blend-mode: overlay;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E");
+  }
+
+  /* ── Sheen ──────────────────────────────────────────────────────────────
+     A band of light crossing the card once, on hover. Runs on `left`/`opacity`
+     of a pseudo-element that is already composited, and only while hovered, so
+     it never costs anything at rest. */
+  .sheen { position: relative; overflow: hidden; }
+  .sheen::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: -60%;
+    width: 42%;
+    pointer-events: none;
+    transform: skewX(-18deg);
+    background: linear-gradient(100deg, transparent, var(--sheen-tint), transparent);
+    opacity: 0;
+  }
+  .sheen:hover::after,
+  .group:hover .sheen::after { animation: sheen-sweep 0.9s var(--ease-entrance); }
+  @keyframes sheen-sweep {
+    0%   { left: -60%; opacity: 1; }
+    100% { left: 118%; opacity: 0; }
+  }
+
+  /* ── Spotlight ──────────────────────────────────────────────────────────
+     A pool of violet that follows the pointer. --mx/--my are written by
+     usePointerSpotlight on pointermove; the gradient itself is GPU work, so
+     the handler only sets two custom properties and never lays anything out. */
+  /* `isolation: isolate` + a negative z-index is what keeps the wash BEHIND
+     the card's text without every child having to opt out with `.above`. The
+     isolate confines the -1 layer to this card, and a negative layer inside a
+     stacking context still paints above that context's own background — so the
+     pool sits exactly between the card and its content. */
+  .spotlight { position: relative; isolation: isolate; }
+  .spotlight::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    border-radius: inherit;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.35s var(--ease-exit);
+    background: radial-gradient(16rem 16rem at var(--mx, 50%) var(--my, 50%), var(--spot-tint), transparent 72%);
+  }
+  .spotlight:hover::before { opacity: 1; }
+  /* Anything that should sit above the spotlight wash. */
+  .above { position: relative; z-index: 1; }
+
+  /* ── Beam ───────────────────────────────────────────────────────────────
+     The hairline that travels along the top edge of a card while its work is
+     running. One element, one transform — the honest "something is happening"
+     signal, instead of a spinner nobody reads. */
+  .beam {
+    position: absolute;
+    z-index: 2;
+    inset-inline: 0;
+    top: 0;
+    height: 2px;
+    overflow: hidden;
+    border-radius: var(--radius-card) var(--radius-card) 0 0;
+  }
+  .beam::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    height: 2px;
+    width: 36%;
+    border-radius: 999px;
+    background: linear-gradient(90deg, transparent, rgb(var(--c-brand-400)), transparent);
+    animation: beam-travel 2.2s var(--ease-entrance) infinite;
+  }
+  @keyframes beam-travel {
+    0%   { transform: translateX(-120%); }
+    100% { transform: translateX(400%); }
+  }
+
+  /* The halo a card wears while its run is live. */
+  .running-halo { box-shadow: var(--run-halo); }
+
+  /* ── Equalizer ──────────────────────────────────────────────────────────
+     Five bars keyed off the existing `wave` frames at staggered delays. It is
+     the voice, drawn — used on the run card while the pipeline is working. */
+  .eq { display: flex; align-items: center; gap: 3px; height: 18px; }
+  .eq > i {
+    display: block;
+    width: 3px;
+    height: 100%;
+    border-radius: 999px;
+    background: currentColor;
+    transform-origin: center;
+    animation: wave 1.1s ease-in-out infinite;
+  }
+  .eq > i:nth-child(1) { animation-delay: 0ms; }
+  .eq > i:nth-child(2) { animation-delay: 140ms; }
+  .eq > i:nth-child(3) { animation-delay: 70ms; }
+  .eq > i:nth-child(4) { animation-delay: 220ms; }
+  .eq > i:nth-child(5) { animation-delay: 110ms; }
+  .eq[data-idle='true'] > i { animation-play-state: paused; transform: scaleY(0.3); }
+
+  /* ── The signature ramp, as a fill and as a hairline ────────────────────── */
+  .fill-signature { background: var(--grad-signature); }
+  .rule-signature {
+    height: 1px;
+    background: linear-gradient(90deg, rgb(var(--c-brand-500) / 0.5), rgb(var(--c-accent-magenta) / 0.35), transparent);
+  }
+
+  /* ── Step spine ─────────────────────────────────────────────────────────
+     A 3px rail down the left edge of a step card that grows from nothing when
+     the step opens. It is what makes the deck read as a sequence rather than a
+     stack of accordions. */
+  .spine {
+    position: absolute;
+    left: 0;
+    top: 10px;
+    bottom: 10px;
+    width: 3px;
+    border-radius: 999px;
+    background: var(--grad-signature);
+    transform: scaleY(0);
+    transform-origin: top;
+    transition: transform 0.35s var(--ease-entrance);
+  }
+  .spine[data-on='true'] { transform: scaleY(1); }
+
+  /* ── Bento ──────────────────────────────────────────────────────────────
+     The grid the whole right column sits on. Named areas would be overkill for
+     four rows; what matters is the consistent 1rem gutter and that tiles keep
+     their natural height inside the fixed shell. */
+  .bento { display: grid; gap: 1rem; }
+  .bento-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  @media (max-width: 640px) { .bento-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.75rem; } }
+
+  /* Stat tile — the small cards along the top of the reference grid. */
+  .tile {
+    position: relative;
+    overflow: hidden;
+    border-radius: var(--radius-card);
+    background: var(--card-bg);
+    border: 1px solid rgb(var(--c-border-subtle));
+    box-shadow: var(--card-shadow), var(--card-sheen);
+    transition: border-color 0.25s, box-shadow 0.25s;
+  }
+  .tile:hover { border-color: rgb(var(--c-brand-500) / 0.4); box-shadow: var(--shadow-md), var(--card-sheen); }
+
+  /* The blush button that sits on the deep card — the inverse of
+     .btn-primary, for the one place where the surface is already saturated. */
+  .btn-on-deep {
+    /* Blush type on skin: the deep surface is the same dark fruit in both
+       themes, so this label colour never has to follow the theme. */
+    background: rgb(var(--on-deep));
+    color: #1B0B3A;
+    font-weight: 600;
+    border-radius: var(--radius-control);
+    transition: transform 0.18s var(--ease-entrance), box-shadow 0.25s, background-color 0.18s;
+    box-shadow: 0 6px 20px -8px rgb(0 0 0 / 0.55);
+  }
+  .btn-on-deep:hover:not(:disabled) {
+    background: #fff;
+    box-shadow: 0 12px 30px -10px rgb(0 0 0 / 0.6);
+  }
+  .btn-on-deep:active:not(:disabled) { transform: translateY(1px) scale(0.995); }
+  .btn-on-deep:disabled {
+    background: rgb(var(--on-deep) / 0.18);
+    color: rgb(var(--on-deep) / 0.55);
+    box-shadow: none;
+    cursor: not-allowed;
+  }
+}
+
+/* The reduced-motion block above already kills every animation duration; the
+   aurora, beam and equalizer inherit that, which is the correct outcome — they
+   are decoration, and the layout does not depend on any of them. */
+
+/* ═════════════════════════════════════════════════════════════════════════
+   HOME — THE LIVING DASHBOARD
+   The dashboard is the first thing an account sees and the screen it comes
+   back to, so it is the one place where motion is allowed to be ambient —
+   running with nothing to report — rather than strictly a response to an
+   action. Three devices do that work, and all three are CSS:
+
+     .marquee   — the language ribbon, scrolling forever under the hero. It
+                  pauses on hover so a name can actually be clicked.
+     .chip-deep — a chip that reads against the deep hero surface.
+     .pulse-dot — the live indicator, a dot with a ring expanding out of it.
+
+   Everything here is decoration. The global reduced-motion rule stops all of
+   it, and the page loses nothing but its restlessness.
+   ═════════════════════════════════════════════════════════════════════════ */
+@layer components {
+  /* ── The ribbon ─────────────────────────────────────────────────────────
+     The track holds the list TWICE and travels exactly -50%, so the second
+     copy lands where the first began and the seam is invisible. Duration is
+     set per instance from the item count, so a long list does not scroll
+     faster than a short one. */
+  .marquee {
+    position: relative;
+    overflow: hidden;
+    /* The track below is `width: max-content`, and a max-content box reports
+       that full width as its MIN-content contribution — which travels up the
+       ancestors and can stretch a whole layout. `contain: inline-size` cuts
+       that off: this element's inline size is computed as if it were empty, so
+       it fills its column and the track overflows it invisibly, as intended. */
+    contain: inline-size;
+    -webkit-mask-image: linear-gradient(90deg, transparent, #000 6%, #000 94%, transparent);
+    mask-image: linear-gradient(90deg, transparent, #000 6%, #000 94%, transparent);
+  }
+  .marquee__track {
+    display: flex;
+    width: max-content;
+    animation: marquee-slide var(--marquee-dur, 46s) linear infinite;
+    will-change: transform;
+  }
+  .marquee:hover .marquee__track,
+  .marquee:focus-within .marquee__track {
+    animation-play-state: paused;
+  }
+  @keyframes marquee-slide {
+    from { transform: translate3d(0, 0, 0); }
+    to   { transform: translate3d(-50%, 0, 0); }
+  }
+
+  /* ── A chip on the deep surface ─────────────────────────────────────────
+     The theme's .chip would put a pale card on a pale-typed dark panel, so
+     the hero gets its own: a frosted well cut into the fruit. */
+  .chip-deep {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    border-radius: var(--radius-pill);
+    background: rgb(255 255 255 / 0.08);
+    border: 1px solid rgb(255 255 255 / 0.14);
+    color: rgb(var(--on-deep));
+    backdrop-filter: blur(6px);
+    transition: background-color 0.2s var(--ease-exit), border-color 0.2s;
+  }
+  .chip-deep:hover { background: rgb(255 255 255 / 0.13); }
+
+  /* ── Type on the deep hero ──────────────────────────────────────────────
+     .gradient-text follows the theme, which means a deep violet ramp — lost
+     against the dark hero. This one burns in the mesh channels instead, the
+     same fixed colours the aurora behind it uses. */
+  .text-mesh {
+    background: linear-gradient(100deg, rgb(var(--mesh-a)) 0%, rgb(var(--mesh-b)) 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  /* ── The live dot ───────────────────────────────────────────────────────
+     A ring that expands out of the dot and fades, once every 2.2s. It is the
+     "this is a live reading, not a cached number" cue next to the pipeline
+     status, and it is the only thing on the page allowed to blink. */
+  .pulse-dot {
+    position: relative;
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    border-radius: 999px;
+    background: currentColor;
+    flex: none;
+  }
+  .pulse-dot::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 999px;
+    box-shadow: 0 0 0 0 currentColor;
+    animation: dot-ping 2.2s var(--ease-exit) infinite;
+  }
+  @keyframes dot-ping {
+    0%        { box-shadow: 0 0 0 0 currentColor; opacity: 0.65; }
+    70%, 100% { box-shadow: 0 0 0 7px currentColor; opacity: 0; }
+  }
+}
+
+/* ═════════════════════════════════════════════════════════════════════════
+   THINKING ORBS
+   The Studio's loading signal: a globe of small dots, turning. It is the "this
+   is being thought about" cue, and unlike a spinner it does not imply a rate
+   it cannot know — where a real percentage exists it is printed beside it.
+
+   It is a REAL sphere, not a drawing of one. Each dot is placed with
+   `rotateY(lon) rotateX(lat) translateZ(r)` inside a `preserve-3d` box, so the
+   dots sit on the surface of an actual sphere in the compositor's 3D space and
+   one `rotateY` on the parent turns the whole globe. Two consequences worth
+   knowing:
+
+     · `backface-visibility: hidden` culls every dot on the far side, so the
+       silhouette is a hemisphere of dots and the back does not show through.
+       That is the depth cue — there is no per-dot opacity to animate.
+     · the dots bunch and foreshorten toward the rim on their own, because
+       that is what a sphere does. Nothing here fakes it.
+
+   The positions come from the component (rings of latitude, staggered); this
+   file owns the geometry, the spin and the colour. Nothing animates in JS.
+   ═════════════════════════════════════════════════════════════════════════ */
+@layer components {
+  .orbs {
+    position: relative;
+    isolation: isolate;
+    display: inline-block;
+    flex: none;
+    width: var(--orb-size, 64px);
+    height: var(--orb-size, 64px);
+    color: rgb(var(--c-brand-500));
+    /* Enough perspective to feel round, not so much that the near dots balloon. */
+    perspective: calc(var(--orb-size, 64px) * 2.6);
+    /* One full turn. Slower reads calmer. */
+    --orb-spin: 7s;
+    --orb-r: calc(var(--orb-size, 64px) * 0.43);
+    --orb-dot: max(1.5px, calc(var(--orb-size, 64px) * 0.03));
+  }
+
+  /* The globe. Tilt lives in the keyframes with the spin, so the whole thing
+     is one transform on one element. */
+  .orbs__sphere {
+    position: absolute;
+    inset: 0;
+    transform-style: preserve-3d;
+    animation: orb-spin var(--orb-spin) linear infinite;
+    will-change: transform;
+  }
+
+  .orbs__sphere > i {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    display: block;
+    width: var(--orb-dot);
+    height: var(--orb-dot);
+    margin: calc(var(--orb-dot) / -2) 0 0 calc(var(--orb-dot) / -2);
+    border-radius: 999px;
+    background: currentColor;
+    /* The far hemisphere is culled — see the note above. */
+    backface-visibility: hidden;
+  }
+
+  /* The light the globe throws, behind it. */
+  .orbs::after {
+    content: '';
+    position: absolute;
+    inset: 4%;
+    z-index: -1;
+    border-radius: 999px;
+    background: radial-gradient(
+      circle at 50% 50%,
+      rgb(var(--c-brand-500) / 0.28),
+      transparent 70%
+    );
+    animation: orb-halo 2.6s ease-in-out infinite;
+  }
+
+  /* On the deep card the theme's violet would sink into the surface, so the
+     globe burns in the mesh violet instead. */
+  .deep-card .orbs { color: rgb(var(--mesh-a)); }
+  .deep-card .orbs::after {
+    background: radial-gradient(circle at 50% 50%, rgb(var(--mesh-a) / 0.34), transparent 70%);
+  }
+
+  @keyframes orb-spin {
+    from { transform: rotateX(-16deg) rotateY(0deg); }
+    to   { transform: rotateX(-16deg) rotateY(360deg); }
+  }
+  @keyframes orb-halo {
+    0%, 100% { opacity: 0.5; transform: scale(0.92); }
+    50%      { opacity: 1; transform: scale(1.04); }
+  }
+
+  /* Reduced motion: the global rule collapses the duration, which parks the
+     globe on its `from` frame — a still, tilted sphere of dots. */
 }
