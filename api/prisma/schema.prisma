@@ -29,9 +29,11 @@ model User {
   role     Role   @default(USER)
 
   // ── Billing & credits (step 05, additive) ──────────────────────────────
-  credits          Int     @default(60) // cached balance; CreditEntry ledger is the truth
-  freeDubUsed      Boolean @default(false) // the one free 2-minute dub
-  stripeCustomerId String? @unique
+  credits        Int     @default(60) // cached balance; CreditEntry ledger is the truth
+  freeDubUsed    Boolean @default(false) // the one free 2-minute dub
+  /// Dodo Payments customer id (`cus_…`), stamped the first time a payment of
+  /// theirs is processed. Lets us open the Dodo customer portal for them.
+  dodoCustomerId String? @unique
 
   subscriptions Subscription[]
   payments      Payment[]
@@ -110,16 +112,56 @@ model Plan {
   creditsGranted  Int
   grantDays       Int // 7 or 30
   /// How many allocations one paid period is worth. 1 for weekly/monthly; 12
-  /// for yearly, which Stripe bills once but which drips a month at a time.
+  /// for yearly, which Dodo bills once but which drips a month at a time.
   /// The cron stops at this count so a year's credits can't all land early.
   grantsPerPeriod Int          @default(1)
-  stripePriceId   String?      @unique
-  stripeLinkUrl   String?
+  /// The Dodo Payments product this plan is sold as (`pdt_…`). This is how a
+  /// webhook is resolved back to a plan, so it must match the product the
+  /// checkout was opened for.
+  dodoProductId   String?      @unique
+  /// Optional static payment link for the same product. Only used when no API
+  /// key is configured — with one, checkout sessions are created server-side.
+  dodoLinkUrl     String?
   active          Boolean      @default(true)
 
   subscriptions Subscription[]
 
   @@unique([tier, cycle])
+}
+
+/// One-time credit packs — buying credits outright, with no subscription.
+///
+/// These used to be a hardcoded list in the API with product ids read from
+/// environment variables, which meant selling a new pack was a deploy. They
+/// live here instead so an ADMIN can create one, price it, and paste in the
+/// Dodo product link from the panel, and the site picks it up on the next
+/// request.
+model CreditPack {
+  id     String @id @default(cuid())
+  /// Stable public id (`pack_240`). This is what travels in the checkout
+  /// metadata and what the webhook reads back, so renaming one orphans any
+  /// checkout already in flight — change the label, not the slug.
+  slug   String @unique
+  credits    Int
+  priceCents Int
+  currency   String @default("usd")
+  /// Marks the pack the pricing page highlights. Not enforced to be unique;
+  /// the page simply highlights whichever rows carry it.
+  popular   Boolean @default(false)
+  sortOrder Int     @default(0)
+  /// Soft delete. A deactivated pack stops being offered but keeps its slug,
+  /// so the payment history of everyone who bought one still resolves.
+  active    Boolean @default(true)
+
+  /// The Dodo product this pack is sold as, and its checkout link. Either can
+  /// be set from the admin panel; the other is derived.
+  dodoProductId String? @unique
+  dodoLinkUrl   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([active, sortOrder])
 }
 
 model Subscription {
@@ -128,7 +170,7 @@ model Subscription {
   planId String
   status SubscriptionStatus @default(ACTIVE)
 
-  stripeSubscriptionId String?   @unique
+  dodoSubscriptionId   String?   @unique
   currentPeriodStart   DateTime
   currentPeriodEnd     DateTime
   cancelAtPeriodEnd    Boolean   @default(false)
@@ -158,9 +200,9 @@ model Payment {
   status      PaymentStatus @default(PENDING)
   description String
 
-  stripeSessionId       String? @unique
-  stripePaymentIntentId String? @unique
-  stripeInvoiceId       String? @unique
+  dodoPaymentId         String? @unique
+  dodoCheckoutSessionId String?
+  dodoInvoiceId         String? @unique
 
   user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   subscription Subscription? @relation(fields: [subscriptionId], references: [id])
@@ -274,10 +316,67 @@ model Language {
   @@index([active, sortOrder])
 }
 
-// Stripe webhook idempotency guard — one row per delivered event id.
+/// Append-only activity log — who did what, when, and what came of it.
+///
+/// Written by AuditInterceptor for every state-changing request (and for the
+/// notable reads: checkout, the customer portal, admin pages), so the admin
+/// panel can show a live feed rather than staff having to read server logs.
+///
+/// Deliberately denormalised: `actorEmail` and `actorRole` are copied in at
+/// write time rather than joined from User. An audit trail has to stay true
+/// about who did something even after that account is renamed or deleted, and
+/// `actorId` is nullable precisely so a deleted user does not take their
+/// history with them.
+model AuditLog {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+
+  /// Null for an anonymous caller (a failed login, a provider webhook).
+  actorId    Int?
+  actorEmail String?
+  actorRole  Role?
+
+  /// Stable name for what happened (`auth.login`, `billing.plan.update`).
+  /// The panel groups and filters on this, so it must not embed ids.
+  action     String
+  method     String
+  path       String
+  statusCode Int
+  durationMs Int
+  /// False when the request failed — the panel's red rows.
+  success    Boolean
+
+  /// WHAT was acted on — the other half of "who did what to whom".
+  ///
+  /// `targetLabel` is resolved and copied in at write time (an email, a
+  /// `PRO/MONTHLY`, a pack slug) so the feed reads "changed the role of
+  /// ada@example.com" rather than "changed the role of user 42". Like the
+  /// actor fields it is a snapshot: renaming or deleting the target later
+  /// must not rewrite what the log says was done to it.
+  targetType  String?
+  targetId    String?
+  targetLabel String?
+  /// One human sentence for the feed, with the label already substituted.
+  summary   String?
+  /// Request/response detail, with every credential-shaped field redacted.
+  meta      Json?
+
+  ip        String?
+  userAgent String?
+
+  @@index([createdAt])
+  @@index([actorId, createdAt])
+  @@index([action, createdAt])
+  @@index([success, createdAt])
+  @@index([targetType, targetId, createdAt])
+}
+
+// Webhook idempotency guard — one row per delivered event id. For Dodo
+// Payments that id is the `webhook-id` header (Standard Webhooks), which is
+// stable across the provider's retries of the same event.
 model WebhookEvent {
-  id            String   @id @default(cuid())
-  stripeEventId String   @unique
-  type          String
-  processedAt   DateTime @default(now())
+  id          String   @id @default(cuid())
+  eventId     String   @unique
+  type        String
+  processedAt DateTime @default(now())
 }

@@ -2,10 +2,10 @@
 // option so the process refuses to start when a required secret is missing,
 // rather than crashing later at the first webhook.
 //
-// Stripe secrets are intentionally *optional*: checkout links live on the Plan
-// rows and work without the SDK, and the app must still boot in dev without a
-// Stripe account. When STRIPE_WEBHOOK_SECRET is absent the webhook route logs a
-// loud warning and rejects every event — see StripeService.
+// Dodo Payments secrets are intentionally *optional*: static payment links
+// live on the Plan rows and work without the SDK, and the app must still boot
+// in dev without a merchant account. When DODO_WEBHOOK_SECRET is absent the
+// webhook route logs a loud warning and rejects every event — see DodoService.
 import { Logger } from '@nestjs/common';
 
 type RawEnv = Record<string, string | undefined>;
@@ -35,15 +35,32 @@ export interface AppEnv {
   MAIL_PASS?: string;
   MAIL_FROM?: string;
 
-  STRIPE_SECRET_KEY?: string;
-  STRIPE_WEBHOOK_SECRET?: string;
+  DODO_PAYMENTS_API_KEY?: string;
+  DODO_WEBHOOK_SECRET?: string;
+  /** 'test_mode' (default) or 'live_mode'. Decides which Dodo host we talk to. */
+  DODO_PAYMENTS_ENVIRONMENT: 'test_mode' | 'live_mode';
 
-  STRIPE_LINK_PRO_WEEKLY?: string;
-  STRIPE_LINK_PRO_MONTHLY?: string;
-  STRIPE_LINK_PRO_YEARLY?: string;
-  STRIPE_LINK_STUDIO_WEEKLY?: string;
-  STRIPE_LINK_STUDIO_MONTHLY?: string;
-  STRIPE_LINK_STUDIO_YEARLY?: string;
+  // One Dodo product per purchasable plan. Each accepts a product id
+  // (`pdt_…`) or the full payment link copied from the dashboard; the seed
+  // reads them onto the Plan rows.
+  DODO_PRODUCT_PRO_WEEKLY?: string;
+  DODO_PRODUCT_PRO_MONTHLY?: string;
+  DODO_PRODUCT_PRO_YEARLY?: string;
+  DODO_PRODUCT_STUDIO_WEEKLY?: string;
+  DODO_PRODUCT_STUDIO_MONTHLY?: string;
+  DODO_PRODUCT_STUDIO_YEARLY?: string;
+
+  // One-time credit packs (see src/payment/credit-packs.ts).
+  DODO_PRODUCT_PACK_120?: string;
+  DODO_PRODUCT_PACK_240?: string;
+  DODO_PRODUCT_PACK_600?: string;
+  DODO_PRODUCT_PACK_1500?: string;
+
+  // ── Audit log ────────────────────────────────────────────────────────────
+  /** 'true' records GET reads as well as mutations. A lot of rows. */
+  AUDIT_LOG_READS: boolean;
+  /** Days of history kept; a daily cron prunes past this. */
+  AUDIT_LOG_RETENTION_DAYS: number;
 }
 
 // Secrets the app genuinely cannot run without.
@@ -65,10 +82,24 @@ export function validateEnv(config: RawEnv): AppEnv {
     );
   }
 
-  if (!config.STRIPE_SECRET_KEY || !config.STRIPE_WEBHOOK_SECRET) {
+  if (!config.DODO_WEBHOOK_SECRET) {
     logger.warn(
-      'STRIPE_SECRET_KEY / STRIPE_WEBHOOK_SECRET not set — the /payments/webhook ' +
-        'route will reject all events until they are configured. Checkout links still work.',
+      'DODO_WEBHOOK_SECRET not set — /payments/webhook will reject every event, ' +
+        'so no purchase can ever grant credits. Checkout links still work.',
+    );
+  }
+  if (!config.DODO_PAYMENTS_API_KEY) {
+    logger.warn(
+      'DODO_PAYMENTS_API_KEY not set — checkout falls back to static payment ' +
+        'links, and cancel / customer portal are unavailable.',
+    );
+  }
+  if (config.DODO_PAYMENTS_ENVIRONMENT?.trim() === 'live_mode') {
+    logger.log('Dodo Payments: LIVE mode — real money will move.');
+  } else {
+    logger.warn(
+      'Dodo Payments: test mode (set DODO_PAYMENTS_ENVIRONMENT=live_mode to take ' +
+        'real payments). Test-card purchases grant real credits in this database.',
     );
   }
 
@@ -92,14 +123,26 @@ export function validateEnv(config: RawEnv): AppEnv {
     MAIL_PASS: config.MAIL_PASS,
     MAIL_FROM: config.MAIL_FROM,
 
-    STRIPE_SECRET_KEY: config.STRIPE_SECRET_KEY,
-    STRIPE_WEBHOOK_SECRET: config.STRIPE_WEBHOOK_SECRET,
+    DODO_PAYMENTS_API_KEY: config.DODO_PAYMENTS_API_KEY,
+    DODO_WEBHOOK_SECRET: config.DODO_WEBHOOK_SECRET,
+    DODO_PAYMENTS_ENVIRONMENT:
+      config.DODO_PAYMENTS_ENVIRONMENT?.trim() === 'live_mode'
+        ? 'live_mode'
+        : 'test_mode',
 
-    STRIPE_LINK_PRO_WEEKLY: config.STRIPE_LINK_PRO_WEEKLY,
-    STRIPE_LINK_PRO_MONTHLY: config.STRIPE_LINK_PRO_MONTHLY,
-    STRIPE_LINK_PRO_YEARLY: config.STRIPE_LINK_PRO_YEARLY,
-    STRIPE_LINK_STUDIO_WEEKLY: config.STRIPE_LINK_STUDIO_WEEKLY,
-    STRIPE_LINK_STUDIO_MONTHLY: config.STRIPE_LINK_STUDIO_MONTHLY,
-    STRIPE_LINK_STUDIO_YEARLY: config.STRIPE_LINK_STUDIO_YEARLY,
+    DODO_PRODUCT_PRO_WEEKLY: config.DODO_PRODUCT_PRO_WEEKLY,
+    DODO_PRODUCT_PRO_MONTHLY: config.DODO_PRODUCT_PRO_MONTHLY,
+    DODO_PRODUCT_PRO_YEARLY: config.DODO_PRODUCT_PRO_YEARLY,
+    DODO_PRODUCT_STUDIO_WEEKLY: config.DODO_PRODUCT_STUDIO_WEEKLY,
+    DODO_PRODUCT_STUDIO_MONTHLY: config.DODO_PRODUCT_STUDIO_MONTHLY,
+    DODO_PRODUCT_STUDIO_YEARLY: config.DODO_PRODUCT_STUDIO_YEARLY,
+
+    DODO_PRODUCT_PACK_120: config.DODO_PRODUCT_PACK_120,
+    DODO_PRODUCT_PACK_240: config.DODO_PRODUCT_PACK_240,
+    DODO_PRODUCT_PACK_600: config.DODO_PRODUCT_PACK_600,
+    DODO_PRODUCT_PACK_1500: config.DODO_PRODUCT_PACK_1500,
+
+    AUDIT_LOG_READS: config.AUDIT_LOG_READS?.trim() === 'true',
+    AUDIT_LOG_RETENTION_DAYS: toInt(config.AUDIT_LOG_RETENTION_DAYS, 90),
   };
 }

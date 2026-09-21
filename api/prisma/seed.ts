@@ -1,6 +1,12 @@
 import { PrismaClient, Role, PlanTier, BillingCycle } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
+import {
+  DodoEnvironmentName,
+  parseProductRef,
+} from '../src/payment/dodo-product-ref';
+import { CREDIT_PACK_SEED } from '../src/payment/credit-packs';
+
 const prisma = new PrismaClient();
 
 // ── Plan catalog (source of truth: step-05 §2 matrix) ──────────────────────
@@ -15,8 +21,9 @@ const prisma = new PrismaClient();
 //   Monthly PRO     1 200 × 1  =  1 200      Monthly STUDIO  4 800 × 1  =  4 800
 //   Yearly  PRO     1 200 × 12 = 14 400      Yearly  STUDIO  4 800 × 12 = 57 600
 //
-// `priceCents` must match the Stripe Payment Link amount exactly — the webhook
-// falls back to resolving a plan by `amount_total` when it has no price id.
+// `priceCents` should match the Dodo product's price. It is no longer what
+// resolves a webhook to a plan — the product id does that — but it is the
+// number the pricing page shows, so drift here is a lie to the customer.
 type PlanSeed = {
   tier: PlanTier;
   cycle: BillingCycle;
@@ -24,27 +31,38 @@ type PlanSeed = {
   creditsGranted: number;
   grantDays: number;
   grantsPerPeriod: number;
-  linkEnv?: string; // env var holding the Stripe Payment Link
+  productEnv?: string; // env var holding the Dodo product id or payment link
 };
 
 const PLAN_SEED: PlanSeed[] = [
   { tier: 'FREE', cycle: 'MONTHLY', priceCents: 0, creditsGranted: 60, grantDays: 30, grantsPerPeriod: 1 },
 
-  { tier: 'PRO', cycle: 'WEEKLY', priceCents: 600, creditsGranted: 300, grantDays: 7, grantsPerPeriod: 1, linkEnv: 'STRIPE_LINK_PRO_WEEKLY' },
-  { tier: 'PRO', cycle: 'MONTHLY', priceCents: 1900, creditsGranted: 1200, grantDays: 30, grantsPerPeriod: 1, linkEnv: 'STRIPE_LINK_PRO_MONTHLY' },
-  { tier: 'PRO', cycle: 'YEARLY', priceCents: 19900, creditsGranted: 1200, grantDays: 30, grantsPerPeriod: 12, linkEnv: 'STRIPE_LINK_PRO_YEARLY' },
+  { tier: 'PRO', cycle: 'WEEKLY', priceCents: 600, creditsGranted: 300, grantDays: 7, grantsPerPeriod: 1, productEnv: 'DODO_PRODUCT_PRO_WEEKLY' },
+  { tier: 'PRO', cycle: 'MONTHLY', priceCents: 1900, creditsGranted: 1200, grantDays: 30, grantsPerPeriod: 1, productEnv: 'DODO_PRODUCT_PRO_MONTHLY' },
+  { tier: 'PRO', cycle: 'YEARLY', priceCents: 19900, creditsGranted: 1200, grantDays: 30, grantsPerPeriod: 12, productEnv: 'DODO_PRODUCT_PRO_YEARLY' },
 
-  { tier: 'STUDIO', cycle: 'WEEKLY', priceCents: 1500, creditsGranted: 1200, grantDays: 7, grantsPerPeriod: 1, linkEnv: 'STRIPE_LINK_STUDIO_WEEKLY' },
-  { tier: 'STUDIO', cycle: 'MONTHLY', priceCents: 4900, creditsGranted: 4800, grantDays: 30, grantsPerPeriod: 1, linkEnv: 'STRIPE_LINK_STUDIO_MONTHLY' },
-  { tier: 'STUDIO', cycle: 'YEARLY', priceCents: 49900, creditsGranted: 4800, grantDays: 30, grantsPerPeriod: 12, linkEnv: 'STRIPE_LINK_STUDIO_YEARLY' },
+  { tier: 'STUDIO', cycle: 'WEEKLY', priceCents: 1500, creditsGranted: 1200, grantDays: 7, grantsPerPeriod: 1, productEnv: 'DODO_PRODUCT_STUDIO_WEEKLY' },
+  { tier: 'STUDIO', cycle: 'MONTHLY', priceCents: 4900, creditsGranted: 4800, grantDays: 30, grantsPerPeriod: 1, productEnv: 'DODO_PRODUCT_STUDIO_MONTHLY' },
+  { tier: 'STUDIO', cycle: 'YEARLY', priceCents: 49900, creditsGranted: 4800, grantDays: 30, grantsPerPeriod: 12, productEnv: 'DODO_PRODUCT_STUDIO_YEARLY' },
 ];
 
+function dodoEnv(): DodoEnvironmentName {
+  return process.env.DODO_PAYMENTS_ENVIRONMENT?.trim() === 'live_mode'
+    ? 'live_mode'
+    : 'test_mode';
+}
+
 async function seedPlans() {
-  const missingLinks: string[] = [];
+  const environment = dodoEnv();
+  const missing: string[] = [];
 
   for (const p of PLAN_SEED) {
-    const stripeLinkUrl = p.linkEnv ? process.env[p.linkEnv]?.trim() || null : null;
-    if (p.linkEnv && !stripeLinkUrl) missingLinks.push(p.linkEnv);
+    // Each env var takes a product id or the whole payment link — whichever
+    // was copied out of the dashboard — and parseProductRef derives the other.
+    const ref = p.productEnv
+      ? parseProductRef(process.env[p.productEnv], environment)
+      : null;
+    if (p.productEnv && !ref) missing.push(p.productEnv);
 
     await prisma.plan.upsert({
       where: { tier_cycle: { tier: p.tier, cycle: p.cycle } },
@@ -53,10 +71,10 @@ async function seedPlans() {
         creditsGranted: p.creditsGranted,
         grantDays: p.grantDays,
         grantsPerPeriod: p.grantsPerPeriod,
-        // An unset env var must not wipe a link that is already in the database
-        // — seeding is re-run on every deploy and a null here silently breaks
-        // checkout for that plan.
-        ...(stripeLinkUrl ? { stripeLinkUrl } : {}),
+        // An unset env var must not wipe a product that is already in the
+        // database — seeding is re-run on every deploy and a null here
+        // silently breaks checkout for that plan.
+        ...(ref ? { dodoProductId: ref.productId, dodoLinkUrl: ref.linkUrl } : {}),
         active: true,
       },
       create: {
@@ -66,22 +84,73 @@ async function seedPlans() {
         creditsGranted: p.creditsGranted,
         grantDays: p.grantDays,
         grantsPerPeriod: p.grantsPerPeriod,
-        stripeLinkUrl,
+        dodoProductId: ref?.productId ?? null,
+        dodoLinkUrl: ref?.linkUrl ?? null,
         active: true,
       },
     });
   }
-  console.log(`Seeded ${PLAN_SEED.length} plan rows`);
-  if (missingLinks.length > 0) {
+  console.log(`Seeded ${PLAN_SEED.length} plan rows (Dodo ${environment})`);
+  if (missing.length > 0) {
     console.warn(
-      `WARNING: no Stripe Payment Link for ${missingLinks.join(', ')} — ` +
+      `WARNING: no Dodo product for ${missing.join(', ')} — ` +
         'GET /v1/payments/checkout will 400 for those plans.',
+    );
+  }
+
+}
+
+// ── Credit packs ───────────────────────────────────────────────────────────
+// The catalog is a table an ADMIN edits from the panel, so this only ever
+// CREATES the starting rows. An existing pack is left completely alone —
+// re-seeding after a deploy must not undo a price someone set this morning.
+//
+// The DODO_PRODUCT_PACK_* env vars remain as a first-boot convenience: they
+// fill in the product on creation so a fresh environment can sell immediately,
+// and are ignored from then on.
+async function seedCreditPacks() {
+  const environment = dodoEnv();
+  let created = 0;
+
+  for (const [i, pack] of CREDIT_PACK_SEED.entries()) {
+    const existing = await prisma.creditPack.findUnique({
+      where: { slug: pack.slug },
+    });
+    if (existing) continue;
+
+    const ref = parseProductRef(process.env[pack.productEnv], environment);
+    await prisma.creditPack.create({
+      data: {
+        slug: pack.slug,
+        credits: pack.credits,
+        priceCents: pack.priceCents,
+        currency: pack.currency,
+        popular: pack.popular ?? false,
+        sortOrder: i,
+        active: true,
+        dodoProductId: ref?.productId ?? null,
+        dodoLinkUrl: ref?.linkUrl ?? null,
+      },
+    });
+    created++;
+  }
+
+  const unconfigured = await prisma.creditPack.findMany({
+    where: { active: true, dodoProductId: null, dodoLinkUrl: null },
+  });
+  console.log(
+    `Credit packs: ${created} created, ${CREDIT_PACK_SEED.length - created} left as-is`,
+  );
+  if (unconfigured.length > 0) {
+    console.warn(
+      `WARNING: no Dodo product on ${unconfigured.map((p) => p.slug).join(', ')} — ` +
+        'those packs cannot be bought. Add their product links in the admin panel.',
     );
   }
 }
 
 // Seeding must be safe to re-run. It is not only invoked by hand: any change to
-// a Payment Link means re-seeding the Plan rows, and that used to take the
+// a Dodo product means re-seeding the Plan rows, and that used to take the
 // superadmin's password with it -- rewriting it to the literal below, which is
 // published in this repository. A deploy step that quietly resets a production
 // credential is a trap, so the password is now only ever written when someone
@@ -190,6 +259,7 @@ async function seedLanguages() {
 async function main() {
   await seedAdmin();
   await seedPlans();
+  await seedCreditPacks();
   await seedLanguages();
 }
 
