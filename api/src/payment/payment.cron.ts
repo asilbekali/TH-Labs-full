@@ -7,7 +7,7 @@ import { PrismaService } from '../prisma/prisma.service';
 
 // Two jobs run the subscription lifecycle between webhooks.
 //
-// `grantDueSubscriptions` is what makes YEARLY plans drip: Stripe bills once,
+// `grantDueSubscriptions` is what makes YEARLY plans drip: Dodo bills once,
 // but credits are handed out every `plan.grantDays`, `plan.grantsPerPeriod`
 // times. Without it a user could buy a year, burn 14 400 credits in a week and
 // cancel.

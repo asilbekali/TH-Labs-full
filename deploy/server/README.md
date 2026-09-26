@@ -181,56 +181,66 @@ After this, every push to `main` touching `api/**` deploys on its own.
 
 ---
 
-## 6. Stripe
+## 6. Dodo Payments
 
-Payments run **here**, on this API — not on Modal. The Studio has no Stripe code
-at all; it calls `/v1/payments/*` and follows the URL it is given.
+Payments run **here**, on this API — not on Modal. The Studio has no payment
+code at all; it calls `/v1/payments/*` and follows the URL it is given. Dodo is
+the merchant of record, so it owns the checkout page, the card data and the
+invoice.
 
-The API boots and serves `/payments/plans` whether or not Stripe is configured,
-so a broken setup is quiet. It shows up only when someone tries to pay.
+The API boots and serves `/payments/plans` whether or not Dodo is configured,
+so a broken setup is quiet. It shows up only when someone tries to pay — which
+is why `/payments/plans` now reports a `checkout` block the Plans page reads to
+disable the buttons and say why.
 
-**1. Payment Links** — Dashboard → Payment Links, one per paid plan (PRO and
-STUDIO × weekly/monthly/yearly). Leave client-reference-ID passthrough enabled:
-the API appends `?client_reference_id=<userId>` to the link, and the webhook
-reads that field to decide whose credits to grant. A payment arriving without it
-is logged and ignored. Put the six URLs in `.env` as `STRIPE_LINK_*`.
+**1. Products** — Dashboard → Products, one subscription product per paid plan
+(PRO and STUDIO × weekly/monthly/yearly). Price each to match the matrix in
+`api/PAYMENTS.md`, and give each a **subscription period longer than its
+payment frequency** (e.g. 20 years / monthly) — equal values expire the
+subscription after one cycle instead of renewing it.
 
-**2. Webhook endpoint** — Dashboard → Developers → Webhooks → Add endpoint:
+Put each in `.env` as `DODO_PRODUCT_<TIER>_<CYCLE>`. Either the product id
+(`pdt_…`) or the full payment link works.
+
+**2. Webhook endpoint** — Dashboard → Settings → Webhooks → Add endpoint:
 
 ```
 https://th-labs.uz/v1/payments/webhook
 ```
 
-Subscribe to exactly the events the handler dispatches:
-`checkout.session.completed`, `invoice.paid`, `invoice.payment_succeeded`,
-`invoice.payment_failed`, `customer.subscription.updated`,
-`customer.subscription.deleted`. Copy the `whsec_...` signing secret into
-`STRIPE_WEBHOOK_SECRET`.
+Subscribe to exactly the events the handler dispatches: `payment.succeeded`,
+`payment.failed`, `subscription.active`, `subscription.renewed`,
+`subscription.updated`, `subscription.plan_changed`, `subscription.past_due`,
+`subscription.on_hold`, `subscription.paused`, `subscription.unpaused`,
+`subscription.cancelled`, `subscription.expired`, `subscription.failed`. Copy
+the signing secret into `DODO_WEBHOOK_SECRET`.
 
-**3. Secret key** — `STRIPE_SECRET_KEY` in `.env`. The publishable key is not
-used anywhere: checkout is a redirect to a Payment Link, so Stripe.js never
-loads and no key ships to the browser.
+**3. API key** — `DODO_PAYMENTS_API_KEY` in `.env`, plus
+`DODO_PAYMENTS_ENVIRONMENT=live_mode` for a production box. No key ships to the
+browser: checkout is a redirect to a Dodo-hosted page, so there is no client
+SDK and nothing public to configure on the frontend.
 
-**4. Apply.** The links are read at seed time, not on boot, so re-seed:
+**4. Apply.** Products are read at seed time, not on boot, so re-seed:
 
 ```bash
 cd /srv/th-labs && docker compose up -d api && docker compose exec api yarn prisma:seed
 ```
 
-**Verify** — the warning is the tell. If Stripe is wired up, this prints nothing:
+**Verify** — the warning is the tell. If Dodo is wired up, this prints only the
+live-mode line:
 
 ```bash
-docker compose logs api | grep -i "STRIPE_SECRET_KEY not set\|not configured"
+docker compose logs api | grep -i "DODO_\|Dodo Payments:"
 ```
 
-Then confirm the links actually landed on the plan rows:
+Then confirm the products actually landed on the plan rows:
 
 ```bash
-docker compose exec -T db psql -U thlabs -d thlabs -tAc 'select tier, cycle, ("stripeLinkUrl" is not null) as has_link from "Plan" order by tier, cycle;'
+docker compose exec -T db psql -U thlabs -d thlabs -tAc 'select tier, cycle, ("dodoProductId" is not null) as has_product from "Plan" order by tier, cycle;'
 ```
 
 Finally send a test event from the Dashboard and watch for a 200. A 503 means
-`STRIPE_WEBHOOK_SECRET` never reached the container; a 400 means it reached it
+`DODO_WEBHOOK_SECRET` never reached the container; a 400 means it reached it
 but does not match the endpoint you created.
 
 ---
@@ -262,7 +272,7 @@ docker compose exec api npx prisma migrate status
 ## Backups
 
 The database lives in the `th-labs_db-data` volume. Nothing backs it up yet —
-`docker compose down -v` erases every user, waitlist entry, and admin with no
+`docker compose down -v` erases every user, community entry, feedback message, and admin with no
 recovery path. A starting point:
 
 ```bash

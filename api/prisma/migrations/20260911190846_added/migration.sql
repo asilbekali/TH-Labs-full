@@ -1,0 +1,9 @@
+-- CreateTable
+CREATE TABLE "public"."PriceOfCredits" (
+    "id" SERIAL NOT NULL,
+    "price" DOUBLE PRECISION NOT NULL DEFAULT 0.65,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "PriceOfCredits_pkey" PRIMARY KEY ("id")
+);

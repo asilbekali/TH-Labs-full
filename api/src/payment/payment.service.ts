@@ -10,16 +10,23 @@ import {
   CreditReason,
   Plan,
   PlanTier,
-  Prisma,
   PrismaClient,
   SubscriptionStatus,
 } from '@prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service';
-import { StripeService } from './stripe.service';
+import { DodoService } from './dodo.service';
+import { CREDITS_PER_MINUTE, QUALITY_MULTIPLIER } from './credit-packs';
 import { CanDubDto, CanDubResult } from './dto/can-dub.dto';
 import { CommitDubDto, CommitDubResult } from './dto/commit-dub.dto';
 import { QUALITY_COST, costForQuality } from './quality-cost';
+
+// Metadata we stamp on every checkout and read back off the webhook. Prefixed
+// so it can never collide with a key the dashboard or a discount campaign
+// adds, and kept here because the webhook handler must spell them identically.
+export const META_USER_ID = 'th_user_id';
+export const META_PLAN_ID = 'th_plan_id';
+export const META_PACK_ID = 'th_pack_id';
 
 // A Prisma transaction client — the subset of the client available inside
 // `$transaction(async (tx) => …)`.
@@ -42,12 +49,25 @@ export class PaymentService {
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly stripe: StripeService,
+    private readonly dodo: DodoService,
     private readonly config: ConfigService,
   ) {}
 
   private get freeDubMaxSeconds(): number {
     return Number(this.config.get('FREE_DUB_MAX_SECONDS')) || 120;
+  }
+
+  private get appUrl(): string {
+    return (
+      this.config.get<string>('APP_URL')?.trim() || 'http://localhost:5173'
+    );
+  }
+
+  // Where Dodo sends the customer once checkout finishes. It arrives with
+  // `?payment_id=…&status=…` appended; the page only observes, the webhook is
+  // what grants credits.
+  private get returnUrl(): string {
+    return `${this.appUrl.replace(/\/$/, '')}/plans/success`;
   }
 
   // ── Catalog ────────────────────────────────────────────────────────────
@@ -56,17 +76,69 @@ export class PaymentService {
       where: { active: true },
       orderBy: [{ priceCents: 'asc' }],
     });
+
+    // Whether money can move at all, reported by the server rather than
+    // inferred in the browser from a build-time key. A paid plan is buyable
+    // only once its Dodo product is configured, and the UI needs to say which
+    // ones are not rather than offering a button that 400s on click.
+    const paid = plans.filter((p) => p.tier !== PlanTier.FREE);
+    const unconfigured = paid.filter((p) => !p.dodoProductId && !p.dodoLinkUrl);
+
     return {
       plans,
       qualityCost: QUALITY_COST,
       freeDubMaxSeconds: this.freeDubMaxSeconds,
+      checkout: {
+        provider: 'dodo' as const,
+        mode: this.dodo.environment === 'live_mode' ? ('live' as const) : ('test' as const),
+        /** True when at least one paid plan can actually be checked out. */
+        configured: paid.length > unconfigured.length,
+        /** `TIER/CYCLE` for every paid plan still missing a product. */
+        missingProducts: unconfigured.map((p) => `${p.tier}/${p.cycle}`),
+        /** Hosted checkout sessions; false means static links only. */
+        apiConfigured: this.dodo.enabled,
+        /** False when DODO_WEBHOOK_SECRET is unset — no grant can ever land. */
+        webhookConfigured: this.dodo.webhookConfigured,
+      },
+    };
+  }
+
+  // ── One-time credit packs ──────────────────────────────────────────────
+  // The catalog is the CreditPack table, managed from the admin panel. A pack
+  // with no Dodo product is still listed — the price is real information —
+  // but is marked unavailable so the page can disable its button instead of
+  // failing at checkout.
+  async getCreditPacks() {
+    const packs = await this.prisma.creditPack.findMany({
+      where: { active: true },
+      orderBy: [{ sortOrder: 'asc' }, { credits: 'asc' }],
+    });
+
+    return {
+      packs: packs.map((pack) => ({
+        id: pack.slug,
+        credits: pack.credits,
+        priceCents: pack.priceCents,
+        currency: pack.currency,
+        ...(pack.popular ? { popular: true } : {}),
+        available: !!(pack.dodoProductId || pack.dodoLinkUrl),
+      })),
+      creditsPerMinute: CREDITS_PER_MINUTE,
+      qualityMultiplier: QUALITY_MULTIPLIER,
     };
   }
 
   // ── Checkout ───────────────────────────────────────────────────────────
-  // Payment Links are Stripe-hosted, so we never see card data. The only way
-  // the webhook can later tell who paid is the `client_reference_id` we append
-  // here — it maps straight back to our User.id.
+  // Dodo owns the whole payment form, so card data never reaches this origin.
+  // What we own is the identity: the metadata stamped here is the only thing
+  // that tells the webhook which of our users paid, and which plan they paid
+  // for.
+  //
+  // With an API key we create a hosted checkout session, where that metadata
+  // travels server-side and cannot be edited. Without one we fall back to a
+  // static payment link carrying the same keys as query parameters — which the
+  // customer can see and change, so the webhook re-checks the user id against
+  // the paying email before it grants anything.
   async getCheckoutUrl(userId: number, tier: PlanTier, cycle: BillingCycle) {
     if (tier === PlanTier.FREE) {
       throw new BadRequestException('The FREE tier cannot be checked out.');
@@ -78,18 +150,26 @@ export class PaymentService {
     if (!plan || !plan.active) {
       throw new BadRequestException('Unknown or inactive plan.');
     }
-    if (!plan.stripeLinkUrl) {
+    if (!plan.dodoProductId && !plan.dodoLinkUrl) {
       throw new BadRequestException(
-        `No Stripe Payment Link configured for ${tier} ${cycle}.`,
+        `No Dodo Payments product configured for ${tier} ${cycle}. ` +
+          'Add its product link in the admin panel, or set ' +
+          `DODO_PRODUCT_${tier}_${cycle} and re-run the seed.`,
       );
     }
 
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException('User not found.');
 
-    const url =
-      `${plan.stripeLinkUrl}?client_reference_id=${userId}` +
-      `&prefilled_email=${encodeURIComponent(user.email)}`;
+    const url = await this.checkoutUrlFor({
+      productId: plan.dodoProductId,
+      linkUrl: plan.dodoLinkUrl,
+      user,
+      metadata: {
+        [META_USER_ID]: String(userId),
+        [META_PLAN_ID]: plan.id,
+      },
+    });
 
     return {
       url,
@@ -98,6 +178,80 @@ export class PaymentService {
       priceCents: plan.priceCents,
       creditsGranted: plan.creditsGranted,
     };
+  }
+
+  /** Checkout for a one-time credit pack — no subscription is created. */
+  async getCreditCheckoutUrl(userId: number, packSlug: string) {
+    const pack = await this.prisma.creditPack.findUnique({
+      where: { slug: packSlug },
+    });
+    if (!pack || !pack.active) {
+      throw new BadRequestException(`Unknown or inactive credit pack '${packSlug}'.`);
+    }
+    if (!pack.dodoProductId && !pack.dodoLinkUrl) {
+      throw new BadRequestException(
+        `No Dodo Payments product configured for ${pack.slug}. ` +
+          'Add its product link in the admin panel.',
+      );
+    }
+
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new NotFoundException('User not found.');
+
+    const url = await this.checkoutUrlFor({
+      productId: pack.dodoProductId,
+      linkUrl: pack.dodoLinkUrl,
+      user,
+      metadata: {
+        [META_USER_ID]: String(userId),
+        [META_PACK_ID]: pack.slug,
+      },
+    });
+
+    return {
+      url,
+      packId: pack.slug,
+      credits: pack.credits,
+      priceCents: pack.priceCents,
+    };
+  }
+
+  private async checkoutUrlFor(opts: {
+    productId: string | null;
+    linkUrl: string | null;
+    user: { email: string; name: string };
+    metadata: Record<string, string>;
+  }): Promise<string> {
+    const customer = { email: opts.user.email, name: opts.user.name };
+
+    if (this.dodo.enabled && opts.productId) {
+      try {
+        return await this.dodo.createCheckoutSession({
+          productId: opts.productId,
+          customer,
+          metadata: opts.metadata,
+          returnUrl: this.returnUrl,
+        });
+      } catch (err) {
+        // A misconfigured product id, a revoked key, Dodo being down: the
+        // static link still works for all three, so fall back rather than
+        // failing the purchase — but say so, because the metadata is weaker.
+        this.logger.warn(
+          `Checkout session failed (${err instanceof Error ? err.message : err}); ` +
+            'falling back to the static payment link',
+        );
+      }
+    }
+
+    const link = opts.linkUrl ?? opts.productId;
+    if (!link) {
+      throw new BadRequestException('No Dodo Payments product configured.');
+    }
+    return this.dodo.staticCheckoutUrl(link, {
+      customer,
+      metadata: opts.metadata,
+      returnUrl: this.returnUrl,
+    });
   }
 
   // ── Credit ledger primitives ─────────────────────────────────────────────
@@ -370,8 +524,11 @@ export class PaymentService {
       throw new NotFoundException('No active subscription to cancel.');
     }
 
-    if (subscription.stripeSubscriptionId && this.stripe.enabled) {
-      await this.stripe.cancelAtPeriodEnd(subscription.stripeSubscriptionId);
+    // Tell Dodo first. Flipping our own row while the provider keeps billing
+    // would be worse than refusing: the user would see "cancelled" and still
+    // be charged, with nothing in our logs to explain it.
+    if (subscription.dodoSubscriptionId && this.dodo.enabled) {
+      await this.dodo.cancelAtPeriodEnd(subscription.dodoSubscriptionId);
     }
 
     const updated = await this.prisma.subscription.update({
@@ -383,6 +540,24 @@ export class PaymentService {
       message:
         'Subscription will not renew. Access and unspent credits remain until the period ends.',
     };
+  }
+
+  // A link into Dodo's own portal, where the customer can see invoices,
+  // swap the card behind a subscription and cancel without us proxying any of
+  // it. The id is stamped on the user by the first payment webhook, so this
+  // only exists once they have actually paid for something.
+  async getCustomerPortalUrl(userId: number) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { dodoCustomerId: true },
+    });
+    if (!user) throw new NotFoundException('User not found.');
+    if (!user.dodoCustomerId) {
+      throw new BadRequestException(
+        'No billing account yet — the portal opens after your first payment.',
+      );
+    }
+    return { url: await this.dodo.customerPortalLink(user.dodoCustomerId) };
   }
 
   // ── History & ledger ─────────────────────────────────────────────────────
@@ -450,21 +625,37 @@ export class PaymentService {
   }
 
   // ── Plan resolution (webhook helpers) ────────────────────────────────────
-  // Tier/cycle/amount are ALWAYS derived from the Stripe object, never trusted
-  // from the client. We resolve by price id when the Plan carries one, and fall
-  // back to the (distinct) price amounts otherwise — Payment Links don't force
-  // us to pre-seed price ids.
-  async resolvePlanFromStripePrice(priceId: string | null | undefined) {
-    if (!priceId) return null;
-    return this.prisma.plan.findUnique({ where: { stripePriceId: priceId } });
+  // Tier, cycle and amount are ALWAYS derived from the Dodo object, never
+  // trusted from the client.
+  //
+  // The product id is the reliable route: it is on every subscription payload
+  // and is exactly what we seeded onto the Plan row. The plan id carried in
+  // our own checkout metadata is just as good and survives a product being
+  // re-created in the dashboard, so it is tried first. Amount matching is the
+  // last resort, for a payment that reached us with neither.
+  async resolvePlanByProduct(productId: string | null | undefined) {
+    if (!productId) return null;
+    return this.prisma.plan.findUnique({ where: { dodoProductId: productId } });
   }
 
   async resolvePlan(opts: {
-    priceId?: string | null;
+    planId?: string | null;
+    productId?: string | null;
     amountCents?: number | null;
   }): Promise<Plan | null> {
-    const byPrice = await this.resolvePlanFromStripePrice(opts.priceId);
-    if (byPrice) return byPrice;
+    if (opts.planId) {
+      const byId = await this.prisma.plan.findUnique({
+        where: { id: opts.planId },
+      });
+      if (byId) return byId;
+      this.logger.warn(
+        `Checkout metadata named plan ${opts.planId}, which no longer exists; ` +
+          'falling back to the product id',
+      );
+    }
+
+    const byProduct = await this.resolvePlanByProduct(opts.productId);
+    if (byProduct) return byProduct;
 
     if (opts.amountCents != null) {
       const paid = await this.prisma.plan.findMany({
@@ -477,18 +668,19 @@ export class PaymentService {
         this.logger.warn(
           `Ambiguous plan resolution: ${matches.length} plans priced at ${opts.amountCents}c ` +
             `(${matches.map((p) => `${p.tier}/${p.cycle}`).join(', ')}). ` +
-            'Give these plans distinct prices, or seed stripePriceId.',
+            'Give these plans distinct prices, or seed dodoProductId.',
         );
       } else {
-        // The usual cause is a seeded priceCents that drifted from the amount
-        // on the Stripe Payment Link. Print the catalog so the mismatch is
-        // obvious from the one log line, instead of "no credits appeared".
+        // The usual cause is a product id that was never seeded onto the Plan
+        // row. Print the catalog so the mismatch is obvious from the one log
+        // line, instead of "no credits appeared".
         this.logger.error(
-          `No plan priced at ${opts.amountCents}c. Seeded prices: ` +
+          `Could not resolve a plan for product ${opts.productId ?? 'unknown'} ` +
+            `at ${opts.amountCents}c. Seeded products: ` +
             paid
-              .map((p) => `${p.tier}/${p.cycle}=${p.priceCents}c`)
+              .map((p) => `${p.tier}/${p.cycle}=${p.dodoProductId ?? 'unset'}@${p.priceCents}c`)
               .join(', ') +
-            '. Update prisma/seed.ts to match Stripe and re-seed.',
+            '. Set the DODO_PRODUCT_* env vars and re-run the seed.',
         );
       }
     }
@@ -498,7 +690,7 @@ export class PaymentService {
   // When a monthly plan is bought on Aug 25 it must lapse on Sep 25, not on
   // Sep 24 — so monthly and yearly step by calendar units, not by a fixed
   // 30/365 days. Only the day-of-month is clamped: buying on Jan 31 gives a
-  // period ending Feb 28 (or 29), which is what Stripe does too.
+  // period ending Feb 28 (or 29), which is what Dodo does too.
   cyclePeriodEnd(cycle: BillingCycle, from: Date = new Date()): Date {
     const end = new Date(from);
     if (cycle === 'WEEKLY') {

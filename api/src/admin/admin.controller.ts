@@ -5,6 +5,7 @@ import {
   Body,
   Patch,
   Param,
+  ParseIntPipe,
   Delete,
   UseGuards,
 } from '@nestjs/common';
@@ -64,13 +65,20 @@ export class AdminController {
     return this.adminService.findAll();
   }
 
+  // NOTE: `:id` matches ANY single segment, so this route also captures
+  // sibling paths mounted under /admin — /admin/logs arrives here as
+  // findOne('logs'). Express 5 no longer accepts an inline `:id(\d+)`
+  // constraint, so two things keep that safe: AuditModule is imported before
+  // AdminModule in app.module (its /admin/logs routes register first and
+  // win), and ParseIntPipe below turns anything non-numeric that still gets
+  // through into a clean 400 rather than `+id` → NaN → 500.
   @Get(':id')
   @ApiOperation({ summary: 'Get an admin account by id' })
   @ApiParam({ name: 'id', type: Number, example: 1 })
   @ApiOkResponse({ type: AdminResponseDto })
   @ApiNotFoundResponse({ description: 'Admin not found' })
-  findOne(@Param('id') id: string) {
-    return this.adminService.findOne(+id);
+  findOne(@Param('id', ParseIntPipe) id: number) {
+    return this.adminService.findOne(id);
   }
 
   @Patch(':id')
@@ -79,8 +87,11 @@ export class AdminController {
   @ApiOkResponse({ type: AdminResponseDto })
   @ApiNotFoundResponse({ description: 'Admin not found' })
   @ApiConflictResponse({ description: 'Email is already in use' })
-  update(@Param('id') id: string, @Body() updateAdminDto: UpdateAdminDto) {
-    return this.adminService.update(+id, updateAdminDto);
+  update(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() updateAdminDto: UpdateAdminDto,
+  ) {
+    return this.adminService.update(id, updateAdminDto);
   }
 
   @Delete(':id')
@@ -88,7 +99,7 @@ export class AdminController {
   @ApiParam({ name: 'id', type: Number, example: 1 })
   @ApiOkResponse({ type: AdminMessageResponseDto })
   @ApiNotFoundResponse({ description: 'Admin not found' })
-  remove(@Param('id') id: string) {
-    return this.adminService.remove(+id);
+  remove(@Param('id', ParseIntPipe) id: number) {
+    return this.adminService.remove(id);
   }
 }

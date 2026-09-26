@@ -17,6 +17,7 @@ import { useIsDesktop, useMediaQuery } from '../hooks/useMediaQuery'
 import { springLayout } from '../lib/motion'
 import { mediaUrl } from '../lib/api'
 import { gradientFor } from '../lib/thumb'
+import { usePointerSpotlight } from '../hooks/usePointerSpotlight'
 import {
   useWorks,
   workPair,
@@ -433,20 +434,31 @@ function GridCard({
   onDelete: (id: string) => void
 }) {
   const navigate = useNavigate()
+  const spot = usePointerSpotlight<HTMLDivElement>()
   const [menuOpen, setMenuOpen] = useState(false)
   const failed = work.status === 'failed'
   const processing = work.status === 'processing'
 
   return (
     <motion.div
+      ref={spot.ref}
+      onPointerEnter={spot.onPointerEnter}
+      onPointerMove={spot.onPointerMove}
       layoutId={work.id}
       layout
       initial={{ opacity: 0, scale: 0.94 }}
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.94 }}
       transition={springLayout}
-      className="group card card-hover relative flex flex-col overflow-hidden p-0"
+      className={`group card card-hover spotlight sheen relative flex flex-col overflow-hidden p-0 ${
+        processing ? 'running-halo' : ''
+      }`}
     >
+      {/* A dub that is actually running gets the Studio's two live cues: the
+          halo under the card and the beam travelling along its top edge. It is
+          the same state, so it should read the same way in both places. */}
+      {processing && <span className="beam" aria-hidden />}
+
       {/* Thumbnail */}
       <button
         onClick={onOpen}

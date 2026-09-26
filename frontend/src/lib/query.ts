@@ -40,7 +40,12 @@ export const qk = {
   // Billing (NestJS /v1/payments)
   payments: () => ['payments'] as const,
   plans: () => ['payments', 'plans'] as const,
+  creditPacks: () => ['payments', 'credit-packs'] as const,
   subscription: () => ['payments', 'subscription'] as const,
   credits: (page: number, limit: number) => ['payments', 'credits', page, limit] as const,
   history: (page: number, limit: number) => ['payments', 'history', page, limit] as const,
+  // Prefixes covering every page of the two paginated billing queries — used to
+  // drop one account's data on sign-out without touching the public catalog.
+  creditsAll: () => ['payments', 'credits'] as const,
+  historyAll: () => ['payments', 'history'] as const,
 } as const

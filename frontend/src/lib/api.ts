@@ -9,21 +9,30 @@
 // job holds the user's uploaded video and its transcript, so backend/app/auth.py
 // verifies the same bearer token the account API issues and scopes each job to
 // its owner. Those calls go through authFetchUrl, which attaches the token and
-// transparently refreshes it; /health and /languages are public and use plain
-// fetch.
+// transparently refreshes it.
 //
-// Data shown in the UI comes from this API or from the account API — there is
-// no mock/sample layer. When a call fails the caller surfaces the failure
-// rather than substituting invented content.
-import { authFetchUrl, getAccessToken } from './http'
+// health and languages do NOT live here any more. They used to be fetched from
+// the pipeline directly, which meant a sleeping GPU box took the language
+// picker and the whole status strip down with it — /api/health and
+// /api/languages returned 502 through the dev proxy and the app rendered as if
+// the entire service were gone. Both are now served by the account API
+// (https://th-labs.uz, documented at /docs, routes under /v1), which is up
+// whenever the site is: GET /v1/languages reads the catalog from its database,
+// and GET /v1/health reports the API, its database, and — by probing it
+// server-side — the pipeline.
+//
+// Data shown in the UI comes from these APIs — there is no mock/sample layer.
+// When a call fails the caller surfaces the failure rather than substituting
+// invented content.
+import { apiUrl, authFetchUrl, getAccessToken } from './http'
 import type { Health, Job, JobEvent, Language } from './types'
 
 const BASE: string = import.meta.env.VITE_DUB_API ?? '/api'
 
-// The language catalog is served by GET /languages. This copy is the same list
-// the backend ships (backend/app/languages.py) and exists only so the target
-// picker still works when the pipeline server is unreachable — real codes, not
-// placeholder content.
+// The language catalog is served by GET /v1/languages. This copy is a subset of
+// the same list the account API seeds (api/prisma/seed.ts, itself taken from
+// backend/app/languages.py) and exists only so the target picker still works
+// while the first request is in flight — real codes, not placeholder content.
 export const FALLBACK_LANGUAGES: Language[] = [
   { code: 'en', name: 'English', native: 'English', flag: '🇬🇧', whisper: 'en', nllb: 'eng_Latn' },
   { code: 'es', name: 'Spanish', native: 'Español', flag: '🇪🇸', whisper: 'es', nllb: 'spa_Latn' },
@@ -41,16 +50,39 @@ export const FALLBACK_LANGUAGES: Language[] = [
   { code: 'ko', name: 'Korean', native: '한국어', flag: '🇰🇷', whisper: 'ko', nllb: 'kor_Hang' },
 ]
 
+// GET /v1/health. Public, so plain fetch — but through apiUrl so it follows
+// VITE_ACCOUNT_API like every other account-API call.
+//
+// A failure here means the ACCOUNT API is unreachable, which is a much bigger
+// deal than a sleeping pipeline. A pipeline that is merely down still resolves
+// this call: read `pipeline` on the response, not the query's error state (see
+// pipelineDown).
 export async function getHealth(): Promise<Health> {
-  const r = await fetch(`${BASE}/health`)
-  if (!r.ok) throw new Error('Could not reach the dubbing service')
+  const r = await fetch(apiUrl('/health'))
+  if (!r.ok) throw new Error('Could not reach the TH-LABS API')
   return r.json()
 }
 
+// GET /v1/languages — the catalog, from the account API's database.
 export async function getLanguages(): Promise<Language[]> {
-  const r = await fetch(`${BASE}/languages`)
+  const r = await fetch(apiUrl('/languages'))
   if (!r.ok) throw new Error('Could not load the language catalog')
   return (await r.json()).languages
+}
+
+/**
+ * Whether the dubbing pipeline is unusable right now.
+ *
+ * Two distinct failures read the same to a user — "nothing can be dubbed" — but
+ * arrive differently: the account API being unreachable errors the query, while
+ * a sleeping pipeline comes back as a perfectly good 200 with pipeline: 'down'.
+ * `undefined` is treated as up so a build pointed straight at the FastAPI
+ * pipeline (which has no such field) still behaves as before.
+ */
+export function pipelineDown(health: Health | null | undefined, queryFailed: boolean): boolean {
+  if (queryFailed) return true
+  if (!health) return false
+  return health.pipeline !== undefined && health.pipeline !== 'up'
 }
 
 export interface CreateJobInput {
@@ -67,6 +99,15 @@ export interface CreateJobInput {
   quality?: string
   sample?: boolean
   file?: File | null
+  /**
+   * A public video link to dub instead of an upload (YouTube, Vimeo, TikTok, or
+   * a direct .mp4). The server fetches it — see backend/app/pipeline/fetch.py,
+   * which vets the URL and enforces the size/duration caps.
+   *
+   * Mutually exclusive with `file`: sending both is a 400, on purpose, because
+   * silently picking one is how someone dubs the wrong video.
+   */
+  source_url?: string | null
 }
 
 /**
@@ -95,12 +136,27 @@ export async function createJob(input: CreateJobInput): Promise<Job> {
   fd.append('quality', input.quality ?? 'balanced')
   fd.append('sample', String(input.sample ?? false))
   if (input.file) fd.append('file', input.file)
+  // Only ever one source on the request. The server rejects both together, so
+  // the guard here is what keeps that 400 unreachable from the UI.
+  else if (input.source_url) fd.append('source_url', input.source_url)
 
   const r = await authFetchUrl(`${BASE}/jobs`, { method: 'POST', body: fd })
   if (r.status === 401) throw new AuthRequiredError()
   if (!r.ok) {
-    const msg = await r.text().catch(() => '')
-    throw new Error(`job creation failed: ${r.status} ${msg}`)
+    // A 400 from a link job carries a sentence written for the person who
+    // pasted it ("that video is private", "that's a live stream"), in FastAPI's
+    // `{detail: "…"}`. Showing `job creation failed: 400 {"detail":…}` instead
+    // throws away the only part of the response that tells them what to do.
+    const raw = await r.text().catch(() => '')
+    let detail = ''
+    try {
+      const parsed = JSON.parse(raw)
+      if (typeof parsed?.detail === 'string') detail = parsed.detail
+    } catch {
+      /* not JSON — fall through to the raw body */
+    }
+    if (detail) throw new Error(detail)
+    throw new Error(`job creation failed: ${r.status} ${raw}`)
   }
   return (await r.json()).job
 }

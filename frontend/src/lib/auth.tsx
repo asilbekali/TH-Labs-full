@@ -6,6 +6,8 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState } 
 import type { ReactNode } from 'react'
 import * as authApi from './auth-api'
 import type { AccountUser } from './auth-api'
+import { accountKey, markJustRegistered } from './onboarding'
+import { leaveToLanding } from './landing'
 import {
   apiUrl,
   bootstrapSession,
@@ -246,13 +248,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     async (name: string, email: string, password: string) => {
       const res = await authApi.register(name, email, password)
       apply({ accessToken: res.accessToken, user: res.user })
+      // The one exact signal for "this account was just created": the Studio
+      // walkthrough opens itself for a first-time account and for nobody else,
+      // and inferring that from timestamps alone would be a guess.
+      markJustRegistered(accountKey(res.user.id))
     },
     [apply],
   )
 
   const logout = useCallback(async () => {
-    await authApi.logout()
-    apply(null)
+    // Revoke the refresh token server-side first, then clear local state, then
+    // leave. All three, in that order:
+    //
+    //   - `authApi.logout()` is what actually ends the session; skipping it
+    //     would leave a live refresh cookie behind on a shared machine.
+    //   - `apply(null)` so the app is signed out even if the navigation below is
+    //     blocked or slow — the UI must never show a signed-in shell after the
+    //     token is gone.
+    //   - `leaveToLanding()` because this app has no signed-out destination.
+    //     The landing site owns marketing and sign-in; staying here would strand
+    //     the user on a dashboard that can only tell them to sign in again.
+    //
+    // The redirect lives HERE rather than in the two buttons that call this
+    // (AccountMenu and the Account page) so a third sign-out button cannot
+    // forget it.
+    try {
+      await authApi.logout()
+    } finally {
+      apply(null)
+      leaveToLanding()
+    }
   }, [apply])
 
   const updateUser = useCallback((partial: Partial<AccountUser>) => {

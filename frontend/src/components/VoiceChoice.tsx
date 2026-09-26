@@ -26,6 +26,8 @@ const MODES: { id: VoiceMode; title: string; blurb: string }[] = [
   },
 ]
 
+/** Renders inside the Studio's "Voice & mix" StepCard, which supplies the
+ *  card, the heading and the vertical rhythm — so this draws only the choices. */
 export default function VoiceChoice({
   mode,
   onMode,
@@ -44,17 +46,7 @@ export default function VoiceChoice({
   const usesVoice = mode !== 'native'
 
   return (
-    <div className="card space-y-3 p-5">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className="font-mono text-[10px] text-brand">03</span>
-          <span className="font-mono text-[10px] font-medium uppercase tracking-[0.12em] text-muted">
-            Voice
-          </span>
-        </div>
-        <span className="text-xs text-muted">how the dub should sound</span>
-      </div>
-
+    <div className="space-y-3">
       <div className="grid gap-2">
         {MODES.map((m) => {
           const on = mode === m.id

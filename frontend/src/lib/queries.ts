@@ -1,7 +1,8 @@
 // TanStack Query hooks over the two backends.
 //
-// The transport still lives in the thin clients (api.ts → FastAPI, auth-api.ts
-// and payments-api.ts → the NestJS CRUD API documented at <host>/docs). This
+// The transport still lives in the thin clients (api.ts → FastAPI for jobs and
+// media, but the account API for health and languages; auth-api.ts and
+// payments-api.ts → the NestJS CRUD API documented at <host>/docs). This
 // module owns caching, loading/error state, invalidation and refetch policy, so
 // no page has to hand-roll a useEffect + useState + "did it fail?" triangle.
 //
@@ -26,6 +27,8 @@ import {
   canDub,
   commitDub,
   getCheckoutUrl,
+  getCreditCheckoutUrl,
+  getCreditPacks,
   getCredits,
   getHistory,
   getPlans,
@@ -35,6 +38,8 @@ import {
   type CanDubResult,
   type CheckoutResponse,
   type CommitDubResult,
+  type CreditCheckoutResponse,
+  type CreditPacksResponse,
   type CreditsResponse,
   type HistoryResponse,
   type PlansResponse,
@@ -42,11 +47,16 @@ import {
   type Subscription,
 } from './payments-api'
 
-/* ── Dubbing API ─────────────────────────────────────────────────────────── */
+/* ── Service status & catalog (account API) ──────────────────────────────── */
 
 /**
- * Live pipeline status. Polled while the tab is visible so the Home strip and
- * the Studio chip reflect a service that comes back up without a reload.
+ * GET /v1/health — this API, its database, and the pipeline it probes on our
+ * behalf. Polled while the tab is visible so the Home strip and the Studio chip
+ * reflect a pipeline that comes back up without a reload.
+ *
+ * isError here means the ACCOUNT API is unreachable. A pipeline that is merely
+ * down resolves normally with `pipeline: 'down'` — use pipelineDown(), not
+ * isError, to decide whether dubbing is possible.
  */
 export function useHealth(): UseQueryResult<Health> {
   return useQuery({
@@ -58,10 +68,10 @@ export function useHealth(): UseQueryResult<Health> {
 }
 
 /**
- * The language catalog. Effectively static, so it is cached for the session;
- * `placeholderData` keeps the target picker usable while the first request is
- * in flight and after a failure (see FALLBACK_LANGUAGES — the same codes the
- * backend ships, not invented content).
+ * GET /v1/languages — the catalog, from the account API's database. Effectively
+ * static, so it is cached for the session; `placeholderData` keeps the target
+ * picker usable while the first request is in flight and after a failure (see
+ * FALLBACK_LANGUAGES — the same codes the API seeds, not invented content).
  */
 export function useLanguages(): UseQueryResult<Language[]> {
   return useQuery({
@@ -102,6 +112,21 @@ export function usePlans(): UseQueryResult<PlansResponse> {
   return useQuery({ queryKey: qk.plans(), queryFn: getPlans, staleTime: 5 * 60_000 })
 }
 
+/**
+ * GET /v1/payments/credit-packs — the one-time credit catalog.
+ *
+ * Never fails: the client falls back to the built-in pricing when the endpoint
+ * is not deployed, so this query has no error state to render. Cached like the
+ * plan catalog because it changes about as often.
+ */
+export function useCreditPacks(): UseQueryResult<CreditPacksResponse> {
+  return useQuery({
+    queryKey: qk.creditPacks(),
+    queryFn: getCreditPacks,
+    staleTime: 5 * 60_000,
+  })
+}
+
 /** GET /v1/payments/subscription. */
 export function useSubscription(enabled = true): UseQueryResult<{ subscription: Subscription | null }> {
   return useQuery({ queryKey: qk.subscription(), queryFn: getSubscription, enabled })
@@ -116,7 +141,7 @@ export function useCredits(page = 1, limit = 20, enabled = true): UseQueryResult
   })
 }
 
-/** GET /v1/payments/history — Stripe payment rows. */
+/** GET /v1/payments/history — the user's payment rows. */
 export function useHistory(page = 1, limit = 20, enabled = true): UseQueryResult<HistoryResponse> {
   return useQuery({
     queryKey: qk.history(page, limit),
@@ -126,9 +151,10 @@ export function useHistory(page = 1, limit = 20, enabled = true): UseQueryResult
 }
 
 /**
- * Ask the API for a Stripe-hosted checkout URL. A mutation rather than a query
- * because it is a deliberate user action with a side effect (the URL carries
- * the user's client_reference_id) and must never be replayed from cache.
+ * Ask the API for a Dodo-hosted checkout URL. A mutation rather than a query
+ * because it is a deliberate user action with a side effect (the API opens a
+ * checkout session stamped with this user's id) and must never be replayed
+ * from cache.
  */
 export function useCheckout(): UseMutationResult<
   CheckoutResponse,
@@ -136,6 +162,15 @@ export function useCheckout(): UseMutationResult<
   { tier: Exclude<PlanTier, 'FREE'>; cycle: BillingCycle }
 > {
   return useMutation({ mutationFn: ({ tier, cycle }) => getCheckoutUrl(tier, cycle) })
+}
+
+/** Same as useCheckout, for a one-time credit pack rather than a subscription. */
+export function useCreditCheckout(): UseMutationResult<
+  CreditCheckoutResponse,
+  Error,
+  { packId: string }
+> {
+  return useMutation({ mutationFn: ({ packId }) => getCreditCheckoutUrl(packId) })
 }
 
 /** POST /v1/payments/subscription/cancel (at period end). */
@@ -177,8 +212,8 @@ export function useCommitDub(): UseMutationResult<
  * Bridge the imperative CREDITS_CHANGED_EVENT into cache invalidation.
  *
  * payments-api.ts fires that event from plain (non-hook) call sites, and the
- * balance also moves outside this app entirely — a Stripe webhook credits the
- * account after checkout completes on Stripe's domain. Mounted once at the
+ * balance also moves outside this app entirely — a Dodo webhook credits the
+ * account after checkout completes on Dodo's domain. Mounted once at the
  * app root.
  */
 export function usePaymentsInvalidation(): void {

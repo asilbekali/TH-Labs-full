@@ -1,14 +1,21 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import Page from '../components/Page'
 import LogoLoader from '../components/brand/LogoLoader'
 import { getCredits, getSubscription, CREDITS_CHANGED_EVENT } from '../lib/payments-api'
 
-// Post-checkout confirmation. Stripe redirects here after a Payment Link
-// completes. This page ONLY OBSERVES — it never grants anything. It polls the
-// billing API until the webhook-driven grant lands (credits grow or the
-// subscription flips ACTIVE), then routes to the Studio. On timeout it reassures
-// the user and offers a manual retry.
+// Post-checkout confirmation. Dodo redirects here once checkout finishes,
+// appending `?payment_id=…&status=…`.
+//
+// This page ONLY OBSERVES — it never grants anything, and it does not believe
+// the query string either: `status=succeeded` in the address bar is just text
+// the user could have typed. It polls the billing API until the webhook-driven
+// grant actually lands (credits grow or the subscription flips ACTIVE), then
+// routes to the Studio. On timeout it reassures the user and offers a manual
+// retry.
+//
+// Dodo's first charge can trail the redirect by a couple of minutes on some
+// payment methods, so a timeout here is a normal outcome, not an error.
 const POLL_MS = 2000
 const TIMEOUT_MS = 20000
 
@@ -16,10 +23,19 @@ type State = 'confirming' | 'confirmed' | 'timeout'
 
 export default function PlansSuccess() {
   const navigate = useNavigate()
+  const [params] = useSearchParams()
   const [state, setState] = useState<State>('confirming')
   const baselineRef = useRef<number | null>(null)
 
+  // Dodo reports the outcome in the URL. Only the failure cases are acted on:
+  // a cancelled or failed checkout has nothing to wait for, so say so at once
+  // instead of polling for twenty seconds. Success is still verified against
+  // the API below.
+  const declared = params.get('status')
+  const failed = declared === 'failed' || declared === 'cancelled'
+
   useEffect(() => {
+    if (failed) return
     let stopped = false
     const startedAt = Date.now()
 
@@ -54,37 +70,57 @@ export default function PlansSuccess() {
     return () => {
       stopped = true
     }
-  }, [navigate])
+  }, [navigate, failed])
 
   return (
     <Page className="grid min-h-[60vh] place-items-center">
       <div className="card flex max-w-md flex-col items-center gap-4 p-10 text-center">
-        {state !== 'timeout' && <LogoLoader size="lg" className="text-brand" />}
+        {!failed && state !== 'timeout' && <LogoLoader size="lg" className="text-brand" />}
 
-        {state === 'confirming' && (
+        {failed && (
+          <>
+            <h1 className="text-xl font-semibold text-primary">Payment not completed</h1>
+            <p className="text-sm text-secondary">
+              Dodo Payments reported the checkout as {declared}. Nothing was charged and no credits
+              were used.
+            </p>
+            <div className="mt-2 flex gap-3">
+              <Link
+                to="/plans"
+                className="btn-primary focusable rounded-pill px-5 py-2.5 text-sm"
+              >
+                Back to Plans
+              </Link>
+            </div>
+          </>
+        )}
+
+        {!failed && state === 'confirming' && (
           <>
             <h1 className="text-xl font-semibold text-primary">Confirming your payment…</h1>
             <p className="text-sm text-secondary">
-              Stripe is letting us know your payment went through. Your credits will appear in a moment.
+              Dodo Payments is letting us know your payment went through. Your credits will appear in a
+              moment.
             </p>
           </>
         )}
 
-        {state === 'confirmed' && (
+        {!failed && state === 'confirmed' && (
           <>
             <h1 className="text-xl font-semibold text-primary">Payment confirmed 🎉</h1>
             <p className="text-sm text-secondary">Your credits are ready — taking you to the Studio…</p>
           </>
         )}
 
-        {state === 'timeout' && (
+        {!failed && state === 'timeout' && (
           <>
             <div className="grid h-12 w-12 place-items-center rounded-full bg-success/15 text-success">
               <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
             </div>
             <h1 className="text-xl font-semibold text-primary">Payment received</h1>
             <p className="text-sm text-secondary">
-              Your credits will appear shortly. This can take a few extra seconds while Stripe finishes up.
+              Your credits will appear shortly. This can take a few extra minutes while Dodo Payments
+              settles the charge.
             </p>
             <div className="mt-2 flex gap-3">
               <button

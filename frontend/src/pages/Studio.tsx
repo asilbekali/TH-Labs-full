@@ -1,8 +1,25 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+// The Studio (02).
+//
+// Layout is a workbench, not a form: on the left a deck of four steps where
+// only the one you are working on is open and every other step still shows the
+// value it holds, on the right a monitor that draws the dub as a chain of
+// stages — the same chain before the run (the route your options have chosen)
+// and during it (the route filling in). Between them, a run bar that always
+// states the price before you commit to it.
+//
+// The pipeline logic below — the credit gate, job creation, SSE/polling, the
+// mirror into the works library — is unchanged from the previous design. Only
+// the presentation is new: "Deep Violet", the loud end of the palette (see the
+// Studio block in index.css). The right column is a bento grid — three stat
+// tiles over the monitor, the estimate and the tips — and the run card is the
+// single saturated surface: deep violet, a mesh of light turning behind it,
+// pale type in both themes.
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import Uploader from "../components/Uploader";
+import LinkInput, { readLink } from "../components/LinkInput";
 import LanguageSelect from "../components/LanguageSelect";
 import OptionToggle from "../components/OptionToggle";
 import StageTimeline from "../components/StageTimeline";
@@ -15,12 +32,48 @@ import AnimatedNumber from "../components/AnimatedNumber";
 import ScrollColumn from "../components/layout/ScrollColumn";
 import Page from "../components/Page";
 import LogoMark from "../components/brand/LogoMark";
+import StepCard from "../components/studio/StepCard";
+import StatTile from "../components/studio/StatTile";
+import MagneticButton from "../components/MagneticButton";
+import Equalizer from "../components/studio/Equalizer";
+import ThinkingOrbs from "../components/ThinkingOrbs";
+import PipelineFlow from "../components/studio/PipelineFlow";
+import type { FlowNode } from "../components/studio/PipelineFlow";
+import TourOverlay from "../components/onboarding/TourOverlay";
+import type { TourStep } from "../components/onboarding/TourOverlay";
 import { useIsDesktop } from "../hooks/useMediaQuery";
-import { rise, stagger } from "../lib/motion";
-import { createJob, mediaUrl, pollJob, revoiceJob, subscribeJob } from "../lib/api";
+import { usePointerSpotlight } from "../hooks/usePointerSpotlight";
+import {
+  EASE_ENTRANCE,
+  EASE_EXIT,
+  rise,
+  stagger,
+  tapScale,
+} from "../lib/motion";
+import {
+  createJob,
+  mediaUrl,
+  pipelineDown,
+  pollJob,
+  revoiceJob,
+  subscribeJob,
+} from "../lib/api";
 import type { Job } from "../lib/types";
+import { useAuth } from "../lib/auth";
+import {
+  STUDIO_TOUR,
+  accountKey,
+  hasSeenTour,
+  markTourSeen,
+  shouldAutoStartTour,
+} from "../lib/onboarding";
 import { useWallet, QUALITY_COST } from "../lib/wallet";
-import { useCanDub, useCommitDub, useHealth, useLanguages } from "../lib/queries";
+import {
+  useCanDub,
+  useCommitDub,
+  useHealth,
+  useLanguages,
+} from "../lib/queries";
 import { useWorks, workTitle } from "../lib/works";
 import { gradientFor } from "../lib/thumb";
 
@@ -32,8 +85,19 @@ const QUALITIES = [
 
 const SAMPLE_LANGS = ["uz", "ru", "es", "fr", "de"];
 
+type StepId = "source" | "languages" | "options" | "quality";
+
 // Best-effort source length for the credit gate. Sample clips are short (within
 // the free-dub cap); for a real upload we read the media's metadata duration.
+/** The host of a URL, for a one-line summary. Never throws on odd input. */
+function safeHost(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return "link";
+  }
+}
+
 async function probeDurationSeconds(file: File | null): Promise<number> {
   if (!file) return 60;
   return new Promise((resolve) => {
@@ -59,15 +123,29 @@ async function probeDurationSeconds(file: File | null): Promise<number> {
 export default function Studio() {
   const { balance } = useWallet();
   const { works, addWork, updateWork } = useWorks();
+  const { user, ready: authReady } = useAuth();
 
   // Cached by TanStack Query, so switching pages does not refetch the catalog
   // and the health chip stays live across the whole session.
   const { data: languages = [] } = useLanguages();
-  const { data: health = null, isError: healthFailed } = useHealth();
+  const { data: health = null, isError: healthQueryFailed } = useHealth();
+  // The health call itself now succeeds while the pipeline is asleep — the
+  // account API answers for it — so "unreachable" is the response's `pipeline`
+  // field, not just a failed query.
+  const healthFailed = pipelineDown(health, healthQueryFailed);
   const canDubGate = useCanDub();
   const commit = useCommitDub();
 
   const [file, setFile] = useState<File | null>(null);
+  // Paste-a-link, the second way in. Kept as its own piece of state rather than
+  // a variant of `file` because the two are genuinely different requests: an
+  // upload streams bytes from the browser, a link is fetched by the server.
+  const [sourceUrl, setSourceUrl] = useState("");
+  // Which source the Start button will actually use. Three sources are possible
+  // (upload, link, sample) and exactly one can win, so the choice is explicit
+  // state rather than something inferred from which fields happen to be filled —
+  // inferring it is how you get a request carrying both, which the API rejects.
+  const [sourceMode, setSourceMode] = useState<"upload" | "link">("upload");
   // Upload-first: the sample clip is a real backend feature, but defaulting to
   // it made the Studio open in a demo-ish state.
   const [useSample, setUseSample] = useState(false);
@@ -107,6 +185,14 @@ export default function Studio() {
     if (file) setUseSample(false);
   }, [file]);
 
+  // One source at a time, enforced in one place. Switching the tab drops what
+  // the other tab held, so there is never a stale file sitting behind a pasted
+  // link waiting to be sent instead of it.
+  useEffect(() => {
+    if (sourceMode === "upload") setSourceUrl("");
+    else setFile(null);
+  }, [sourceMode]);
+
   // Preset handoff from the Home launchpad (01): a quick-start card or a
   // template passes router state; apply it through the EXISTING setters only —
   // no new pipeline state is introduced here.
@@ -117,6 +203,8 @@ export default function Studio() {
       preset?: "video" | "podcast" | "voice";
       sourceLang?: string;
       targetLang?: string;
+      /** A URL already typed into the dashboard composer. */
+      link?: string;
       voiceClone?: boolean;
       lipSync?: boolean;
       keepBackground?: boolean;
@@ -130,6 +218,15 @@ export default function Studio() {
       setQuality("balanced");
     } else if (s.preset === "podcast" || s.preset === "voice") {
       setQuality("studio");
+    }
+    // A link pasted into the dashboard composer arrives already validated by
+    // the same readLink() this page's field uses, so it only has to be moved
+    // into state. Switching the tab is what makes it the source that wins —
+    // see the one-source-at-a-time effect above.
+    if (s.link) {
+      setSourceMode("link");
+      setSourceUrl(s.link);
+      setUseSample(false);
     }
     if (s.sourceLang) setSourceLang(s.sourceLang);
     if (s.targetLang) setTargetLang(s.targetLang);
@@ -154,6 +251,12 @@ export default function Studio() {
       (active.reduce((a, s) => a + s.progress, 0) / active.length) * 100,
     );
   }, [job]);
+
+  // The stage the pipeline is on right now — what the orbs are thinking about.
+  const activeStage = useMemo(
+    () => job?.stages.find((s) => s.status === "running")?.label ?? null,
+    [job],
+  );
 
   const stageProgress = useMemo(() => {
     if (!job) return { done: 0, total: 0 };
@@ -195,10 +298,15 @@ export default function Studio() {
     });
   }, [job, overall, updateWork, sourceLang]);
 
-  const isSampleRun = useSample && !file;
+  // The vetted URL, or null when the box is empty or holds something that is not
+  // a usable link yet. Same verdict the field itself is displaying — derived
+  // once here so the Start button and the hint can never disagree.
+  const linkUrl = sourceMode === "link" ? readLink(sourceUrl).url : null;
+  const isSampleRun = useSample && !file && !linkUrl;
   const sampleLangNote = isSampleRun && !SAMPLE_LANGS.includes(targetLang);
   const cost = QUALITY_COST[quality] ?? 10;
-  const canStart = !!(file || isSampleRun) && !!targetLang;
+  const sourceReady = !!(file || linkUrl || isSampleRun);
+  const canStart = sourceReady && !!targetLang;
 
   const lastWork = works[0];
 
@@ -206,6 +314,15 @@ export default function Studio() {
     setError(null);
     // Server-authoritative gate: the free dub, an active subscription, or enough
     // credits. Read-only — it charges nothing.
+    //
+    // A link has no duration to probe: the media is on someone else's server and
+    // the browser never sees it, so this falls back to the same default the
+    // sample clip uses. That means the pre-flight gate for a link job is an
+    // estimate — the server fetches the file, learns the real duration, and the
+    // actual charge is settled against that (see useCommitDub). A long video can
+    // therefore pass this check and still be refused once its length is known,
+    // which is the right way round: the alternative is charging for a duration
+    // nobody has measured.
     const durationSeconds = await probeDurationSeconds(
       isSampleRun ? null : file,
     );
@@ -245,6 +362,7 @@ export default function Studio() {
         quality,
         sample: isSampleRun,
         file: isSampleRun ? null : file,
+        source_url: linkUrl,
       });
       setJob(created);
       savedRef.current = created.id;
@@ -366,13 +484,13 @@ export default function Studio() {
   const leftScrollRef = useRef<HTMLDivElement>(null);
   const rightScrollRef = useRef<HTMLDivElement>(null);
 
-  // Reset both columns to the top when a run begins or the status changes (§7).
+  // Reset both columns to the top when a run begins or the status changes.
   useEffect(() => {
     rightScrollRef.current?.scrollTo({ top: 0 });
     leftScrollRef.current?.scrollTo({ top: 0 });
   }, [job?.status]);
 
-  // Elapsed clock while a run is live, for the repurposed Estimate card (§7).
+  // Elapsed clock while a run is live.
   const [elapsed, setElapsed] = useState(0);
   const runStartRef = useRef<number | null>(null);
   useEffect(() => {
@@ -387,7 +505,7 @@ export default function Studio() {
     return () => window.clearInterval(id);
   }, [running]);
 
-  // Auto-advancing tips carousel (§7).
+  // Auto-advancing tips carousel.
   const [tip, setTip] = useState(0);
   useEffect(() => {
     const id = window.setInterval(
@@ -402,13 +520,347 @@ export default function Studio() {
   const barPct =
     balance > 0 ? Math.min(100, Math.round((cost / balance) * 100)) : 100;
 
-  // ── Config cards (shared by desktop shell + mobile stack) ────────────────
-  const configCards = (
+  // ── The step deck ────────────────────────────────────────────────────────
+  // One step open at a time, and a record of which steps the user has actually
+  // set themselves — steps 02–04 ship with working defaults, so a tick there
+  // has to mean "you chose this", not "this has a value".
+  const [openStep, setOpenStep] = useState<StepId | null>("source");
+  const [touched, setTouched] = useState<Record<string, boolean>>({});
+  const markTouched = useCallback(
+    (id: StepId) => setTouched((t) => (t[id] ? t : { ...t, [id]: true })),
+    [],
+  );
+  const toggleStep = useCallback(
+    (id: StepId) => setOpenStep((prev) => (prev === id ? null : id)),
+    [],
+  );
+
+  // Hand the user to the next decision the moment they have a source, once per
+  // upload — never yanking them somewhere else if they opened a step on purpose.
+  const advancedRef = useRef(false);
+  useEffect(() => {
+    if (!sourceReady) {
+      advancedRef.current = false;
+      return;
+    }
+    if (advancedRef.current) return;
+    advancedRef.current = true;
+    setOpenStep((prev) => (prev === "source" ? "languages" : prev));
+  }, [sourceReady]);
+
+  const langName = useCallback(
+    (code: string) =>
+      code === "auto"
+        ? "Auto-detect"
+        : (languages.find((l) => l.code === code)?.name ?? code.toUpperCase()),
+    [languages],
+  );
+  const langFlag = useCallback(
+    (code: string) =>
+      code === "auto"
+        ? "🌐"
+        : (languages.find((l) => l.code === code)?.flag ?? "🏳️"),
+    [languages],
+  );
+
+  const optionSummary = [
+    voiceClone ? "Voice clone" : "Generic voice",
+    keepBackground ? "Keep background" : "Speech only",
+    lipSync ? "Lip sync" : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
+  const sourceSummary = file
+    ? `${file.name} · ${(file.size / 1_048_576).toFixed(1)} MB`
+    : linkUrl
+      ? // The host, not the whole URL: a YouTube watch URL is 43 characters of
+        // opaque id and would push everything else out of a one-line summary.
+        `Link · ${safeHost(linkUrl)}`
+      : isSampleRun
+        ? "Built-in sample clip"
+        : "Nothing chosen yet";
+
+  // ── Onboarding walkthrough ───────────────────────────────────────────────
+  const key = accountKey(user?.id);
+  const [tourOpen, setTourOpen] = useState(false);
+  // Returning users get a quieter Guide button; first-timers who skipped keep
+  // the same entry point, just without the automatic open.
+  const [tourSeen, setTourSeen] = useState(() => hasSeenTour(STUDIO_TOUR, key));
+
+  const closeTour = useCallback(() => {
+    setTourOpen(false);
+    // Finishing and skipping mean the same thing here: do not open by itself
+    // again. Nobody wants to be taught the same page twice.
+    markTourSeen(STUDIO_TOUR, key);
+    setTourSeen(true);
+  }, [key]);
+
+  const autoStartedRef = useRef(false);
+  useEffect(() => {
+    if (!authReady || autoStartedRef.current || job) return;
+    if (!shouldAutoStartTour(STUDIO_TOUR, key, user?.createdAt)) return;
+    autoStartedRef.current = true;
+    // Let the page's entrance animation land first, so the spotlight measures
+    // elements that have stopped moving.
+    const t = window.setTimeout(() => setTourOpen(true), 650);
+    return () => window.clearTimeout(t);
+  }, [authReady, key, user?.createdAt, job]);
+
+  const tourSteps = useMemo<TourStep[]>(
+    () => [
+      {
+        id: "welcome",
+        title: "Welcome to the Studio",
+        body: "This is where a clip becomes a dub: four short decisions on the left, the run on the right. Ninety seconds and you will know the whole thing.",
+        note: "← → to move · Esc to leave",
+      },
+      {
+        id: "source",
+        target: "tour-source",
+        prefer: "right",
+        onEnter: () => setOpenStep("source"),
+        title: "01 · Bring in a clip",
+        body: "Drop a video or audio file here, or click to browse — MP4, MOV, WAV and MP3 all work. Nothing to hand? Switch on the built-in sample clip and every other control behaves exactly the same.",
+      },
+      {
+        id: "languages",
+        target: "tour-languages",
+        prefer: "right",
+        onEnter: () => setOpenStep("languages"),
+        title: "02 · Choose the languages",
+        body: "Leave the source on Auto-detect if you are not sure — the transcriber works it out. Set the target to what you want to hear; the round button between them swaps the pair.",
+      },
+      {
+        id: "options",
+        target: "tour-options",
+        prefer: "right",
+        onEnter: () => setOpenStep("options"),
+        title: "03 · Voice and mix",
+        body: "Keep the original speaker's voice instead of a narrator, keep the music and ambience behind the speech, and turn on lip sync when the speaker is on camera.",
+      },
+      {
+        id: "quality",
+        target: "tour-quality",
+        prefer: "right",
+        onEnter: () => setOpenStep("quality"),
+        title: "04 · Quality, and what it costs",
+        body: "Fast skips the heavy stages, Studio runs all of them. This is the one setting that moves the price — the credit figure updates as you switch.",
+      },
+      {
+        id: "monitor",
+        target: "tour-monitor",
+        prefer: "left",
+        title: "Watch the route",
+        body: "This panel draws your dub as a chain of stages. Right now it shows the route your options have chosen — greyed-out links are the stages you switched off. During a run each link fills in live, and the finished video, its transcript and the download land here too.",
+      },
+      {
+        id: "cost",
+        target: "tour-cost",
+        prefer: "left",
+        title: "Know the price first",
+        body: "What this run costs and what your balance looks like afterwards, before you commit. If you are short, the link to top up is right there.",
+      },
+      {
+        id: "run",
+        target: "tour-run",
+        prefer: "top",
+        title: "Start the dub",
+        body: "The button stays disabled until there is a clip to work on. Underneath it, a live line tells you whether the dubbing pipeline is actually up — worth a glance before a long run.",
+      },
+      {
+        id: "done",
+        title: "That is the whole loop",
+        body: "Every finished dub is saved to My works, so you can come back to it, download it again, or reuse its settings. Open this walkthrough whenever you like from the Guide button.",
+      },
+    ],
+    [],
+  );
+
+  // ── Preview / live flow nodes ────────────────────────────────────────────
+  const previewNodes: FlowNode[] = useMemo(
+    () => [
+      { key: "asr", label: "Transcribe", sub: "Whisper", state: "idle" },
+      {
+        key: "nmt",
+        label: "Translate",
+        sub: targetLang.toUpperCase(),
+        state: "idle",
+      },
+      {
+        key: "tts",
+        label: "Clone voice",
+        sub: voiceClone ? "same speaker" : "off",
+        state: voiceClone ? "idle" : "skipped",
+      },
+      {
+        key: "lipsync",
+        label: "Sync lips",
+        sub: lipSync ? "on camera" : "off",
+        state: lipSync ? "idle" : "skipped",
+      },
+      {
+        key: "separation",
+        label: "Mix",
+        sub: keepBackground ? "keep music" : "speech only",
+        state: keepBackground ? "idle" : "skipped",
+      },
+    ],
+    [targetLang, voiceClone, lipSync, keepBackground],
+  );
+
+  const liveNodes: FlowNode[] = useMemo(
+    () =>
+      (job?.stages ?? []).map((s) => ({
+        key: s.key,
+        label: s.label,
+        state: s.status === "pending" ? "idle" : s.status,
+      })),
+    [job],
+  );
+
+  const stepsDone = [
+    sourceReady,
+    !!touched.languages,
+    !!touched.options,
+    !!touched.quality,
+  ].filter(Boolean).length;
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // Presentation — "Fired Glaze"
+  //
+  // The screen is a bento: a 380px setup rail on the left (deck header, the
+  // four steps, and the one saturated surface on the page carrying the run
+  // button), and on the right a grid of tiles that starts with three
+  // at-a-glance stats and opens into the monitor.
+  //
+  // Nothing below reaches into the pipeline. Every value it draws — cost,
+  // balance, health, stages, elapsed — was computed above and is untouched.
+  // ═══════════════════════════════════════════════════════════════════════
+
+  // ── Left column: header, step deck, run bar ──────────────────────────────
+  const deckHeader = (
+    <div className="flex items-end justify-between gap-3 px-1">
+      <div className="min-w-0">
+        <div className="flex items-baseline gap-2">
+          <span className="text-[15px] font-semibold tracking-tight text-primary">
+            Set up your dub
+          </span>
+          <span className="text-[12px] text-muted">
+            <AnimatedNumber value={stepsDone} duration={350} />
+            /4
+          </span>
+        </div>
+        {/* The progress rail. Each segment fills with the signature ramp when
+            its step is answered — a spring, so a step that flips back to
+            unanswered visibly drains rather than blinking off. */}
+        <div className="mt-2 flex gap-1.5">
+          {[0, 1, 2, 3].map((i) => (
+            <span
+              key={i}
+              className="relative h-1 w-8 overflow-hidden rounded-full bg-sunken"
+            >
+              <motion.span
+                className="absolute inset-0 rounded-full fill-signature"
+                initial={false}
+                animate={{ scaleX: i < stepsDone ? 1 : 0 }}
+                style={{ originX: 0 }}
+                transition={{ type: "spring", stiffness: 300, damping: 30 }}
+              />
+            </span>
+          ))}
+        </div>
+      </div>
+      <motion.button
+        type="button"
+        onClick={() => setTourOpen(true)}
+        title="Show the walkthrough"
+        whileHover={{ y: -2 }}
+        whileTap={tapScale}
+        transition={{ type: "spring", stiffness: 400, damping: 26 }}
+        className={`focusable inline-flex shrink-0 items-center gap-1.5 rounded-pill border px-3 py-1.5 text-[12px] transition-colors ${
+          tourSeen
+            ? "border-subtle text-secondary hover:border-strong hover:text-primary"
+            : "border-strong bg-sunken text-primary"
+        }`}
+      >
+        <svg
+          viewBox="0 0 24 24"
+          className="h-3.5 w-3.5"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <path d="M9.1 9a3 3 0 1 1 4.2 2.7c-.8.4-1.3 1.2-1.3 2.1v.2M12 17.5h.01" />
+          <circle cx="12" cy="12" r="9" />
+        </svg>
+        Guide
+      </motion.button>
+    </div>
+  );
+
+  const stepDeck = (
     <>
-      {/* 01 Source */}
-      <div className="card space-y-3 p-5">
-        <GroupLabel n="01" title="Source" />
-        <Uploader file={file} onFile={setFile} disabled={running} />
+      <StepCard
+        n="01"
+        title="Source"
+        summary={sourceSummary}
+        done={sourceReady}
+        open={openStep === "source"}
+        onToggle={() => toggleStep("source")}
+        tour="tour-source"
+      >
+        {/* Two ways in, as tabs rather than two always-visible fields: only one
+            can be sent, and showing both filled-in invites the question of which
+            one wins. */}
+        <div
+          role="tablist"
+          aria-label="Where the video comes from"
+          className="flex gap-1 rounded-control bg-sunken p-1"
+        >
+          {(
+            [
+              { id: "upload", label: "Upload a file" },
+              { id: "link", label: "Paste a link" },
+            ] as const
+          ).map((tab) => {
+            const active = sourceMode === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                disabled={running}
+                onClick={() => setSourceMode(tab.id)}
+                className={`focusable relative flex-1 rounded-[calc(var(--radius-control)-2px)] px-3 py-2 font-mono text-xs transition-colors disabled:opacity-60 ${
+                  active ? "text-primary" : "text-muted hover:text-secondary"
+                }`}
+              >
+                {active && (
+                  <motion.span
+                    layoutId="source-tab"
+                    transition={{ type: "spring", stiffness: 380, damping: 32 }}
+                    className="absolute inset-0 rounded-[calc(var(--radius-control)-2px)] bg-surface shadow-sm dark:bg-raised"
+                  />
+                )}
+                <span className="relative">{tab.label}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        {sourceMode === "upload" ? (
+          <Uploader file={file} onFile={setFile} disabled={running} />
+        ) : (
+          <LinkInput
+            value={sourceUrl}
+            onChange={setSourceUrl}
+            disabled={running}
+          />
+        )}
         <button
           type="button"
           role="switch"
@@ -417,34 +869,65 @@ export default function Studio() {
           onClick={() => {
             const next = !isSampleRun;
             setUseSample(next);
-            if (next) setFile(null);
+            if (next) {
+              setFile(null);
+              setSourceUrl("");
+            }
           }}
-          className="focusable flex w-full items-center justify-between gap-2.5 rounded-control border border-subtle bg-sunken px-3.5 py-3 text-left text-sm text-secondary disabled:opacity-60"
+          className="focusable group flex w-full items-center justify-between gap-2.5 rounded-control border border-subtle bg-sunken px-3.5 py-3 text-left text-sm text-secondary transition-colors hover:border-brand/35 disabled:opacity-60"
         >
           <span>Use the built-in sample clip</span>
           <SwitchTrack on={isSampleRun} />
         </button>
-      </div>
+      </StepCard>
 
-      {/* 02 Languages */}
-      <div className="card space-y-3 p-5">
-        <GroupLabel n="02" title="Languages" />
+      <StepCard
+        n="02"
+        title="Languages"
+        summary={
+          <span className="flex items-center gap-1.5">
+            <span aria-hidden>{langFlag(sourceLang)}</span>
+            {langName(sourceLang)}
+            <span className="text-brand">→</span>
+            <span aria-hidden>{langFlag(targetLang)}</span>
+            {langName(targetLang)}
+          </span>
+        }
+        done={!!touched.languages}
+        open={openStep === "languages"}
+        onToggle={() => toggleStep("languages")}
+        tour="tour-languages"
+      >
         <div className="relative space-y-3">
           <LanguageSelect
             label="Source language"
             languages={languages}
             value={sourceLang}
-            onChange={setSourceLang}
+            onChange={(v) => {
+              setSourceLang(v);
+              markTouched("languages");
+            }}
             allowAuto
           />
-          <div className="flex justify-center">
+          {/* The swap control sits on the hairline between the two selects, so
+              the pair reads as one instrument rather than two fields. */}
+          <div className="relative flex justify-center">
+            <span
+              aria-hidden
+              className="absolute inset-x-6 top-1/2 h-px -translate-y-1/2 bg-subtle"
+            />
             <motion.button
               type="button"
-              onClick={swapLangs}
+              onClick={() => {
+                swapLangs();
+                markTouched("languages");
+              }}
               disabled={sourceLang === "auto"}
-              whileTap={{ rotate: 180 }}
+              whileHover={{ scale: 1.08 }}
+              whileTap={{ rotate: 180, scale: 0.94 }}
+              transition={{ type: "spring", stiffness: 420, damping: 24 }}
               aria-label="Swap source and target languages"
-              className="focusable -my-1 grid h-9 w-9 place-items-center rounded-full border border-subtle bg-surface text-secondary shadow-sm transition-colors hover:border-brand/50 hover:text-brand disabled:opacity-40"
+              className="focusable relative -my-1 grid h-9 w-9 place-items-center rounded-full border border-subtle bg-surface text-secondary shadow-sm transition-colors hover:border-brand/50 hover:text-brand disabled:opacity-40"
             >
               <svg
                 viewBox="0 0 24 24"
@@ -463,11 +946,19 @@ export default function Studio() {
             label="Target language"
             languages={languages}
             value={targetLang}
-            onChange={setTargetLang}
+            onChange={(v) => {
+              setTargetLang(v);
+              markTouched("languages");
+            }}
           />
         </div>
         {sampleLangNote && (
-          <div className="flex items-start gap-2.5 rounded-lg border border-warn/25 bg-warn/[0.07] px-3 py-2.5 text-xs text-warn">
+          <motion.div
+            initial={{ opacity: 0, y: -6 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.25, ease: EASE_ENTRANCE }}
+            className="flex items-start gap-2.5 rounded-lg border border-warn/25 bg-warn/[0.07] px-3 py-2.5 text-xs text-warn"
+          >
             <span className="icon-tile mt-px h-6 w-6 shrink-0 bg-warn/15 text-warn">
               <svg
                 viewBox="0 0 24 24"
@@ -486,24 +977,34 @@ export default function Studio() {
               DE. Pick one of those to hear a real translation, or upload your
               own clip for full NLLB translation.
             </span>
-          </div>
+          </motion.div>
         )}
-      </div>
+      </StepCard>
 
-      {/* 03 Voice */}
-      <VoiceChoice
-        mode={voiceMode}
-        onMode={setVoiceMode}
-        reference={reference}
-        onReference={setReference}
-      />
-
-      {/* 04 Options */}
-      <div className="card space-y-2.5 p-5">
-        <GroupLabel n="04" title="Options" />
+      <StepCard
+        n="03"
+        title="Voice & mix"
+        summary={optionSummary}
+        done={!!touched.options}
+        open={openStep === "options"}
+        onToggle={() => toggleStep("options")}
+        tour="tour-options"
+      >
+        <VoiceChoice
+          mode={voiceMode}
+          onMode={(m) => {
+            setVoiceMode(m);
+            markTouched("options");
+          }}
+          reference={reference}
+          onReference={setReference}
+        />
         <OptionToggle
           checked={keepBackground}
-          onChange={setKeepBackground}
+          onChange={(v) => {
+            setKeepBackground(v);
+            markTouched("options");
+          }}
           title="Keep background & effects"
           description="Dub over the original music/ambience instead of replacing it; the original speech is removed (Demucs)."
           icon={
@@ -513,8 +1014,11 @@ export default function Studio() {
         <OptionToggle
           checked={lipSyncReady && lipSync}
           disabled={!lipSyncReady}
-          onChange={setLipSync}
-          accent="cyan"
+          onChange={(v) => {
+            setLipSync(v);
+            markTouched("options");
+          }}
+          accent="magenta"
           title="Lip sync (optional)"
           description={
             lipSyncReady
@@ -523,24 +1027,36 @@ export default function Studio() {
           }
           icon={<path d="M3 12c3-3 15-3 18 0-3 4-15 4-18 0zM7 12h10" />}
         />
-      </div>
+      </StepCard>
 
-      {/* 04 Quality */}
-      <div className="card space-y-3 p-5">
-        <GroupLabel n="05" title="Quality" />
+      <StepCard
+        n="04"
+        title="Quality"
+        summary={`${QUALITIES.find((q) => q.key === quality)?.label ?? quality} · ${cost} credits`}
+        done={!!touched.quality}
+        open={openStep === "quality"}
+        onToggle={() => toggleStep("quality")}
+        tour="tour-quality"
+      >
         <div className="flex rounded-control border border-subtle bg-sunken p-1">
           {QUALITIES.map((q) => (
             <button
               key={q.key}
-              onClick={() => setQuality(q.key)}
+              onClick={() => {
+                setQuality(q.key);
+                markTouched("quality");
+              }}
               disabled={running}
               className="focusable relative flex-1 rounded-[10px] px-3 py-2 font-mono text-xs font-medium transition-colors"
             >
+              {/* One pill that slides between the three options — the same
+                  element, so the movement is a layout animation rather than a
+                  fade between two pills. */}
               {quality === q.key && (
                 <motion.span
                   layoutId="quality-pill"
-                  transition={{ type: "spring", stiffness: 400, damping: 32 }}
-                  className="absolute inset-0 rounded-[10px] bg-brand/15 shadow-[inset_0_0_0_1px_rgb(var(--c-brand-500)/0.4)]"
+                  transition={{ type: "spring", stiffness: 420, damping: 34 }}
+                  className="absolute inset-0 rounded-[10px] bg-brand/15 shadow-[inset_0_0_0_1px_rgb(var(--c-brand-500)/0.45)]"
                 />
               )}
               <span
@@ -551,49 +1067,146 @@ export default function Studio() {
             </button>
           ))}
         </div>
-        <p className="text-[11px] leading-relaxed text-muted">
-          {quality === "fast" &&
-            "Fastest — skips separation & voice cloning. Best for long videos."}
-          {quality === "balanced" &&
-            "Balanced — separation + voice cloning on."}
-          {quality === "studio" &&
-            "Highest fidelity — full pipeline. Best quality, slowest."}
-        </p>
-      </div>
+        {/* The blurb swaps with the setting, so the sentence tracks the pill
+            instead of sitting there as static help text. */}
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.p
+            key={quality}
+            initial={{ opacity: 0, y: 5 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -5 }}
+            transition={{ duration: 0.2 }}
+            className="text-[11px] leading-relaxed text-muted"
+          >
+            {quality === "fast" &&
+              "Fastest — skips separation & voice cloning. Best for long videos."}
+            {quality === "balanced" &&
+              "Balanced — separation + voice cloning on."}
+            {quality === "studio" &&
+              "Highest fidelity — full pipeline. Best quality, slowest."}
+          </motion.p>
+        </AnimatePresence>
+      </StepCard>
     </>
   );
 
-  // ── The pinned CTA footer (start button + pipeline health line) ──────────
+  // ── The run card ─────────────────────────────────────────────────────────
+  // The one saturated surface on the screen: deep glaze, a mesh of light
+  // turning slowly behind it, film grain over the top so the gradient never
+  // bands. Everything here is porcelain type on a fired ground — which is why
+  // the card looks the same in both themes instead of inverting.
   const ctaBlock = (
-    <div className="space-y-2">
-      <button
+    <div data-tour="tour-run" className="deep-card grain space-y-3 p-4">
+      {running && <span className="beam" aria-hidden />}
+
+      <div className="above flex items-center justify-between gap-2">
+        <span className="font-mono text-[10px] uppercase tracking-[0.16em] on-deep-dim">
+          This run
+        </span>
+        <span className="flex items-center gap-2 font-mono text-[11px] on-deep-dim">
+          {running ? (
+            <ThinkingOrbs size={20} speed={7} />
+          ) : (
+            <Equalizer idle className="text-white/70" />
+          )}
+          <span>
+            <span
+              className={
+                short
+                  ? "font-medium text-[rgb(var(--mesh-c))]"
+                  : "font-medium text-white"
+              }
+            >
+              {cost}
+            </span>{" "}
+            / {balance.toLocaleString()} cr
+          </span>
+        </span>
+      </div>
+
+      <MagneticButton
         onClick={start}
         disabled={busy || running || !canStart}
         title={
           !canStart ? "Choose a source and a target language first" : undefined
         }
-        className="btn-primary focusable w-full py-3.5 font-mono text-sm disabled:cursor-not-allowed disabled:opacity-60"
+        className="btn-on-deep focusable above w-full py-3.5 font-mono text-sm"
       >
-        {busy
-          ? "Starting…"
-          : running
-            ? `Dubbing… ${overall}%`
-            : `Start dubbing · ${cost} →`}
-      </button>
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.span
+            key={busy ? "busy" : running ? "run" : canStart ? "go" : "idle"}
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -6 }}
+            transition={{ duration: 0.18 }}
+            className="flex items-center justify-center gap-2"
+          >
+            {(busy || running) && <ThinkingOrbs size={18} speed={6.5} />}
+            {busy
+              ? "Starting…"
+              : running
+                ? `Dubbing… ${overall}%`
+                : canStart
+                  ? `Start dubbing · ${cost} →`
+                  : "Add a clip to start"}
+          </motion.span>
+        </AnimatePresence>
+      </MagneticButton>
+
+      {/* A rail under the button while the pipeline is live, so the run card
+          itself reports progress without the eye going anywhere. */}
+      <AnimatePresence initial={false}>
+        {running && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            className="above overflow-hidden"
+          >
+            <div className="h-1 overflow-hidden rounded-full bg-white/15">
+              <motion.div
+                className="h-full rounded-full bg-white/85"
+                initial={false}
+                animate={{ width: `${overall}%` }}
+                transition={{ duration: 0.5, ease: EASE_ENTRANCE }}
+              />
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {/* Three honest states: unreachable, running simulated stages, or live.
           An unreachable API used to fall back to a fabricated "simulation"
           status, which looked identical to a real simulated pipeline. */}
       {(health || healthFailed) && (
-        <p className="flex items-center justify-center gap-1.5 text-center font-mono text-[11px] text-muted">
-          <span
-            className={`h-1.5 w-1.5 rounded-full ${
-              healthFailed
-                ? "bg-danger"
-                : health!.stages.some((s) => s.mode === "real")
-                  ? "bg-success"
-                  : "bg-warn"
-            }`}
-          />
+        <p className="above flex items-center justify-center gap-1.5 text-center font-mono text-[11px] on-deep-dim">
+          <span className="relative flex h-1.5 w-1.5">
+            {!healthFailed && (
+              <motion.span
+                aria-hidden
+                className={`absolute inset-0 rounded-full ${
+                  health!.stages.some((s) => s.mode === "real")
+                    ? "bg-success"
+                    : "bg-warn"
+                }`}
+                animate={{ scale: [1, 2.6, 1], opacity: [0.6, 0, 0.6] }}
+                transition={{
+                  duration: 2.4,
+                  repeat: Infinity,
+                  ease: "easeOut",
+                }}
+              />
+            )}
+            <span
+              className={`relative h-1.5 w-1.5 rounded-full ${
+                healthFailed
+                  ? "bg-danger"
+                  : health!.stages.some((s) => s.mode === "real")
+                    ? "bg-success"
+                    : "bg-warn"
+              }`}
+            />
+          </span>
           {healthFailed
             ? "Dubbing service unreachable"
             : health!.stages.some((s) => s.mode === "real")
@@ -604,140 +1217,305 @@ export default function Studio() {
     </div>
   );
 
-  // ── Right column content (idle blocks vs. live run) ──────────────────────
+  // ── The stat row ─────────────────────────────────────────────────────────
+  // Three small tiles across the top of the bento. They answer the questions
+  // you would otherwise scroll to find: what can I spend, what is the pipeline
+  // doing, and what did I last make.
+  const statRow = (
+    <motion.div
+      variants={stagger}
+      initial="hidden"
+      animate="show"
+      className="bento bento-3"
+    >
+      <StatTile
+        label="Credits"
+        tint="brand"
+        value={<AnimatedNumber value={balance} />}
+        foot={short ? "short for this run" : `${after.toLocaleString()} after`}
+        icon={
+          <svg
+            viewBox="0 0 24 24"
+            className="h-3.5 w-3.5"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <circle cx="12" cy="12" r="9" />
+            <path d="M12 7v10M9.5 9.5h5M9.5 14.5h5" />
+          </svg>
+        }
+      />
+      <StatTile
+        label="Pipeline"
+        tint={
+          failed ? "warn" : running ? "brand" : completed ? "success" : "magenta"
+        }
+        value={
+          running
+            ? `${stageProgress.done}/${stageProgress.total} stages`
+            : completed
+              ? "Complete"
+              : failed
+                ? "Failed"
+                : "Idle"
+        }
+        foot={
+          running
+            ? `${overall}% · ${fmtElapsed(elapsed)}`
+            : `${quality} · ${cost} cr`
+        }
+        icon={<Equalizer idle={!running} className="h-3.5 text-current" />}
+      />
+      <StatTile
+        label="Last dub"
+        tint="gold"
+        value={
+          lastWork
+            ? `${lastWork.sourceLang.toUpperCase()} → ${lastWork.targetLang.toUpperCase()}`
+            : "None yet"
+        }
+        foot={lastWork ? workTitle(lastWork) : "your first run lands here"}
+        icon={
+          <svg
+            viewBox="0 0 24 24"
+            className="h-3.5 w-3.5"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          >
+            <path d="M3 7.5 12 3l9 4.5-9 4.5z" />
+            <path d="M3 12l9 4.5L21 12M3 16.5 12 21l9-4.5" />
+          </svg>
+        }
+      />
+    </motion.div>
+  );
+
+  // ── Right column content (idle monitor vs. live run) ─────────────────────
   const rightContent = (
     <>
-      {error && (
-        <div className="card border-danger/30 bg-danger/10 px-5 py-4 text-sm text-danger">
-          {error}
-        </div>
-      )}
+      {statRow}
+
+      <AnimatePresence initial={false}>
+        {error && (
+          <motion.div
+            initial={{ opacity: 0, y: -8, height: 0 }}
+            animate={{ opacity: 1, y: 0, height: "auto" }}
+            exit={{ opacity: 0, y: -8, height: 0 }}
+            transition={{ duration: 0.25, ease: EASE_ENTRANCE }}
+            className="overflow-hidden"
+          >
+            <div className="card border-danger/30 bg-danger/10 px-5 py-4 text-sm text-danger">
+              {error}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <AnimatePresence mode="wait">
         {!job ? (
           <motion.div
             key="idle"
             initial={{ opacity: 1 }}
-            exit={{ opacity: 0, scale: 0.98 }}
-            transition={{ duration: 0.25, ease: [0.4, 0, 0.2, 1] }}
-            className="space-y-4"
+            exit={{ opacity: 0, scale: 0.98, filter: "blur(4px)" }}
+            transition={{ duration: 0.28, ease: EASE_EXIT }}
+            className="bento"
           >
-            {/* Output empty state */}
-            <div className="card relative grid h-[340px] place-items-center overflow-hidden p-8 text-center">
-              <LogoMark className="pointer-events-none absolute -bottom-10 -right-10 h-[180px] w-[180px] text-primary/[0.045]" />
-              <div className="relative">
-                <h3 className="font-mono text-lg font-medium text-primary">
-                  Your dub will appear here
-                </h3>
-                <p className="mx-auto mt-2 max-w-sm text-sm text-secondary">
-                  Configure the pipeline on the left and start a run — every
-                  stage streams live.
-                </p>
-                <button
-                  onClick={() => {
-                    setUseSample(true);
-                    setFile(null);
-                  }}
-                  className="btn-ghost focusable mt-6 px-5 py-2.5 font-mono text-sm"
-                >
-                  Load the sample clip →
-                </button>
-              </div>
-            </div>
-
-            {/* How it works */}
-            <div className="card p-5">
-              <SectionMark>How it works</SectionMark>
-              <div className="mt-3 space-y-1">
-                {pipelinePreview(
-                  voiceClone,
-                  lipSync,
-                  keepBackground,
-                  targetLang,
-                ).map((s) => (
-                  <div
-                    key={s.name}
-                    className={`flex items-center gap-3 rounded-xl px-2 py-1.5 ${s.skipped ? "opacity-45" : ""}`}
-                  >
-                    <span
-                      className={`icon-tile h-8 w-8 shrink-0 ${s.skipped ? "bg-sunken text-muted" : "bg-brand/12 text-brand"}`}
-                    >
-                      <svg
-                        viewBox="0 0 24 24"
-                        className="h-4 w-4"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="1.6"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      >
-                        {s.icon}
-                      </svg>
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <span
-                        className={`font-mono text-xs font-medium ${s.skipped ? "text-muted line-through" : "text-primary"}`}
-                      >
-                        {s.name}
-                      </span>
-                      <span className="ml-2 text-xs text-secondary">
-                        · {s.desc}
-                      </span>
-                    </div>
-                    {s.skipped && (
-                      <span className="rounded-full bg-sunken px-2 py-0.5 font-mono text-[10px] text-muted">
-                        skipped
-                      </span>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Estimate */}
-            <div className="card p-5">
-              <SectionMark>Estimate</SectionMark>
-              <div className="mt-3 flex items-end justify-between">
-                <div>
-                  <div className="font-mono text-4xl font-medium text-primary">
-                    <AnimatedNumber value={cost} />
-                    <span className="ml-1.5 font-mono text-sm text-muted">
-                      credits
-                    </span>
-                  </div>
-                  <div className="mt-0.5 font-mono text-[11px] uppercase tracking-[0.12em] text-muted">
-                    {quality} run
-                  </div>
+            {/* The monitor: the route this dub will take, drawn from the
+                options as they stand. */}
+            <MonitorCard tour="tour-monitor">
+              <div className="above">
+                <div className="flex items-center justify-between gap-3">
+                  <SectionMark>Route</SectionMark>
+                  <span className="font-mono text-[11px] text-muted">
+                    {sourceReady ? "Ready when you are" : "Waiting for a clip"}
+                  </span>
                 </div>
-                {short && (
-                  <Link
-                    to="/plans"
-                    className="font-mono text-xs text-danger underline-offset-2 hover:underline"
+
+                <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2">
+                  <LangBadge
+                    key={sourceLang}
+                    flag={langFlag(sourceLang)}
+                    label={langName(sourceLang)}
+                  />
+                  <motion.svg
+                    animate={{ x: [0, 5, 0], opacity: [0.55, 1, 0.55] }}
+                    transition={{
+                      duration: 2.4,
+                      repeat: Infinity,
+                      ease: "easeInOut",
+                    }}
+                    viewBox="0 0 24 24"
+                    className="h-5 w-5 text-brand"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
                   >
-                    Top up in Plans →
-                  </Link>
+                    <path d="M5 12h14M13 6l6 6-6 6" />
+                  </motion.svg>
+                  <LangBadge
+                    key={targetLang}
+                    flag={langFlag(targetLang)}
+                    label={langName(targetLang)}
+                    accent
+                  />
+                  <span className="ml-auto truncate font-mono text-[11px] text-muted">
+                    {sourceSummary}
+                  </span>
+                </div>
+
+                <div className="mt-6">
+                  <PipelineFlow nodes={previewNodes} />
+                </div>
+
+                <div className="rule-signature mt-5" />
+                <p className="mt-4 text-center text-[13px] text-secondary">
+                  {sourceReady
+                    ? "Start the run and these stages fill in live — the finished video, its transcript and the download all land here."
+                    : "Add a clip on the left, or load the sample, and this route becomes a dub."}
+                </p>
+                {!sourceReady && (
+                  <div className="mt-3 text-center">
+                    <motion.button
+                      onClick={() => {
+                        setUseSample(true);
+                        setFile(null);
+                      }}
+                      whileHover={{ y: -2 }}
+                      whileTap={tapScale}
+                      transition={{
+                        type: "spring",
+                        stiffness: 400,
+                        damping: 26,
+                      }}
+                      className="btn-ghost focusable px-5 py-2.5 font-mono text-sm"
+                    >
+                      Load the sample clip →
+                    </motion.button>
+                  </div>
                 )}
               </div>
-              <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-sunken">
-                <div
-                  className={`h-full rounded-full ${short ? "bg-danger" : ""}`}
-                  style={{
-                    width: `${barPct}%`,
-                    background: short ? undefined : "var(--grad-brand)",
-                  }}
-                />
+            </MonitorCard>
+
+            {/* Estimate + Tips side by side — the price of the decision you
+                just made, next to the thing worth knowing while you make it. */}
+            <div className="bento xl:grid-cols-[1.15fr_0.85fr]">
+              <div data-tour="tour-cost" className="card sheen p-5">
+                <SectionMark>Estimate</SectionMark>
+                <div className="mt-3 flex items-end justify-between">
+                  <div>
+                    <div className="font-mono text-4xl font-medium text-primary">
+                      <AnimatedNumber value={cost} />
+                      <span className="ml-1.5 font-mono text-sm text-muted">
+                        credits
+                      </span>
+                    </div>
+                    <AnimatePresence mode="wait" initial={false}>
+                      <motion.div
+                        key={quality}
+                        initial={{ opacity: 0, y: 4 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -4 }}
+                        transition={{ duration: 0.18 }}
+                        className="mt-0.5 font-mono text-[11px] uppercase tracking-[0.13em] text-muted"
+                      >
+                        {quality} run
+                      </motion.div>
+                    </AnimatePresence>
+                  </div>
+                  {short && (
+                    <Link
+                      to="/plans"
+                      className="font-mono text-xs text-danger underline-offset-2 hover:underline"
+                    >
+                      Top up in Plans →
+                    </Link>
+                  )}
+                </div>
+                <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-sunken">
+                  <motion.div
+                    className={`h-full rounded-full ${short ? "bg-danger" : "fill-signature"}`}
+                    initial={false}
+                    animate={{ width: `${barPct}%` }}
+                    transition={{ type: "spring", stiffness: 220, damping: 30 }}
+                  />
+                </div>
+                <div className="mt-2 flex justify-between font-mono text-[11px] text-muted">
+                  <span>Balance {balance.toLocaleString()}</span>
+                  <span className={short ? "text-danger" : ""}>
+                    After {after.toLocaleString()}
+                  </span>
+                </div>
               </div>
-              <div className="mt-2 flex justify-between font-mono text-[11px] text-muted">
-                <span>Balance {balance.toLocaleString()}</span>
-                <span className={short ? "text-danger" : ""}>
-                  After {after.toLocaleString()}
-                </span>
+
+              {/* Tips */}
+              <div className="card sheen p-5">
+                <SectionMark>Tips</SectionMark>
+                <div className="mt-3 flex items-start gap-3">
+                  <motion.span
+                    className="icon-tile mt-0.5 h-8 w-8 shrink-0 bg-warn/15 text-warn"
+                    animate={{ rotate: [0, -8, 8, 0] }}
+                    transition={{
+                      duration: 5,
+                      repeat: Infinity,
+                      ease: "easeInOut",
+                      times: [0, 0.1, 0.2, 1],
+                    }}
+                  >
+                    <svg
+                      viewBox="0 0 24 24"
+                      className="h-4 w-4"
+                      fill="currentColor"
+                    >
+                      <path d="m12 3 2.4 5.3 5.8.5-4.4 3.8 1.3 5.6L12 20.9 6.9 18.8l1.3-5.6L3.8 8.8l5.8-.5z" />
+                    </svg>
+                  </motion.span>
+                  <AnimatePresence mode="wait">
+                    <motion.p
+                      key={tip}
+                      initial={{ opacity: 0, y: 8 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -8 }}
+                      transition={{ duration: 0.3, ease: EASE_ENTRANCE }}
+                      className="min-h-[2.5rem] flex-1 text-sm text-secondary"
+                    >
+                      {TIPS[tip]}
+                    </motion.p>
+                  </AnimatePresence>
+                </div>
+                <div className="mt-3 flex items-center justify-between gap-3">
+                  <div className="flex gap-1.5">
+                    {TIPS.map((_, i) => (
+                      <button
+                        key={i}
+                        onClick={() => setTip(i)}
+                        aria-label={`Tip ${i + 1}`}
+                        className={`h-1.5 rounded-full transition-all duration-300 ${i === tip ? "w-5 bg-brand" : "w-1.5 bg-strong hover:bg-brand/50"}`}
+                      />
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setTourOpen(true)}
+                    className="focusable font-mono text-[11px] text-brand hover:underline"
+                  >
+                    Replay the guide →
+                  </button>
+                </div>
               </div>
             </div>
 
-            {/* Recent dubs */}
+            {/* Recent dubs — full width under the pair, and only when there is
+                something to show. */}
             {works.length > 0 && (
-              <div className="card p-5">
+              <div className="card sheen p-5">
                 <div className="flex items-center justify-between">
                   <SectionMark>Recent dubs</SectionMark>
                   <Link
@@ -747,12 +1525,27 @@ export default function Studio() {
                     View all →
                   </Link>
                 </div>
-                <div className="mt-3 space-y-2">
+                <motion.div
+                  variants={stagger}
+                  initial="hidden"
+                  animate="show"
+                  className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3"
+                >
                   {works.slice(0, 3).map((w) => (
-                    <div key={w.id} className="flex items-center gap-3">
+                    <motion.div
+                      key={w.id}
+                      variants={rise}
+                      whileHover={{ y: -2 }}
+                      transition={{
+                        type: "spring",
+                        stiffness: 380,
+                        damping: 26,
+                      }}
+                      className="group flex items-center gap-3 rounded-control border border-subtle bg-sunken/60 p-2 transition-colors hover:border-brand/35"
+                    >
                       <span
-                        className="h-10 w-14 shrink-0 rounded-lg"
-                        style={{ background: gradientFor(w.id) }}
+                        className="thumb-grad h-10 w-14 shrink-0 rounded-lg"
+                        style={{ backgroundImage: gradientFor(w.id) }}
                       />
                       <div className="min-w-0 flex-1">
                         <div className="truncate text-sm font-medium text-primary">
@@ -768,7 +1561,7 @@ export default function Studio() {
                           href={mediaUrl(w.outputUrl)}
                           download
                           aria-label="Download"
-                          className="focusable grid h-8 w-8 place-items-center rounded-full text-muted hover:bg-sunken hover:text-primary"
+                          className="focusable grid h-8 w-8 shrink-0 place-items-center rounded-full text-muted opacity-0 transition-opacity hover:bg-surface hover:text-brand focus-visible:opacity-100 group-hover:opacity-100"
                         >
                           <svg
                             viewBox="0 0 24 24"
@@ -783,137 +1576,187 @@ export default function Studio() {
                           </svg>
                         </a>
                       )}
-                    </div>
+                    </motion.div>
                   ))}
-                </div>
+                </motion.div>
               </div>
             )}
-
-            {/* Tips */}
-            <div className="card p-5">
-              <SectionMark>Tips</SectionMark>
-              <div className="mt-3 flex items-start gap-3">
-                <span className="icon-tile mt-0.5 h-8 w-8 shrink-0 bg-warn/15 text-warn">
-                  <svg
-                    viewBox="0 0 24 24"
-                    className="h-4 w-4"
-                    fill="currentColor"
-                  >
-                    <path d="m12 3 2.4 5.3 5.8.5-4.4 3.8 1.3 5.6L12 20.9 6.9 18.8l1.3-5.6L3.8 8.8l5.8-.5z" />
-                  </svg>
-                </span>
-                <AnimatePresence mode="wait">
-                  <motion.p
-                    key={tip}
-                    initial={{ opacity: 0, y: 6 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    exit={{ opacity: 0, y: -6 }}
-                    transition={{ duration: 0.3 }}
-                    className="min-h-[2.5rem] flex-1 text-sm text-secondary"
-                  >
-                    {TIPS[tip]}
-                  </motion.p>
-                </AnimatePresence>
-              </div>
-              <div className="mt-3 flex gap-1.5">
-                {TIPS.map((_, i) => (
-                  <button
-                    key={i}
-                    onClick={() => setTip(i)}
-                    aria-label={`Tip ${i + 1}`}
-                    className={`h-1.5 rounded-full transition-all ${i === tip ? "w-5 bg-brand" : "w-1.5 bg-strong"}`}
-                  />
-                ))}
-              </div>
-            </div>
           </motion.div>
         ) : (
           <motion.div
             key="live"
-            initial={{ opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.25, ease: [0.22, 1, 0.36, 1] }}
-            className="space-y-4"
+            initial={{ opacity: 0, y: 14, filter: "blur(4px)" }}
+            animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+            transition={{ duration: 0.35, ease: EASE_ENTRANCE }}
+            className="bento"
           >
-            {/* Job header with ring progress */}
-            <div className="card flex items-center justify-between gap-3 p-5">
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-medium text-primary">
-                    {running
-                      ? "Running pipeline"
-                      : completed
-                        ? "Dub complete"
-                        : failed
-                          ? "Pipeline failed"
-                          : "Queued"}
-                  </span>
-                  <span
-                    className={`rounded-full px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide ${job.simulated ? "bg-warn/15 text-warn" : "bg-success/15 text-success"}`}
-                  >
-                    {job.simulated ? "simulation" : "live"}
-                  </span>
+            {/* The same monitor, now carrying the real run. While the pipeline
+                is live the card wears a glaze halo and a travelling hairline —
+                the two cues that say "this is working" without a spinner. */}
+            <div
+              data-tour="tour-monitor"
+              className={`card relative overflow-hidden p-5 transition-shadow duration-500 ${
+                running ? "running-halo" : ""
+              }`}
+            >
+              {running && <span className="beam" aria-hidden />}
+              <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <AnimatePresence mode="wait" initial={false}>
+                      <motion.span
+                        key={job.status}
+                        initial={{ opacity: 0, y: 5 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -5 }}
+                        transition={{ duration: 0.2 }}
+                        className="text-sm font-medium text-primary"
+                      >
+                        {running
+                          ? "Running pipeline"
+                          : completed
+                            ? "Dub complete"
+                            : failed
+                              ? "Pipeline failed"
+                              : "Queued"}
+                      </motion.span>
+                    </AnimatePresence>
+                    <span
+                      className={`rounded-full px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide ${job.simulated ? "bg-warn/15 text-warn" : "bg-success/15 text-success"}`}
+                    >
+                      {job.simulated ? "simulation" : "live"}
+                    </span>
+                    {running && <Equalizer className="text-brand" />}
+                  </div>
+                  <div className="mt-1 truncate font-mono text-xs text-muted">
+                    job {job.id} · {job.filename ?? "sample"} · →
+                    {targetLang.toUpperCase()}
+                  </div>
                 </div>
-                <div className="mt-1 truncate font-mono text-xs text-muted">
-                  job {job.id} · {job.filename ?? "sample"} · →
-                  {targetLang.toUpperCase()}
+                <div className="flex items-center gap-3">
+                  <RingProgress value={overall} live={running} />
+                  {(completed || failed) && (
+                    <motion.button
+                      onClick={reset}
+                      initial={{ opacity: 0, scale: 0.9 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      whileHover={{ y: -2 }}
+                      whileTap={tapScale}
+                      transition={{
+                        type: "spring",
+                        stiffness: 400,
+                        damping: 26,
+                      }}
+                      className="btn-ghost focusable px-4 py-2 font-mono text-sm"
+                    >
+                      New dub
+                    </motion.button>
+                  )}
                 </div>
               </div>
-              <div className="flex items-center gap-3">
-                <RingProgress value={overall} />
-                {(completed || failed) && (
-                  <button
-                    onClick={reset}
-                    className="btn-ghost focusable px-4 py-2 font-mono text-sm"
-                  >
-                    New dub
-                  </button>
-                )}
-              </div>
-            </div>
 
-            {/* Estimate, repurposed during/after a run */}
-            <div className="card flex items-center justify-between gap-3 p-5">
-              <div>
-                <SectionMark>Estimate</SectionMark>
-                <div className="mt-2 font-mono text-sm text-secondary">
-                  Spent <span className="text-primary">{cost}</span> ·{" "}
-                  {stageProgress.done}/{stageProgress.total} stages
-                </div>
+              {/* The thinking orbs — the loading state proper. While a stage
+                  is being worked on the cluster turns over a warm wash and
+                  names the stage; the percentage next to it is the only claim
+                  about rate, and it comes from the pipeline itself. */}
+              <AnimatePresence initial={false}>
+                {running && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: "auto" }}
+                    exit={{ opacity: 0, height: 0 }}
+                    transition={{ duration: 0.3, ease: EASE_ENTRANCE }}
+                    className="overflow-hidden"
+                  >
+                    <div className="mt-5 flex items-center gap-4 rounded-card border border-brand/20 bg-brand/[0.06] px-4 py-3.5">
+                      <ThinkingOrbs
+                        size={64}
+                        speed={11}
+                        label={
+                          activeStage
+                            ? `Working on ${activeStage}`
+                            : "Pipeline working"
+                        }
+                      />
+                      <div className="min-w-0 flex-1">
+                        <AnimatePresence mode="wait" initial={false}>
+                          <motion.div
+                            key={activeStage ?? "queued"}
+                            initial={{ opacity: 0, y: 6 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, y: -6 }}
+                            transition={{ duration: 0.22 }}
+                            className="truncate text-sm font-medium text-primary"
+                          >
+                            {activeStage ?? "Queued — waiting for a worker"}
+                          </motion.div>
+                        </AnimatePresence>
+                        <div className="mt-1 font-mono text-[11px] text-muted">
+                          {overall}% · stage{" "}
+                          {Math.min(stageProgress.done + 1, stageProgress.total)}{" "}
+                          of{" "}
+                          {stageProgress.total} · {fmtElapsed(elapsed)}
+                        </div>
+                      </div>
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
+              <div className="mt-5">
+                <PipelineFlow nodes={liveNodes} />
               </div>
-              <div className="text-right font-mono">
-                <div className="text-2xl font-medium text-primary">
-                  {fmtElapsed(elapsed)}
-                </div>
-                <div className="text-[10px] uppercase tracking-[0.12em] text-muted">
+
+              <div className="mt-5 flex items-center justify-between border-t border-subtle pt-4 font-mono text-[11px] text-muted">
+                <span>
+                  {stageProgress.done}/{stageProgress.total} stages · {cost}{" "}
+                  credits
+                </span>
+                <span>
+                  <span className="text-primary">{fmtElapsed(elapsed)}</span>{" "}
                   elapsed
-                </div>
+                </span>
               </div>
             </div>
 
             {completed && (
-              <div className="space-y-4">
-                <VideoCompare
-                  sourceUrl={job.result.source_url ?? undefined}
-                  outputUrl={job.result.output_url ?? undefined}
-                  simulated={job.simulated}
-                />
+              <motion.div
+                variants={stagger}
+                initial="hidden"
+                animate="show"
+                className="bento"
+              >
+                <motion.div variants={rise}>
+                  <VideoCompare
+                    sourceUrl={job.result.source_url ?? undefined}
+                    outputUrl={job.result.output_url ?? undefined}
+                    simulated={job.simulated}
+                  />
+                </motion.div>
                 {job.result.output_url && (
-                  <a
+                  <motion.a
+                    variants={rise}
                     href={job.result.output_url}
                     download
-                    className="btn-primary focusable inline-flex px-5 py-2.5 font-mono text-sm"
+                    whileHover={{ y: -2 }}
+                    whileTap={tapScale}
+                    transition={{ type: "spring", stiffness: 400, damping: 26 }}
+                    className="btn-primary focusable inline-flex w-fit px-5 py-2.5 font-mono text-sm"
                   >
                     ↓ Download dubbed video
-                  </a>
+                  </motion.a>
                 )}
-                <ResultMetrics m={job.result.metrics} />
-                <SegmentTable
-                  segments={job.result.segments}
-                  onRevoice={completed ? revoice : undefined}
-                  revoicing={revoicing}
-                />
-              </div>
+                <motion.div variants={rise}>
+                  <ResultMetrics m={job.result.metrics} />
+                </motion.div>
+                <motion.div variants={rise}>
+                  <SegmentTable
+                    segments={job.result.segments}
+                    onRevoice={completed ? revoice : undefined}
+                    revoicing={revoicing}
+                  />
+                </motion.div>
+              </motion.div>
             )}
 
             <div className="card p-5">
@@ -928,128 +1771,86 @@ export default function Studio() {
     </>
   );
 
-  // ── Desktop: fixed two-column shell (§2) ─────────────────────────────────
+  const tour = (
+    <TourOverlay steps={tourSteps} open={tourOpen} onClose={closeTour} />
+  );
+
+  // ── Desktop: fixed two-column shell ──────────────────────────────────────
   if (isDesktop) {
     return (
       <Page className="h-full min-h-0">
-        <div className="grid h-full min-h-0 grid-cols-[380px_minmax(0,1fr)] gap-6">
-          <aside className="grid min-h-0 grid-rows-[minmax(0,1fr)_auto]">
-            <ScrollColumn ref={leftScrollRef} className="space-y-4 pr-0.5">
-              {configCards}
+        {/* The deck is a RANGE, not a fixed 380px: at 1024px a hard 380 leaves
+            the monitor column too narrow to hold its bento row, and the shell
+            starts scrolling sideways. It shrinks to 300 before the layout has
+            to give anything else up. */}
+        <div className="grid h-full min-h-0 grid-cols-[clamp(300px,26vw,380px)_minmax(0,1fr)] gap-4 xl:gap-6">
+          <aside className="grid min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)_auto] gap-3">
+            {deckHeader}
+            <ScrollColumn ref={leftScrollRef} className="space-y-2.5 pr-0.5">
+              {stepDeck}
             </ScrollColumn>
-            <div className="pt-4">{ctaBlock}</div>
+            <div>{ctaBlock}</div>
           </aside>
-          <ScrollColumn ref={rightScrollRef} className="space-y-4 pr-0.5">
+          <ScrollColumn ref={rightScrollRef} className="min-w-0 space-y-4 pr-0.5">
             {rightContent}
           </ScrollColumn>
         </div>
+        {tour}
       </Page>
     );
   }
 
-  // ── Mobile: single scrolling stack (§11) ─────────────────────────────────
+  // ── Mobile: single scrolling stack ───────────────────────────────────────
+  // The run card is the fixed bar above the tab bar instead of a card in the
+  // flow, so the deep surface moves there and the deck keeps the full width.
   return (
-    <Page className="space-y-4 pb-28">
-      <motion.div
-        variants={stagger}
-        initial="hidden"
-        animate="show"
-        className="grid grid-cols-3 gap-3"
-      >
-        <StatusChip tint="brand" label="Credits" value={`${balance}`} />
-        <StatusChip
-          tint={running ? "warn" : "cyan"}
-          label="Pipeline"
-          value={
-            running
-              ? `${stageProgress.done}/${stageProgress.total}`
-              : completed
-                ? "Done"
-                : "Idle"
-          }
-        />
-        <StatusChip
-          tint="magenta"
-          label="Last dub"
-          value={
-            lastWork
-              ? `${lastWork.sourceLang.toUpperCase()}→${lastWork.targetLang.toUpperCase()}`
-              : "None"
-          }
-        />
-      </motion.div>
-      {configCards}
-      {rightContent}
-      {/* Fixed CTA bar above the tab bar */}
-      <div className="glass fixed inset-x-0 bottom-[calc(env(safe-area-inset-bottom)+3.5rem)] z-30 flex items-center gap-3 px-4 py-2.5">
-        <span className="font-mono text-sm text-secondary">{cost} credits</span>
-        <button
-          onClick={start}
-          disabled={busy || running || !canStart}
-          className="btn-primary focusable ml-auto px-6 py-2.5 font-mono text-sm disabled:opacity-60"
+    <Page>
+      <div className="space-y-4 pb-36">
+        {deckHeader}
+        <div className="space-y-2.5">{stepDeck}</div>
+        {rightContent}
+        <div
+          data-tour="tour-run"
+          className="fixed inset-x-3 bottom-[calc(env(safe-area-inset-bottom)+3.75rem)] z-30"
         >
-          {busy
-            ? "Starting…"
-            : running
-              ? `Dubbing… ${overall}%`
-              : "Start dubbing →"}
-        </button>
+          <div className="deep-card grain flex items-center gap-3 px-3.5 py-2.5">
+            {running && <span className="beam" aria-hidden />}
+            <span className="above flex min-w-0 flex-col">
+              <span className="font-mono text-[10px] uppercase tracking-[0.14em] on-deep-dim">
+                {running ? `${overall}% · ${fmtElapsed(elapsed)}` : "This run"}
+              </span>
+              <span className="font-mono text-sm font-medium text-white">
+                {cost} credits
+              </span>
+            </span>
+            <MagneticButton
+              onClick={start}
+              disabled={busy || running || !canStart}
+              strength={4}
+              className="btn-on-deep focusable above ml-auto inline-flex shrink-0 items-center gap-2 px-5 py-2.5 font-mono text-sm"
+            >
+              {(busy || running) && <ThinkingOrbs size={16} speed={6.5} />}
+              {busy
+                ? "Starting…"
+                : running
+                  ? `Dubbing… ${overall}%`
+                  : "Start dubbing →"}
+            </MagneticButton>
+          </div>
+        </div>
       </div>
+      {tour}
     </Page>
   );
 }
 
-// ── Tips + pipeline preview data ───────────────────────────────────────────
+// ── Tips ───────────────────────────────────────────────────────────────────
 const TIPS = [
   "Keep clips under a couple of minutes for the fastest turnaround.",
   "Voice cloning needs clear, single-speaker audio to match the original best.",
   "Lip sync earns its cost on close-up talking-head footage, less so on voiceover.",
   "The built-in sample ships translations for UZ, RU, ES, FR and DE.",
 ];
-
-function pipelinePreview(
-  voiceClone: boolean,
-  lipSync: boolean,
-  keepBackground: boolean,
-  targetLang: string,
-) {
-  return [
-    {
-      name: "Transcribe",
-      desc: "speech to text (Whisper)",
-      icon: <path d="M4 6h16M4 12h10M4 18h7" />,
-      skipped: false,
-    },
-    {
-      name: "Translate",
-      desc: `into ${targetLang.toUpperCase()} (NLLB)`,
-      icon: (
-        <path d="M4 5h7M8 3v2c0 4-2 7-5 8m3-4c0 3 3 5 6 6M14 20l4-9 4 9M15.5 17h5" />
-      ),
-      skipped: false,
-    },
-    {
-      name: "Clone voice",
-      desc: "keep the speaker",
-      icon: <path d="M3 12h3l2-6 3 15 3-12 2 5h4" />,
-      skipped: !voiceClone,
-    },
-    {
-      name: "Sync lips",
-      desc: "match the mouth",
-      icon: <path d="M3 12c3-3 15-3 18 0-3 4-15 4-18 0zM7 12h10" />,
-      skipped: !lipSync,
-    },
-    {
-      name: "Mix",
-      desc: "keep music & effects",
-      icon: (
-        <path d="M9 18V5l12-2v13M6 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0zm15-2a3 3 0 1 1-6 0 3 3 0 0 1 6 0z" />
-      ),
-      skipped: !keepBackground,
-    },
-  ];
-}
 
 // ── Small presentational helpers ───────────────────────────────────────────
 function fmtDur(sec: number | null): string {
@@ -1066,14 +1867,84 @@ function fmtElapsed(ms: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-// The animated 44×24 switch track (§9) — animates transform, not left.
-function SwitchTrack({ on, accent }: { on: boolean; accent?: "cyan" }) {
+/**
+ * The idle monitor's shell: a card with the pointer-tracked glaze pool, a slow
+ * sweep on hover, and the logo turning behind it at a speed you only notice if
+ * you stare. Split out so the spotlight hook has its own element to write to.
+ */
+function MonitorCard({
+  tour,
+  children,
+}: {
+  tour?: string;
+  children: ReactNode;
+}) {
+  const spot = usePointerSpotlight<HTMLDivElement>();
+  return (
+    <div
+      ref={spot.ref}
+      data-tour={tour}
+      onPointerEnter={spot.onPointerEnter}
+      onPointerMove={spot.onPointerMove}
+      className="card spotlight sheen relative overflow-hidden p-6"
+    >
+      <motion.div
+        aria-hidden
+        className="pointer-events-none absolute -bottom-16 -right-14"
+        animate={{ rotate: 360 }}
+        transition={{ duration: 160, repeat: Infinity, ease: "linear" }}
+      >
+        <LogoMark className="h-[200px] w-[200px] text-primary/[0.045]" />
+      </motion.div>
+      {children}
+    </div>
+  );
+}
+
+// The language pair on the monitor — flag, name, and the target in brand. The
+// badge re-mounts on a language change (it is keyed by code), which is what
+// gives the flag its little pop when you pick a different language.
+function LangBadge({
+  flag,
+  label,
+  accent,
+}: {
+  flag: string;
+  label: string;
+  accent?: boolean;
+}) {
+  return (
+    <motion.span
+      initial={{ opacity: 0, scale: 0.9 }}
+      animate={{ opacity: 1, scale: 1 }}
+      transition={{ type: "spring", stiffness: 420, damping: 24 }}
+      className="inline-flex items-center gap-2"
+    >
+      <span
+        className={`grid h-9 w-9 place-items-center rounded-control text-lg ${
+          accent ? "bg-brand/12 ring-1 ring-brand/25" : "bg-sunken"
+        }`}
+        aria-hidden
+      >
+        {flag}
+      </span>
+      <span
+        className={`font-mono text-sm font-medium ${accent ? "text-brand" : "text-primary"}`}
+      >
+        {label}
+      </span>
+    </motion.span>
+  );
+}
+
+// The animated 44×24 switch track — animates transform, not left.
+function SwitchTrack({ on, accent }: { on: boolean; accent?: "magenta" }) {
   return (
     <span
-      className={`relative h-6 w-11 shrink-0 rounded-full transition-colors duration-200 ${
+      className={`relative h-6 w-11 shrink-0 rounded-full transition-colors duration-300 ${
         on
-          ? accent === "cyan"
-            ? "bg-cyan"
+          ? accent === "magenta"
+            ? "bg-magenta"
             : "bg-brand"
           : "bg-sunken shadow-[inset_0_0_0_1px_rgb(var(--c-border-strong))]"
       }`}
@@ -1087,12 +1958,22 @@ function SwitchTrack({ on, accent }: { on: boolean; accent?: "cyan" }) {
   );
 }
 
-// Circular ring showing overall progress.
-function RingProgress({ value }: { value: number }) {
+// Circular ring showing overall progress. While the run is live a second,
+// fainter ring turns behind it, so a stage that takes a minute still looks
+// like something is happening at 0% movement.
+function RingProgress({ value, live }: { value: number; live?: boolean }) {
   const r = 18;
   const c = 2 * Math.PI * r;
   return (
     <div className="relative grid h-12 w-12 place-items-center">
+      {live && (
+        <motion.span
+          aria-hidden
+          className="absolute inset-0 rounded-full border-2 border-transparent border-t-brand/45"
+          animate={{ rotate: 360 }}
+          transition={{ duration: 2.4, repeat: Infinity, ease: "linear" }}
+        />
+      )}
       <svg viewBox="0 0 44 44" className="h-12 w-12 -rotate-90">
         <circle
           cx="22"
@@ -1111,63 +1992,23 @@ function RingProgress({ value }: { value: number }) {
           strokeWidth="3.5"
           strokeLinecap="round"
           strokeDasharray={c}
+          initial={false}
           animate={{ strokeDashoffset: c * (1 - value / 100) }}
-          transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
+          transition={{ duration: 0.6, ease: EASE_ENTRANCE }}
         />
       </svg>
       <span className="absolute font-mono text-[11px] font-medium text-primary">
-        {value}
+        <AnimatedNumber value={value} duration={500} />
       </span>
     </div>
   );
 }
 
-function StatusChip({
-  tint,
-  label,
-  value,
-}: {
-  tint: "brand" | "cyan" | "magenta" | "warn";
-  label: string;
-  value: string;
-}) {
-  const tintClass = {
-    brand: "text-brand",
-    cyan: "text-cyan",
-    magenta: "text-magenta",
-    warn: "text-warn",
-  }[tint];
-  return (
-    <motion.div variants={rise} className="card p-3">
-      <div className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted">
-        {label}
-      </div>
-      <div
-        className={`mt-0.5 truncate font-mono text-sm font-medium ${tintClass}`}
-      >
-        {value}
-      </div>
-    </motion.div>
-  );
-}
-
-// `01 SOURCE` — index in brand, word in muted, uppercase mono (§4).
-function GroupLabel({ n, title }: { n: string; title: string }) {
-  return (
-    <div className="flex items-center gap-2">
-      <span className="font-mono text-[10px] text-brand">{n}</span>
-      <span className="font-mono text-[10px] font-medium uppercase tracking-[0.12em] text-muted">
-        {title}
-      </span>
-    </div>
-  );
-}
-
-// `/ SECTION` marker (§4).
+// `/ SECTION` marker.
 function SectionMark({ children }: { children: ReactNode }) {
   return (
-    <span className="font-mono text-[10px] font-medium uppercase tracking-[0.12em] text-muted">
-      / {children}
+    <span className="text-[13px] font-semibold tracking-tight text-primary">
+      {children}
     </span>
   );
 }

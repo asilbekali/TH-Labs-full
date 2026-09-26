@@ -7,7 +7,7 @@
 // for us: window focus (query defaults), a charge or purchase
 // (usePaymentsInvalidation → CREDITS_CHANGED_EVENT), and sign-in/out (the
 // queries are keyed off `enabled`).
-import { createContext, useContext, useMemo } from 'react'
+import { createContext, useContext, useEffect, useMemo } from 'react'
 import type { ReactNode } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useAuth } from './auth'
@@ -67,26 +67,45 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   // own plan row, so the catalog is not on the critical path for those users.
   const plans = usePlans()
 
+  // Drop the previous account's billing data the moment the session ends.
+  //
+  // Disabling a query does NOT discard what it already fetched: TanStack keeps
+  // the last response under the same key, so after sign-out the top-bar pill
+  // went on showing that session's balance (60 credits on a free account), and
+  // the next person to sign in on this device would have seen it too until the
+  // first refetch landed. Only the account-scoped keys go — the plan catalog is
+  // public and worth keeping warm.
+  useEffect(() => {
+    if (signedIn) return
+    qc.removeQueries({ queryKey: qk.creditsAll() })
+    qc.removeQueries({ queryKey: qk.historyAll() })
+    qc.removeQueries({ queryKey: qk.subscription() })
+  }, [signedIn, qc])
+
   const value = useMemo<WalletContextValue>(() => {
-    const sub = subscription.data?.subscription
+    const sub = signedIn ? subscription.data?.subscription : null
     const active = sub?.status === 'ACTIVE'
     const plan: PlanId = active && sub?.plan?.tier ? TIER_TO_PLAN[sub.plan.tier] : 'free'
     const freeGrant =
       plans.data?.plans.find((p) => p.tier === 'FREE' && p.cycle === 'MONTHLY')?.creditsGranted ?? 0
     return {
-      balance: credits.data?.balance ?? 0,
+      // Belt and braces: even in the render that happens before the effect
+      // above runs, a signed-out visitor has no balance.
+      balance: signedIn ? (credits.data?.balance ?? 0) : 0,
       plan,
       planInfo: {
         id: plan,
         name: PLAN_NAMES[plan],
         creditsGranted: active ? (sub?.plan?.creditsGranted ?? 0) : freeGrant,
       },
-      loading: credits.isPending || subscription.isPending,
+      // A signed-out visitor is not "still loading" — those queries are off.
+      loading: signedIn && (credits.isPending || subscription.isPending),
       refresh: async () => {
         await qc.invalidateQueries({ queryKey: qk.payments() })
       },
     }
   }, [
+    signedIn,
     credits.data,
     credits.isPending,
     subscription.data,
