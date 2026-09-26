@@ -40,6 +40,26 @@ class Settings(BaseSettings):
     # own and deliberately does not grow one.
     landing_url: str = "https://th-labs.uz"
 
+    # ── Billing ───────────────────────────────────────────────────────────
+    # Base URL of the NestJS account API, INCLUDING its version prefix, e.g.
+    # "https://th-labs.uz/v1". When set, app/billing.py checks and charges
+    # credits server-side before a job runs, so the Studio's own credit gate
+    # cannot be bypassed by posting straight to /api/jobs.
+    #
+    # Empty disables enforcement, which is what local runs and the docker
+    # compose stack want — neither has an account API to ask. Set it on any
+    # deployment where the GPU costs real money (see deploy/modal).
+    account_api_url: str = ""
+
+    # How long to wait on that API before giving up. A dub is a minutes-long
+    # operation, so a slow billing call is worth waiting out; an unreachable
+    # one denies the job rather than granting free GPU time.
+    billing_timeout: float = 10.0
+
+    # Only used to phrase the 402 when a clip exceeds the free-dub allowance.
+    # The account API owns the real number; this just keeps the message honest.
+    free_dub_max_seconds: int = 120
+
     # CORS — browser origins allowed to call this API.
     # The deployed Studio is served by THIS app (main.py mounts frontend/dist),
     # so in production the calls are same-origin and never consult this list;

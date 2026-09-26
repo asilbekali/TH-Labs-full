@@ -1,0 +1,77 @@
+{
+  "title": "TH-Labs - One video. Every language. Still you.",
+  "fps": 30,
+  "width": 1920,
+  "height": 1080,
+  "reference": "Sleeko 4-act ad structure: Intro / Problem / Use Case / Call to Action",
+  "voice": "en-US-AndrewMultilingualNeural",
+  "brand": {
+    "canvas":  "#F0EEE6",
+    "surface": "#FAF9F5",
+    "ink":     "#1E1D1B",
+    "ink_soft":"#5B574F",
+    "ink_mute":"#8A8479",
+    "clay":    "#C15F3C",
+    "orange":  "#D97757",
+    "cactus":  "#4A8176",
+    "rose":    "#A6645B",
+    "charcoal":"#141413"
+  },
+  "shots": [
+    { "id": "S01", "act": "Intro",    "kind": "broll", "dur": 4.0,
+      "prompt": "cinematic medium shot of a young content creator sitting in a warm sunlit room, speaking directly to a camera on a tripod, soft window light, cream and beige interior, shallow depth of field, natural film grain, slow subtle push in",
+      "vo": "You made something worth watching." },
+
+    { "id": "S02", "act": "Intro",    "kind": "card", "dur": 3.4,
+      "card": "line_reveal",
+      "text": "You made something\nworth watching.",
+      "vo": null },
+
+    { "id": "S03", "act": "Problem",  "kind": "broll", "dur": 4.0,
+      "prompt": "close up of a person's hands holding a phone in a dim room, thumb swiping quickly past a video, screen glow on their face, bored expression, moody low key lighting, cinematic, slow motion",
+      "vo": "But most of the world can't understand a word of it." },
+
+    { "id": "S04", "act": "Problem",  "kind": "card", "dur": 4.2,
+      "card": "strike_swap",
+      "text": "Subtitles get scrolled past.",
+      "text2": "Dubbing hands you a stranger's voice.",
+      "vo": "Subtitles get scrolled past. And traditional dubbing replaces you, with a stranger's voice." },
+
+    { "id": "S05", "act": "Problem",  "kind": "broll", "dur": 3.6,
+      "prompt": "abstract macro shot of concentric sound ripples spreading across a warm cream paper surface, terracotta orange pigment blooming at the centre, slow motion, soft studio light, minimal, elegant",
+      "vo": "Your words survive. You don't." },
+
+    { "id": "S06", "act": "Use Case", "kind": "card", "dur": 5.0,
+      "card": "pipeline",
+      "text": "listen \u2192 translate \u2192 speak",
+      "vo": "TH-Labs listens to your video, translates what you said, and speaks it back in your own voice." },
+
+    { "id": "S07", "act": "Use Case", "kind": "broll", "dur": 4.0,
+      "prompt": "over the shoulder shot of a man at a wooden desk watching a video on a laptop, warm daylight from a window, cosy home office, cream walls, cinematic, shallow depth of field, gentle camera drift",
+      "vo": "Thirty languages." },
+
+    { "id": "S08", "act": "Use Case", "kind": "card", "dur": 5.6,
+      "card": "studio",
+      "text": "EN \u2192 UZ",
+      "vo": "The music and the room stay exactly where they were. Upload, pick a language, done." },
+
+    { "id": "S09", "act": "Use Case", "kind": "broll", "dur": 3.6,
+      "prompt": "slow orbit around a glowing globe built from fine warm orange light threads connecting cities, dark warm charcoal background, volumetric glow, elegant motion graphics, cinematic",
+      "vo": null },
+
+    { "id": "S10", "act": "Call to Action", "kind": "card", "dur": 4.4,
+      "card": "line_reveal",
+      "text": "One video.\nEvery language.\nStill you.",
+      "vo": "One video. Every language. Still you." },
+
+    { "id": "S11", "act": "Call to Action", "kind": "broll", "dur": 3.2,
+      "prompt": "macro shot of clay orange ink blooming and unfurling in creamy white liquid, extreme close up, slow motion, soft diffused light, abstract, elegant",
+      "vo": null },
+
+    { "id": "S12", "act": "Call to Action", "kind": "card", "dur": 4.0,
+      "card": "logo",
+      "text": "TH-Labs",
+      "text2": "Try it free",
+      "vo": "TH-Labs. Try it free." }
+  ]
+}
