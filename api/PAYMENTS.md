@@ -60,10 +60,10 @@ re-run `yarn prisma:seed` after editing them.
 |---|---|---|---|---|---|---|
 | FREE | — | $0 | 60 | 30 days | 1 | 60 |
 | PRO | WEEKLY | $6 | 300 | 7 days | 1 | **300** |
-| PRO | MONTHLY | $19 | 1 200 | 30 days | 1 | **1 200** |
+| PRO | MONTHLY | $19.50 | 1 200 | 30 days | 1 | **1 200** |
 | PRO | YEARLY | $199 | 1 200 | 30 days | 12 | **14 400** |
 | STUDIO | WEEKLY | $15 | 1 200 | 7 days | 1 | **1 200** |
-| STUDIO | MONTHLY | $49 | 4 800 | 30 days | 1 | **4 800** |
+| STUDIO | MONTHLY | $49.50 | 4 800 | 30 days | 1 | **4 800** |
 | STUDIO | YEARLY | $499 | 4 800 | 30 days | 12 | **57 600** |
 
 Set each Dodo product's price to match `priceCents`. Unlike the old Stripe
@@ -150,7 +150,7 @@ curl -s "$BASE/payments/checkout?tier=PRO&cycle=MONTHLY" \
   -H "Authorization: Bearer $TOKEN"
 # → { url: "https://test.checkout.dodopayments.com/session/cks_...", tier, cycle, ... }
 
-curl -s "$BASE/payments/checkout/credits?pack=pack_240" \
+curl -s "$BASE/payments/checkout/credits?pack=pack_500" \
   -H "Authorization: Bearer $TOKEN"
 # → { url, packId, credits, priceCents }
 ```
@@ -197,7 +197,7 @@ deleting a credit pack is SUPERADMIN alone.
 curl -s $BASE/admin/billing/overview -H "Authorization: Bearer $TOKEN"
 # → { provider, mode:"test"|"live", apiConfigured, webhookConfigured,
 #     plans:{ total, sellable, unconfigured:["PRO/MONTHLY", …] },
-#     creditPacks:{ total, active, unconfigured:["pack_240", …] },
+#     creditPacks:{ total, active, unconfigured:["pack_500", …] },
 #     links:{ live, test, mixed }, qualityCost, tariff }
 ```
 
@@ -261,7 +261,7 @@ later is covered without anyone remembering to opt in.
 
 ```
 16:51:59  super@gmail.com  SUPERADMIN  user.delete       user: audit-final@example.com  200
-16:51:58  super@gmail.com  SUPERADMIN  billing.pack.update  creditPack: pack_600        200
+16:51:58  super@gmail.com  SUPERADMIN  billing.pack.update  creditPack: pack_2000        200
 16:51:55  super@gmail.com  SUPERADMIN  user.role.change  user: audit-final@example.com  200
 ```
 

@@ -7,9 +7,10 @@
 // Gmail rate-limited us. Callers that genuinely need to know pass
 // `{ throwOnError: true }` and get the transport error back.
 //
-// There are exactly two automatic emails — community join and account signup.
-// Both are side effects of something the user did (see sendCommunityWelcome /
-// sendSignupWelcome); nothing here is triggered by an API call.
+// The automatic emails are community join, account signup, and the feedback
+// receipt. Each is a side effect of something the user did (see
+// sendCommunityWelcome / sendSignupWelcome / sendFeedbackReceipt); nothing here
+// is triggered by an API call.
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as nodemailer from 'nodemailer';
@@ -17,6 +18,7 @@ import type { Transporter } from 'nodemailer';
 
 import {
   communityWelcomeTemplate,
+  feedbackReceiptTemplate,
   renderEmail,
   renderText,
   signupWelcomeTemplate,
@@ -149,7 +151,7 @@ export class MailService implements OnModuleInit {
   }
 
   // ── The automatic emails ─────────────────────────────────────────────────
-  // Callers fire these and move on: both swallow their own failures, so a
+  // Callers fire these and move on: each swallows its own failures, so a
   // bounced email can never turn a successful signup into a 500.
 
   /** Someone joined the community from the landing page. */
@@ -167,6 +169,15 @@ export class MailService implements OnModuleInit {
       email,
       subject: `▶ Insert coin — your TH Labs account is ready, ${name}`,
       ...signupWelcomeTemplate(name, this.appUrl),
+    });
+  }
+
+  /** Someone left feedback from inside the app. */
+  sendFeedbackReceipt(email: string, name: string): Promise<SendMailResult> {
+    return this.sendMail({
+      email,
+      subject: `▶ Message received — thanks, ${name}`,
+      ...feedbackReceiptTemplate(name, this.appUrl),
     });
   }
 

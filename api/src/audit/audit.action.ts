@@ -206,6 +206,31 @@ const RULES: ActionRule[] = [
     action: 'community.join',
     summary: 'Joined the community list',
   },
+
+  // ── Feedback ────────────────────────────────────────────────────────────
+  // The POST is anonymous-or-not, so its row usually has no actor — that is
+  // correct and is what makes the feed show feedback arriving as an event
+  // rather than as something an admin did.
+  {
+    method: 'POST',
+    pattern: '/feedback',
+    action: 'feedback.create',
+    summary: 'Left feedback',
+  },
+  {
+    method: 'PATCH',
+    pattern: '/feedback/:id',
+    action: 'feedback.triage',
+    summary: 'Triaged the feedback from :target',
+    target: (p) => ({ type: 'feedback', id: p.id }),
+  },
+  {
+    method: 'DELETE',
+    pattern: '/feedback/:id',
+    action: 'feedback.delete',
+    summary: 'Deleted the feedback from :target',
+    target: (p) => ({ type: 'feedback', id: p.id }),
+  },
 ];
 
 export interface ResolvedAction {

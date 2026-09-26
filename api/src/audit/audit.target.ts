@@ -101,6 +101,10 @@ export class AuditTargetResolver {
       }
       case 'creditPack':
         return str(record.slug);
+      case 'feedback':
+        // The sender, not the subject: "the feedback from ada@example.com"
+        // identifies a message in a way a truncated subject line does not.
+        return str(record.email) ?? str(record.name);
       case 'language':
         return str(record.name) ?? str(record.code);
       default:
@@ -112,8 +116,8 @@ export class AuditTargetResolver {
   private async fromDatabase(target: AuditTarget): Promise<string | null> {
     const { type, id } = target;
 
-    // User, Admin and Language are keyed by int; a non-numeric id on those is
-    // a malformed request, not a lookup worth making.
+    // User, Admin, Language and Feedback are keyed by int; a non-numeric id on
+    // those is a malformed request, not a lookup worth making.
     const numeric = Number(id);
     const isNumeric = Number.isInteger(numeric);
 
@@ -155,6 +159,14 @@ export class AuditTargetResolver {
           select: { slug: true },
         });
         return pack?.slug ?? null;
+      }
+      case 'feedback': {
+        if (!isNumeric) return null;
+        const entry = await this.prisma.feedback.findUnique({
+          where: { id: numeric },
+          select: { email: true },
+        });
+        return entry?.email ?? null;
       }
       default:
         return null;
