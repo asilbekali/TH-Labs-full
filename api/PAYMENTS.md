@@ -150,7 +150,7 @@ curl -s "$BASE/payments/checkout?tier=PRO&cycle=MONTHLY" \
   -H "Authorization: Bearer $TOKEN"
 # → { url: "https://test.checkout.dodopayments.com/session/cks_...", tier, cycle, ... }
 
-curl -s "$BASE/payments/checkout/credits?pack=pack_240" \
+curl -s "$BASE/payments/checkout/credits?pack=pack_500" \
   -H "Authorization: Bearer $TOKEN"
 # → { url, packId, credits, priceCents }
 ```
@@ -197,7 +197,7 @@ deleting a credit pack is SUPERADMIN alone.
 curl -s $BASE/admin/billing/overview -H "Authorization: Bearer $TOKEN"
 # → { provider, mode:"test"|"live", apiConfigured, webhookConfigured,
 #     plans:{ total, sellable, unconfigured:["PRO/MONTHLY", …] },
-#     creditPacks:{ total, active, unconfigured:["pack_240", …] },
+#     creditPacks:{ total, active, unconfigured:["pack_500", …] },
 #     links:{ live, test, mixed }, qualityCost, tariff }
 ```
 
@@ -261,7 +261,7 @@ later is covered without anyone remembering to opt in.
 
 ```
 16:51:59  super@gmail.com  SUPERADMIN  user.delete       user: audit-final@example.com  200
-16:51:58  super@gmail.com  SUPERADMIN  billing.pack.update  creditPack: pack_600        200
+16:51:58  super@gmail.com  SUPERADMIN  billing.pack.update  creditPack: pack_2000        200
 16:51:55  super@gmail.com  SUPERADMIN  user.role.change  user: audit-final@example.com  200
 ```
 

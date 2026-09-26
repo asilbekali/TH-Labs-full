@@ -12,6 +12,7 @@ import { UsersModule } from './users/users.module';
 import { AuthModule } from './auth/auth.module';
 import { AdminModule } from './admin/admin.module';
 import { CommunityModule } from './community/community.module';
+import { FeedbackModule } from './feedback/feedback.module';
 import { PaymentModule } from './payment/payment.module';
 import { LanguagesModule } from './languages/languages.module';
 import { HealthModule } from './health/health.module';
@@ -35,6 +36,7 @@ import { AuditModule } from './audit/audit.module';
     AuditModule,
     AdminModule,
     CommunityModule,
+    FeedbackModule,
     PaymentModule,
     LanguagesModule,
     HealthModule,

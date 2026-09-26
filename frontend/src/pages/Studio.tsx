@@ -19,6 +19,7 @@ import type { ReactNode } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import Uploader from "../components/Uploader";
+import LinkInput, { readLink } from "../components/LinkInput";
 import LanguageSelect from "../components/LanguageSelect";
 import OptionToggle from "../components/OptionToggle";
 import StageTimeline from "../components/StageTimeline";
@@ -85,6 +86,15 @@ type StepId = "source" | "languages" | "options" | "quality";
 
 // Best-effort source length for the credit gate. Sample clips are short (within
 // the free-dub cap); for a real upload we read the media's metadata duration.
+/** The host of a URL, for a one-line summary. Never throws on odd input. */
+function safeHost(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return "link";
+  }
+}
+
 async function probeDurationSeconds(file: File | null): Promise<number> {
   if (!file) return 60;
   return new Promise((resolve) => {
@@ -124,6 +134,15 @@ export default function Studio() {
   const commit = useCommitDub();
 
   const [file, setFile] = useState<File | null>(null);
+  // Paste-a-link, the second way in. Kept as its own piece of state rather than
+  // a variant of `file` because the two are genuinely different requests: an
+  // upload streams bytes from the browser, a link is fetched by the server.
+  const [sourceUrl, setSourceUrl] = useState("");
+  // Which source the Start button will actually use. Three sources are possible
+  // (upload, link, sample) and exactly one can win, so the choice is explicit
+  // state rather than something inferred from which fields happen to be filled —
+  // inferring it is how you get a request carrying both, which the API rejects.
+  const [sourceMode, setSourceMode] = useState<"upload" | "link">("upload");
   // Upload-first: the sample clip is a real backend feature, but defaulting to
   // it made the Studio open in a demo-ish state.
   const [useSample, setUseSample] = useState(false);
@@ -147,6 +166,14 @@ export default function Studio() {
     if (file) setUseSample(false);
   }, [file]);
 
+  // One source at a time, enforced in one place. Switching the tab drops what
+  // the other tab held, so there is never a stale file sitting behind a pasted
+  // link waiting to be sent instead of it.
+  useEffect(() => {
+    if (sourceMode === "upload") setSourceUrl("");
+    else setFile(null);
+  }, [sourceMode]);
+
   // Preset handoff from the Home launchpad (01): a quick-start card or a
   // template passes router state; apply it through the EXISTING setters only —
   // no new pipeline state is introduced here.
@@ -157,6 +184,8 @@ export default function Studio() {
       preset?: "video" | "podcast" | "voice";
       sourceLang?: string;
       targetLang?: string;
+      /** A URL already typed into the dashboard composer. */
+      link?: string;
       voiceClone?: boolean;
       lipSync?: boolean;
       keepBackground?: boolean;
@@ -170,6 +199,15 @@ export default function Studio() {
       setQuality("balanced");
     } else if (s.preset === "podcast" || s.preset === "voice") {
       setQuality("studio");
+    }
+    // A link pasted into the dashboard composer arrives already validated by
+    // the same readLink() this page's field uses, so it only has to be moved
+    // into state. Switching the tab is what makes it the source that wins —
+    // see the one-source-at-a-time effect above.
+    if (s.link) {
+      setSourceMode("link");
+      setSourceUrl(s.link);
+      setUseSample(false);
     }
     if (s.sourceLang) setSourceLang(s.sourceLang);
     if (s.targetLang) setTargetLang(s.targetLang);
@@ -241,10 +279,14 @@ export default function Studio() {
     });
   }, [job, overall, updateWork, sourceLang]);
 
-  const isSampleRun = useSample && !file;
+  // The vetted URL, or null when the box is empty or holds something that is not
+  // a usable link yet. Same verdict the field itself is displaying — derived
+  // once here so the Start button and the hint can never disagree.
+  const linkUrl = sourceMode === "link" ? readLink(sourceUrl).url : null;
+  const isSampleRun = useSample && !file && !linkUrl;
   const sampleLangNote = isSampleRun && !SAMPLE_LANGS.includes(targetLang);
   const cost = QUALITY_COST[quality] ?? 10;
-  const sourceReady = !!(file || isSampleRun);
+  const sourceReady = !!(file || linkUrl || isSampleRun);
   const canStart = sourceReady && !!targetLang;
 
   const lastWork = works[0];
@@ -253,6 +295,15 @@ export default function Studio() {
     setError(null);
     // Server-authoritative gate: the free dub, an active subscription, or enough
     // credits. Read-only — it charges nothing.
+    //
+    // A link has no duration to probe: the media is on someone else's server and
+    // the browser never sees it, so this falls back to the same default the
+    // sample clip uses. That means the pre-flight gate for a link job is an
+    // estimate — the server fetches the file, learns the real duration, and the
+    // actual charge is settled against that (see useCommitDub). A long video can
+    // therefore pass this check and still be refused once its length is known,
+    // which is the right way round: the alternative is charging for a duration
+    // nobody has measured.
     const durationSeconds = await probeDurationSeconds(
       isSampleRun ? null : file,
     );
@@ -290,6 +341,7 @@ export default function Studio() {
         quality,
         sample: isSampleRun,
         file: isSampleRun ? null : file,
+        source_url: linkUrl,
       });
       setJob(created);
       savedRef.current = created.id;
@@ -450,9 +502,13 @@ export default function Studio() {
 
   const sourceSummary = file
     ? `${file.name} · ${(file.size / 1_048_576).toFixed(1)} MB`
-    : isSampleRun
-      ? "Built-in sample clip"
-      : "Nothing chosen yet";
+    : linkUrl
+      ? // The host, not the whole URL: a YouTube watch URL is 43 characters of
+        // opaque id and would push everything else out of a one-line summary.
+        `Link · ${safeHost(linkUrl)}`
+      : isSampleRun
+        ? "Built-in sample clip"
+        : "Nothing chosen yet";
 
   // ── Onboarding walkthrough ───────────────────────────────────────────────
   const key = accountKey(user?.id);
@@ -615,14 +671,11 @@ export default function Studio() {
   const deckHeader = (
     <div className="flex items-end justify-between gap-3 px-1">
       <div className="min-w-0">
-        <span className="font-mono text-[10px] font-medium uppercase tracking-[0.16em] text-brand">
-          / 02 — Studio
-        </span>
-        <div className="mt-1 flex items-baseline gap-2">
-          <span className="font-mono text-[13px] font-medium text-primary">
+        <div className="flex items-baseline gap-2">
+          <span className="text-[15px] font-semibold tracking-tight text-primary">
             Set up your dub
           </span>
-          <span className="font-mono text-[11px] text-muted">
+          <span className="text-[12px] text-muted">
             <AnimatedNumber value={stepsDone} duration={350} />
             /4
           </span>
@@ -654,10 +707,10 @@ export default function Studio() {
         whileHover={{ y: -2 }}
         whileTap={tapScale}
         transition={{ type: "spring", stiffness: 400, damping: 26 }}
-        className={`focusable inline-flex shrink-0 items-center gap-1.5 rounded-pill border px-3 py-1.5 font-mono text-[11px] transition-colors ${
+        className={`focusable inline-flex shrink-0 items-center gap-1.5 rounded-pill border px-3 py-1.5 text-[12px] transition-colors ${
           tourSeen
-            ? "border-subtle text-muted hover:border-brand/40 hover:text-brand"
-            : "border-brand/40 bg-brand/[0.08] text-brand"
+            ? "border-subtle text-secondary hover:border-strong hover:text-primary"
+            : "border-strong bg-sunken text-primary"
         }`}
       >
         <svg
@@ -688,7 +741,55 @@ export default function Studio() {
         onToggle={() => toggleStep("source")}
         tour="tour-source"
       >
-        <Uploader file={file} onFile={setFile} disabled={running} />
+        {/* Two ways in, as tabs rather than two always-visible fields: only one
+            can be sent, and showing both filled-in invites the question of which
+            one wins. */}
+        <div
+          role="tablist"
+          aria-label="Where the video comes from"
+          className="flex gap-1 rounded-control bg-sunken p-1"
+        >
+          {(
+            [
+              { id: "upload", label: "Upload a file" },
+              { id: "link", label: "Paste a link" },
+            ] as const
+          ).map((tab) => {
+            const active = sourceMode === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                disabled={running}
+                onClick={() => setSourceMode(tab.id)}
+                className={`focusable relative flex-1 rounded-[calc(var(--radius-control)-2px)] px-3 py-2 font-mono text-xs transition-colors disabled:opacity-60 ${
+                  active ? "text-primary" : "text-muted hover:text-secondary"
+                }`}
+              >
+                {active && (
+                  <motion.span
+                    layoutId="source-tab"
+                    transition={{ type: "spring", stiffness: 380, damping: 32 }}
+                    className="absolute inset-0 rounded-[calc(var(--radius-control)-2px)] bg-surface shadow-sm dark:bg-raised"
+                  />
+                )}
+                <span className="relative">{tab.label}</span>
+              </button>
+            );
+          })}
+        </div>
+
+        {sourceMode === "upload" ? (
+          <Uploader file={file} onFile={setFile} disabled={running} />
+        ) : (
+          <LinkInput
+            value={sourceUrl}
+            onChange={setSourceUrl}
+            disabled={running}
+          />
+        )}
         <button
           type="button"
           role="switch"
@@ -697,7 +798,10 @@ export default function Studio() {
           onClick={() => {
             const next = !isSampleRun;
             setUseSample(next);
-            if (next) setFile(null);
+            if (next) {
+              setFile(null);
+              setSourceUrl("");
+            }
           }}
           className="focusable group flex w-full items-center justify-between gap-2.5 rounded-control border border-subtle bg-sunken px-3.5 py-3 text-left text-sm text-secondary transition-colors hover:border-brand/35 disabled:opacity-60"
         >
@@ -917,7 +1021,7 @@ export default function Studio() {
   // bands. Everything here is porcelain type on a fired ground — which is why
   // the card looks the same in both themes instead of inverting.
   const ctaBlock = (
-    <div data-tour="tour-run" className="deep-card aurora grain space-y-3 p-4">
+    <div data-tour="tour-run" className="deep-card grain space-y-3 p-4">
       {running && <span className="beam" aria-hidden />}
 
       <div className="above flex items-center justify-between gap-2">
@@ -1630,7 +1734,7 @@ export default function Studio() {
           data-tour="tour-run"
           className="fixed inset-x-3 bottom-[calc(env(safe-area-inset-bottom)+3.75rem)] z-30"
         >
-          <div className="deep-card aurora grain flex items-center gap-3 px-3.5 py-2.5">
+          <div className="deep-card grain flex items-center gap-3 px-3.5 py-2.5">
             {running && <span className="beam" aria-hidden />}
             <span className="above flex min-w-0 flex-col">
               <span className="font-mono text-[10px] uppercase tracking-[0.14em] on-deep-dim">
@@ -1824,8 +1928,8 @@ function RingProgress({ value, live }: { value: number; live?: boolean }) {
 // `/ SECTION` marker.
 function SectionMark({ children }: { children: ReactNode }) {
   return (
-    <span className="font-mono text-[10px] font-medium uppercase tracking-[0.13em] text-muted">
-      / {children}
+    <span className="text-[13px] font-semibold tracking-tight text-primary">
+      {children}
     </span>
   );
 }

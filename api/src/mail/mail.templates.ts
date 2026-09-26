@@ -247,8 +247,8 @@ export function renderText(options: TemplateOptions): string {
   return `${rule}\n  ${heading.toUpperCase()}\n${rule}\n\n${options.text}${cta}${footnote}\n\n-- ${BRAND.name} --`;
 }
 
-// ── The two automatic emails ──────────────────────────────────────────────
-// Both fire as a side effect of something the user did, never from an API call.
+// ── The automatic emails ──────────────────────────────────────────────────
+// Each fires as a side effect of something the user did, never from an API call.
 // Edit the words here; the shell above takes care of how they look.
 
 /** Sent when someone joins the community from the landing page. */
@@ -287,5 +287,27 @@ export function signupWelcomeTemplate(
     cta: { label: 'Open the Studio', url: `${appUrl.replace(/\/+$/, '')}/studio` },
     footnote:
       "If you didn't create this account, just reply to this email and we'll sort it out.",
+  };
+}
+
+/**
+ * Sent when someone leaves feedback from inside the app.
+ *
+ * Deliberately short and makes no promise about a reply date — the one thing a
+ * receipt has to do is prove the message was not swallowed by a form.
+ */
+export function feedbackReceiptTemplate(
+  name: string,
+  appUrl: string,
+): TemplateOptions {
+  return {
+    name,
+    heading: `Got it, ${name}`,
+    text:
+      `Your feedback landed — thank you. A real person on the team reads every one of these.\n\n` +
+      `If it was a bug, we may reply from this address to ask which clip and which ` +
+      `settings you used. If it was an idea, it goes on the list we actually build from.`,
+    cta: { label: 'Back to TH Labs', url: appUrl },
+    footnote: 'Reply to this email to add anything you forgot to mention.',
   };
 }

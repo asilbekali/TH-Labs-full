@@ -21,6 +21,76 @@ model Community {
   updatedAt DateTime @default(now()) @updatedAt
 }
 
+/// Product feedback left from inside the app (Home → Feedback section).
+///
+/// Sibling of `Community`: that one is "leave your email on the landing page",
+/// this one is "tell us what you think from inside the Studio". They are kept
+/// apart on purpose — a community row is a contact to email, a feedback row is
+/// a message to read and answer, and merging them would mean the admin panel
+/// could not tell a signup from a bug report.
+///
+/// `userId` is a nullable back-reference rather than a required relation: the
+/// section is reachable while signed out, and deleting an account must not
+/// delete what that person told us. `email` and `name` are copied in at write
+/// time for exactly the same reason the audit log denormalises its actor — the
+/// message has to stay attributable after the account is gone.
+model Feedback {
+  id      Int     @id @default(autoincrement())
+  /// Set when the sender was signed in; null for an anonymous submission.
+  userId  Int?
+  user    User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+  /// Snapshot of who sent it. Kept even when `userId` is nulled by a deletion.
+  name    String
+  email   String
+  /// Optional one-line subject. The message is the part that matters.
+  subject String?
+  message String
+
+  /// What kind of message this is, so the panel can triage a crash report
+  /// ahead of a feature wish instead of reading a single undifferentiated
+  /// inbox.
+  kind   FeedbackKind   @default(GENERAL)
+  /// 1-5 when the sender rated us, null when they only wrote prose. Not a
+  /// required field: demanding a star rating to file a bug report is how you
+  /// stop getting bug reports.
+  rating Int?
+
+  /// Triage state, moved by an ADMIN from the panel. Nothing is ever deleted
+  /// as part of normal triage — `RESOLVED` is the end state, and delete is a
+  /// SUPERADMIN-only correction for spam.
+  status FeedbackStatus @default(NEW)
+  /// Private staff note. Never shown to the sender; the panel labels it so.
+  adminNote String?
+
+  /// Where it was sent from (`/`, `/studio`) and the browser that sent it.
+  /// Diagnostics for a bug report, not analytics — one line each.
+  pagePath  String?
+  userAgent String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  @@index([status, createdAt])
+  @@index([kind, createdAt])
+  @@index([userId])
+}
+
+enum FeedbackKind {
+  GENERAL
+  BUG
+  FEATURE
+  PRICING
+  QUALITY
+}
+
+enum FeedbackStatus {
+  NEW
+  READ
+  IN_PROGRESS
+  RESOLVED
+  SPAM
+}
+
 model User {
   id       Int    @id @default(autoincrement())
   email    String @unique
@@ -37,6 +107,7 @@ model User {
 
   subscriptions Subscription[]
   payments      Payment[]
+  feedback      Feedback[]
   creditEntries CreditEntry[]
   refreshTokens RefreshToken[]
   handoffCodes  HandoffCode[]

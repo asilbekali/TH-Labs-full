@@ -94,6 +94,15 @@ export interface CreateJobInput {
   quality?: string
   sample?: boolean
   file?: File | null
+  /**
+   * A public video link to dub instead of an upload (YouTube, Vimeo, TikTok, or
+   * a direct .mp4). The server fetches it — see backend/app/pipeline/fetch.py,
+   * which vets the URL and enforces the size/duration caps.
+   *
+   * Mutually exclusive with `file`: sending both is a 400, on purpose, because
+   * silently picking one is how someone dubs the wrong video.
+   */
+  source_url?: string | null
 }
 
 /**
@@ -117,12 +126,27 @@ export async function createJob(input: CreateJobInput): Promise<Job> {
   fd.append('quality', input.quality ?? 'balanced')
   fd.append('sample', String(input.sample ?? false))
   if (input.file) fd.append('file', input.file)
+  // Only ever one source on the request. The server rejects both together, so
+  // the guard here is what keeps that 400 unreachable from the UI.
+  else if (input.source_url) fd.append('source_url', input.source_url)
 
   const r = await authFetchUrl(`${BASE}/jobs`, { method: 'POST', body: fd })
   if (r.status === 401) throw new AuthRequiredError()
   if (!r.ok) {
-    const msg = await r.text().catch(() => '')
-    throw new Error(`job creation failed: ${r.status} ${msg}`)
+    // A 400 from a link job carries a sentence written for the person who
+    // pasted it ("that video is private", "that's a live stream"), in FastAPI's
+    // `{detail: "…"}`. Showing `job creation failed: 400 {"detail":…}` instead
+    // throws away the only part of the response that tells them what to do.
+    const raw = await r.text().catch(() => '')
+    let detail = ''
+    try {
+      const parsed = JSON.parse(raw)
+      if (typeof parsed?.detail === 'string') detail = parsed.detail
+    } catch {
+      /* not JSON — fall through to the raw body */
+    }
+    if (detail) throw new Error(detail)
+    throw new Error(`job creation failed: ${r.status} ${raw}`)
   }
   return (await r.json()).job
 }

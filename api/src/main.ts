@@ -8,6 +8,7 @@ import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 
 import { AppModule } from './app.module';
+import { PrismaExceptionFilter } from './common/filters/prisma-exception.filter';
 import { API_NAME, API_VERSION } from './version';
 
 // Browser origins allowed to call this API directly. The Studio needs it to
@@ -44,6 +45,19 @@ function corsOrigins(): string[] {
   return [...new Set(appUrl ? [appUrl, ...configured] : configured)];
 }
 
+/** `postgresql://user:***@host/db` — enough to identify the database, no secret. */
+function maskDbUrl(raw: string): string {
+  if (!raw) return '(not set)';
+  try {
+    const u = new URL(raw);
+    if (u.password) u.password = '***';
+    u.search = '';
+    return u.toString();
+  } catch {
+    return '(set)';
+  }
+}
+
 async function bootstrap() {
   // rawBody: true keeps the untouched request buffer on `req.rawBody`, which the
   // Dodo Payments webhook needs — the Standard Webhooks signature covers the
@@ -53,7 +67,10 @@ async function bootstrap() {
 
   const PORT = Number(process.env.PORT) || 3001;
   const HOST = process.env.HOST || 'localhost';
-  const DB_URL = process.env.DATABASE_URL || '';
+  // Printed in the boot banner below, so the password and the host credentials
+  // are masked out first: this line lands in container logs, CI output and
+  // screenshots, and a Postgres URL carries a live password in the clear.
+  const DB_URL = maskDbUrl(process.env.DATABASE_URL || '');
 
   // Parse the httpOnly refresh cookie into req.cookies for the auth routes.
   app.use(cookieParser());
@@ -81,6 +98,12 @@ async function bootstrap() {
       forbidNonWhitelisted: true,
     }),
   );
+
+  // Prisma errors become HTTP answers rather than bare 500s — a duplicate is a
+  // 409, a missing row a 404, and a database that has not caught up with the
+  // schema (an unapplied migration) a 503 that says so. The Prisma message
+  // itself, which names tables and columns, stays in the server log.
+  app.useGlobalFilters(new PrismaExceptionFilter());
 
   // API Versioning
   app.enableVersioning({

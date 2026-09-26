@@ -51,10 +51,9 @@ export interface AppEnv {
   DODO_PRODUCT_STUDIO_YEARLY?: string;
 
   // One-time credit packs (see src/payment/credit-packs.ts).
-  DODO_PRODUCT_PACK_120?: string;
-  DODO_PRODUCT_PACK_240?: string;
-  DODO_PRODUCT_PACK_600?: string;
-  DODO_PRODUCT_PACK_1500?: string;
+  DODO_PRODUCT_PACK_100?: string;
+  DODO_PRODUCT_PACK_500?: string;
+  DODO_PRODUCT_PACK_2000?: string;
 
   // ── Audit log ────────────────────────────────────────────────────────────
   /** 'true' records GET reads as well as mutations. A lot of rows. */
@@ -137,10 +136,9 @@ export function validateEnv(config: RawEnv): AppEnv {
     DODO_PRODUCT_STUDIO_MONTHLY: config.DODO_PRODUCT_STUDIO_MONTHLY,
     DODO_PRODUCT_STUDIO_YEARLY: config.DODO_PRODUCT_STUDIO_YEARLY,
 
-    DODO_PRODUCT_PACK_120: config.DODO_PRODUCT_PACK_120,
-    DODO_PRODUCT_PACK_240: config.DODO_PRODUCT_PACK_240,
-    DODO_PRODUCT_PACK_600: config.DODO_PRODUCT_PACK_600,
-    DODO_PRODUCT_PACK_1500: config.DODO_PRODUCT_PACK_1500,
+    DODO_PRODUCT_PACK_100: config.DODO_PRODUCT_PACK_100,
+    DODO_PRODUCT_PACK_500: config.DODO_PRODUCT_PACK_500,
+    DODO_PRODUCT_PACK_2000: config.DODO_PRODUCT_PACK_2000,
 
     AUDIT_LOG_READS: config.AUDIT_LOG_READS?.trim() === 'true',
     AUDIT_LOG_RETENTION_DAYS: toInt(config.AUDIT_LOG_RETENTION_DAYS, 90),

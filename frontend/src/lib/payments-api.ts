@@ -111,15 +111,13 @@ export interface CreditCheckoutResponse {
 
 const DEFAULT_CREDIT_PACKS: Omit<CreditPacksResponse, 'fromServer'> = {
   packs: [
-    { id: 'pack_120', credits: 120, priceCents: 699, currency: 'usd' },
-    { id: 'pack_240', credits: 240, priceCents: 1345, currency: 'usd', popular: true },
-    { id: 'pack_600', credits: 600, priceCents: 3190, currency: 'usd' },
-    { id: 'pack_1500', credits: 1500, priceCents: 7450, currency: 'usd' },
+    { id: 'pack_100', credits: 100, priceCents: 119, currency: 'usd' },
+    { id: 'pack_500', credits: 500, priceCents: 499, currency: 'usd', popular: true },
+    { id: 'pack_2000', credits: 2000, priceCents: 1799, currency: 'usd' },
   ],
-  // 53 credits a minute at Balanced: a 4½-minute clip lands on the 240-credit
-  // pack from both directions — the estimator rounds 238.5 up to 240, and the
-  // 240 pack advertises ≈4.5 minutes back.
-  creditsPerMinute: 53,
+  // 20 credits a minute at Balanced, so each pack is a round number of minutes
+  // in both directions: 100 → 5 min, 500 → 25 min, 2000 → 100 min.
+  creditsPerMinute: 20,
   qualityMultiplier: { fast: 0.5, balanced: 1, studio: 2 },
 }
 
