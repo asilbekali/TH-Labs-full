@@ -77,7 +77,7 @@ Stop, keeping data:
 docker compose down
 ```
 
-Stop and **destroy the database volume** — every user, waitlist entry, and
+Stop and **destroy the database volume** — every user, community entry, feedback message, and
 admin goes with it:
 
 ```bash

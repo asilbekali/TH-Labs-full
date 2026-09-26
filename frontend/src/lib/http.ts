@@ -7,9 +7,11 @@
 // silent refresh, then retry the original request once; if that fails we clear
 // auth state and let the app fall back to signed-out.
 //
-// In dev the base defaults to the Vite proxy ('/v1' → :3001). VITE_ACCOUNT_API
-// overrides it (e.g. http://localhost:3001/v1) — .env.local wins over .env, so
-// the local override reliably beats the production default baked into auth-api.
+// In dev the base stays relative and vite.config.ts proxies '/v1' to
+// https://th-labs.uz — so the dev server talks to the REAL account API, not to
+// anything local. VITE_ACCOUNT_API overrides the base outright; .env.production
+// sets it to the absolute URL for builds, and .env.local beats both if you do
+// want to point at a NestJS running on your own machine.
 const BASE: string = import.meta.env.VITE_ACCOUNT_API ?? '/v1'
 
 // The relative fallback is correct ONLY in dev, where vite.config.ts proxies

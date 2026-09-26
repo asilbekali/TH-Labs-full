@@ -41,14 +41,15 @@ REMOTE = "/app"                                  # where the repo lands in the i
 LANDING_URL = "https://th-labs.uz"
 ACCOUNT_API_URL = f"{LANDING_URL}/v1"
 
-# Test-mode publishable key for acct_1U0Ew9PGGmaP3PKr. Safe in source control:
-# publishable keys carry no authority on their own and ship to every browser
-# that loads the Studio. The SECRET key is not here and never should be -- it
-# lives only in /srv/th-labs/.env on the account API's server.
-STRIPE_PUBLISHABLE_KEY = (
-    "pk_test_51U0Ew9PGGmaP3PKrU9sTBZ5KQwI1fEwFG7Qrok"
-    "IgFBIyDO4ldLzOpavje8f20fcT55XIqgfepML8c8gkOcD7EVOf00TvImMqvQ"
-)
+# Payments need NO build-time configuration here.
+#
+# Checkout is a redirect to a Dodo-hosted page, so the Studio ships no payment
+# SDK and there is no publishable key to inline. Whether payments are
+# configured, and whether they are in test or live mode, is reported by the
+# account API on GET /v1/payments/plans -- see the DODO_* variables in
+# deploy/server/.env.example. This used to carry VITE_STRIPE_PUBLISHABLE_KEY,
+# and a Studio deployed without that line disabled checkout no matter how
+# correct the server side was; nothing here can break payments any more.
 
 # Shared HS256 signing secret, holding one key: TH_LABS_JWT_SECRET, byte-equal
 # to JWT_SECRET on the account API. Create it once with:
@@ -232,21 +233,6 @@ image = (
         # needs somewhere to send a signed-out visitor and this is the value
         # it would use. Grep before relying on it.
         "VITE_LANDING_URL": LANDING_URL,
-
-        # Publishable key — public by design, and already visible in the JS
-        # bundle, so it is checked in rather than kept as a secret.
-        #
-        # It is NOT used to load Stripe.js: checkout is a redirect to a
-        # Stripe-hosted Payment Link, so the app ships no Stripe bundle at all.
-        # frontend/src/lib/stripe.ts reads it purely as configuration -- unset,
-        # the Plans page disables checkout and says payments are not configured
-        # for this build, which is what a Studio deployed without this line
-        # does no matter how correct the server side is.
-        #
-        # The pk_test_ prefix also drives the "test mode" banner. Swapping to a
-        # pk_live_ key is what turns that banner off, and must happen in the
-        # same change as pointing the account API at live Payment Links.
-        "VITE_STRIPE_PUBLISHABLE_KEY": STRIPE_PUBLISHABLE_KEY,
     })
     # copy=True so the npm build below can see these files.
     .add_local_dir(

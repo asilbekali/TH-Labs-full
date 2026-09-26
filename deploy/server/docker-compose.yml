@@ -70,21 +70,30 @@ services:
       NODE_ENV: production
       PORT: "3000"
       HOST: ${PUBLIC_HOST:-aytingchi.uz}
-      # ── Stripe ────────────────────────────────────────────────────────────
-      # Without STRIPE_WEBHOOK_SECRET the webhook route answers 503 on every
-      # delivery, so a customer can pay and never receive credits — and the
-      # only trace is a log line. Required, not optional.
-      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:?set STRIPE_SECRET_KEY in .env}
-      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:?set STRIPE_WEBHOOK_SECRET in .env}
-      # Read by `prisma db seed` to fill Plan.stripeLinkUrl. The seed leaves an
-      # existing link alone when one of these is unset, so a partial .env
-      # degrades to "stale links" rather than "checkout 400s".
-      STRIPE_LINK_PRO_WEEKLY: ${STRIPE_LINK_PRO_WEEKLY:-}
-      STRIPE_LINK_PRO_MONTHLY: ${STRIPE_LINK_PRO_MONTHLY:-}
-      STRIPE_LINK_PRO_YEARLY: ${STRIPE_LINK_PRO_YEARLY:-}
-      STRIPE_LINK_STUDIO_WEEKLY: ${STRIPE_LINK_STUDIO_WEEKLY:-}
-      STRIPE_LINK_STUDIO_MONTHLY: ${STRIPE_LINK_STUDIO_MONTHLY:-}
-      STRIPE_LINK_STUDIO_YEARLY: ${STRIPE_LINK_STUDIO_YEARLY:-}
+      # ── Dodo Payments ─────────────────────────────────────────────────────
+      # Without DODO_WEBHOOK_SECRET the webhook route rejects every delivery,
+      # so a customer can pay and never receive credits — and the only trace
+      # is a log line. Required, not optional.
+      DODO_PAYMENTS_API_KEY: ${DODO_PAYMENTS_API_KEY:?set DODO_PAYMENTS_API_KEY in .env}
+      DODO_WEBHOOK_SECRET: ${DODO_WEBHOOK_SECRET:?set DODO_WEBHOOK_SECRET in .env}
+      # test_mode takes test cards only. A production box wants live_mode, but
+      # it is not forced here — a staging deploy is a legitimate test-mode one.
+      DODO_PAYMENTS_ENVIRONMENT: ${DODO_PAYMENTS_ENVIRONMENT:-test_mode}
+      # Read by `prisma db seed` to fill Plan.dodoProductId / dodoLinkUrl. Each
+      # takes a product id or a payment link. The seed leaves an existing
+      # product alone when one of these is unset, so a partial .env degrades to
+      # "stale products" rather than "checkout 400s".
+      DODO_PRODUCT_PRO_WEEKLY: ${DODO_PRODUCT_PRO_WEEKLY:-}
+      DODO_PRODUCT_PRO_MONTHLY: ${DODO_PRODUCT_PRO_MONTHLY:-}
+      DODO_PRODUCT_PRO_YEARLY: ${DODO_PRODUCT_PRO_YEARLY:-}
+      DODO_PRODUCT_STUDIO_WEEKLY: ${DODO_PRODUCT_STUDIO_WEEKLY:-}
+      DODO_PRODUCT_STUDIO_MONTHLY: ${DODO_PRODUCT_STUDIO_MONTHLY:-}
+      DODO_PRODUCT_STUDIO_YEARLY: ${DODO_PRODUCT_STUDIO_YEARLY:-}
+      # One-time credit packs. Optional: an unset one hides that pack's button.
+      DODO_PRODUCT_PACK_120: ${DODO_PRODUCT_PACK_120:-}
+      DODO_PRODUCT_PACK_240: ${DODO_PRODUCT_PACK_240:-}
+      DODO_PRODUCT_PACK_600: ${DODO_PRODUCT_PACK_600:-}
+      DODO_PRODUCT_PACK_1500: ${DODO_PRODUCT_PACK_1500:-}
       FREE_DUB_MAX_SECONDS: ${FREE_DUB_MAX_SECONDS:-120}
       # Always allowed through CORS on top of the built-in list, and what
       # decides the refresh cookie's Secure/SameSite pair (api/src/auth).

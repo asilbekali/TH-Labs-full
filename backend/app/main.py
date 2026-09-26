@@ -4,7 +4,7 @@ Endpoints
     GET  /api/health            → mode + per-stage engine status      (public)
     GET  /api/languages         → supported languages                 (public)
     GET  /api/session           → who the bearer token belongs to     (auth)
-    POST /api/jobs              → create a dubbing job (upload or ?sample=1)
+    POST /api/jobs              → create a dubbing job (upload, source_url, or sample=1)
     GET  /api/jobs/{id}         → job snapshot                        (auth, owner)
     GET  /api/jobs/{id}/events  → SSE live pipeline progress          (auth, owner)
     /media/...                  → served source & dubbed media
@@ -24,6 +24,7 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
 
 from . import __version__, billing, languages
 from .auth import StudioUser, require_user, require_user_sse
@@ -121,10 +122,23 @@ async def create_job(
     quality: Quality = Form(Quality.balanced),
     sample: bool = Form(False),
     file: UploadFile | None = File(None),
+    source_url: str | None = Form(None),
     user: StudioUser = Depends(require_user),
 ) -> dict:
+    """Create a dubbing job from an upload, a pasted link, or the sample clip.
+
+    The three sources are mutually exclusive and resolved in that order of
+    precedence — a request carrying both a file and a `source_url` is a client
+    bug, and picking one silently is how the user ends up dubbing the wrong
+    thing, so it is a 400.
+    """
     if not languages.get(target_lang):
         raise HTTPException(400, f"Unsupported target language: {target_lang}")
+
+    source_url = (source_url or "").strip() or None
+    if file is not None and source_url:
+        raise HTTPException(
+            400, "Send either a file or a source_url, not both.")
 
     options = DubOptions(
         source_lang=source_lang, target_lang=target_lang,
@@ -136,7 +150,26 @@ async def create_job(
     filename: str | None = None
     force_simulate = False
 
-    if sample or file is None:
+    if source_url and not sample:
+        # Fetch the link to disk first, then run the normal pipeline on it —
+        # from here down a link job is indistinguishable from an upload. The
+        # fetcher vets the URL (scheme, public address, size, duration) and
+        # raises SourceFetchError with a message written for the user, which is
+        # passed through verbatim: "that video is private" is actionable in a
+        # way "400 Bad Request" is not.
+        #
+        # Off the event loop: download_source is blocking socket I/O and can run
+        # for minutes on a large video. Called inline in this async handler it
+        # would freeze every other request — health checks, SSE progress streams
+        # for jobs already running — for the whole download.
+        try:
+            input_video, title = await run_in_threadpool(
+                fetch.download_source,
+                source_url, settings.uploads_dir, f"link_{_safe_id()}")
+        except fetch.SourceFetchError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        filename = title
+    elif sample or file is None:
         # self-contained sample clip (generated once via ffmpeg). It carries no
         # real speech, so the pipeline runs the canned scenario end-to-end.
         sample_path = settings.assets_dir / "sample_source.mp4"

@@ -2,8 +2,9 @@
 
 Two products, two repos, two hosts, one account system.
 
-* **The landing page** (`ProLend` repo, Next.js) — the doorway. Marketing, waitlist,
-  sign-up, sign-in. Runs in Docker on the VPS behind Caddy at `th-labs.uz` /
+* **The landing page** (`ProLend` repo, Next.js) — the doorway. Marketing, the
+  community signup form (`POST /v1/community` — the table formerly called
+  `Waitlist`), sign-up, sign-in. Runs in Docker on the VPS behind Caddy at `th-labs.uz` /
   `aytingchi.uz`.
 * **The account API** (`api/`, NestJS + PostgreSQL) — the only thing that owns
   users, sessions, credits and money. Same VPS, same Caddy, published at `/v1`.
@@ -39,7 +40,7 @@ flowchart TB
         VOL[("Volume: media<br/>/data")]
     end
 
-    STRIPE["Stripe"]
+    DODO["Dodo Payments"]
 
     L -->|"HTTPS"| CADDY
     S -->|"HTTPS /api, /media<br/>(same origin)"| FAST
@@ -51,8 +52,8 @@ flowchart TB
     API --> DB
     FAST --- VOL
 
-    STRIPE -->|"webhook POST /v1/payments/webhook"| CADDY
-    API -->|"Payment Links"| STRIPE
+    DODO -->|"webhook POST /v1/payments/webhook"| CADDY
+    API -->|"checkout sessions"| DODO
 ```
 
 **Routing rules** (`deploy/server/aytingchi.caddy`, longest match wins):
@@ -253,46 +254,135 @@ what `can-dub` and `commit-dub` enforce.
 
 ```mermaid
 flowchart LR
-    P["GET /v1/payments/checkout"] --> SL["Stripe Payment Link"]
+    P["GET /v1/payments/checkout"] --> SL["Dodo hosted checkout"]
     SL --> PAY["user pays"]
     PAY --> WH["POST /v1/payments/webhook"]
     WH --> V{"signature<br/>verified?"}
     V -->|no| R400["400, never processed"]
-    V -->|yes| ID{"stripeEventId<br/>already seen?"}
+    V -->|yes| ID{"webhook-id<br/>already seen?"}
     ID -->|yes| DUP["ignored as duplicate"]
     ID -->|no| D["dispatch → grant credits,<br/>update subscription"]
     CRON["hourly cron"] --> G["grant due subscriptions<br/>every plan.grantDays"]
 ```
 
-**Stripe lives entirely on the account API.** Neither `backend/` nor
-`deploy/modal/` contains a single Stripe reference — the Studio only calls
-`/v1/payments/*` and follows the URL it is handed. Configuring Stripe on Modal
+**Payments live entirely on the account API.** Neither `backend/` nor
+`deploy/modal/` contains a single Dodo reference — the Studio only calls
+`/v1/payments/*` and follows the URL it is handed. Configuring Dodo on Modal
 does nothing.
 
-* **Missing Stripe config fails quiet.** The API boots without it and still
+* **Missing payment config fails quiet.** The API boots without it and still
   serves `/payments/plans`, so the Plans page looks healthy. But
-  `STRIPE_WEBHOOK_SECRET` absent means `constructEvent` throws before any
+  `DODO_WEBHOOK_SECRET` absent means `constructEvent` throws before any
   dispatch — and webhooks are the only thing that grants credits, so a user pays
-  and receives nothing. `STRIPE_LINK_*` absent means `seed.ts` writes
-  `stripeLinkUrl: null` and `/payments/checkout` 400s before the user even
-  reaches Stripe. Both must be passed through `deploy/server/docker-compose.yml`
-  to reach the container; see `deploy/server/README.md` § 6.
-* **`client_reference_id` is how a payment finds its user.** `getCheckoutUrl`
-  appends it to the Payment Link; the webhook reads it back. An event without it
-  is logged and ignored.
-* **Idempotency is a unique constraint**, not an `if` — `WebhookEvent.stripeEventId`.
-  That is what makes Stripe's retries safe. If dispatch throws, the marker is
-  deleted so the retry reprocesses it.
-* **The hourly cron is what makes yearly plans drip.** Stripe bills once; credits
+  and receives nothing. `DODO_PRODUCT_*` absent means `seed.ts` writes
+  `dodoProductId: null` and `/payments/checkout` 400s before the user even
+  reaches Dodo. Both must be passed through `deploy/server/docker-compose.yml`
+  to reach the container; see `deploy/server/README.md` § 6. The API reports
+  both states on `/payments/plans` (`checkout`) so the UI can say so out loud
+  rather than offering a button that fails.
+* **Checkout metadata is how a payment finds its user.** `getCheckoutUrl` opens
+  a Dodo checkout session stamped with `th_user_id` / `th_plan_id`; the webhook
+  reads them back. On the static-link fallback that metadata is a query
+  parameter the customer could edit, so the handler cross-checks it against the
+  email that actually paid and credits the payer on a mismatch. An event with
+  neither is logged and ignored.
+* **Idempotency is a unique constraint**, not an `if` — `WebhookEvent.eventId`,
+  the Standard Webhooks `webhook-id`. That is what makes Dodo's retries safe. If
+  dispatch throws, the marker is deleted so the retry reprocesses it. A second
+  layer guards the money itself: `Payment.dodoPaymentId` is unique and the grant
+  rides in the same transaction.
+* **Only `payment.succeeded` grants credits.** It is the one event that means
+  money moved, and it fires for the first charge and every renewal alike. The
+  `subscription.*` events only sync state, so an authorised mandate whose charge
+  later fails cannot hand out a month of credits.
+* **The hourly cron is what makes yearly plans drip.** Dodo bills once; credits
   are handed out every `plan.grantDays`. Without it a user could buy a year, burn
   24 000 credits in a week, and cancel.
-* Handled events: `checkout.session.completed`, `invoice.paid`,
-  `invoice.payment_succeeded`, `invoice.payment_failed`,
-  `customer.subscription.updated`, `customer.subscription.deleted`.
 
-**Data model** (`api/prisma/schema.prisma`): `User`, `Admin`, `Waitlist`, `Plan`,
-`Subscription`, `Payment`, `CreditEntry`, `RefreshToken`, `HandoffCode`,
-`WebhookEvent`.
+**Data model** (`api/prisma/schema.prisma`): `User`, `Admin`, `Community`,
+`Feedback`, `Plan`, `CreditPack`, `Subscription`, `Payment`, `CreditEntry`,
+`RefreshToken`, `HandoffCode`, `Language`, `AuditLog`, `WebhookEvent`.
+
+`Community` is the old `Waitlist` table, renamed in place — the rows came along
+(`20260913120000_community_and_email_templates`). The route was renamed with it,
+so the landing page's signup form posts to **`POST /v1/community`**, and
+`/v1/wait-list` no longer exists. Note that **there has never been a
+`/api/waitlist`**: `/api` is the FastAPI dubbing pipeline, which serves jobs and
+media only, so any call there 404s regardless of the path.
+
+`Feedback` is its sibling and is deliberately a different table: `Community` is a
+contact list to email, `Feedback` is an inbox of messages to read and answer. See
+§5.1.
+
+### 5.1 Feedback — how a message gets from the app to staff
+
+The one place the product asks the user for something rather than showing them
+something. Three hops, no queue and no third-party form:
+
+```
+Home page (frontend/src/components/FeedbackSection.tsx)
+  → POST /v1/feedback                (api/src/feedback/*)
+      ├── row in `Feedback`, status NEW
+      ├── receipt email to the sender (MailService.sendFeedbackReceipt)
+      └── row in `AuditLog`, action `feedback.create`
+  → admin panel inbox                (GET /v1/feedback, see ADMIN_PANEL_BRIEF §4.6)
+```
+
+**How to use it, as a user.** Open the app's Home page and scroll to *Feedback*
+(the last section). Pick what kind of message it is — General, Something broke,
+Dub quality, Feature idea, or Pricing — write at least a sentence, and send. A
+star rating is offered and is optional. You do not need to be signed in; if you
+are, the message is stamped with your account so staff can see your dubs and
+credits while reading it. Either way a short confirmation email goes to the
+address you gave, and replying to that email reaches the same people.
+
+**How to use it, as staff.** The panel's Feedback screen lists newest first and
+defaults to unread. `newCount` on the list response is the unread total across
+the whole table, for the nav badge. Triage moves `status`
+(`NEW → READ → IN_PROGRESS → RESOLVED`, or `SPAM`) and can attach a private
+`adminNote`. **The message body is not editable** — `PATCH` accepts only those
+two fields and 400s on anything else, so the record of what somebody actually
+said cannot be rewritten. Delete is SUPERADMIN-only and is for spam, not for
+tidying up a handled message.
+
+**Two deliberate design choices.** `Feedback.userId` is nullable with
+`ON DELETE SET NULL`, and `name`/`email` are copied onto the row at write time:
+deleting an account must not delete what that person told us, and the message has
+to stay attributable afterwards — the same reasoning as `AuditLog`'s
+denormalised actor. And the rating is optional, so **no average rating is
+computed anywhere**: it would be an average over a self-selected subset.
+
+### 5.2 Dubbing from a link
+
+`POST /api/jobs` takes three mutually exclusive sources: an uploaded `file`, a
+`source_url`, or `sample=1`. Sending both a file and a URL is a 400 — silently
+picking one is how somebody dubs the wrong video.
+
+A `source_url` is fetched server-side by `backend/app/pipeline/fetch.py` before
+the pipeline starts; from there on a link job is indistinguishable from an
+upload. That module is where the rules live, and they are not optional
+hardening — the endpoint fetches a URL chosen by the caller, which is SSRF by
+construction:
+
+* http/https only;
+* the resolved address must be public — loopback, private, link-local
+  (`169.254.169.254`, the cloud metadata endpoint) and reserved ranges are all
+  refused, checked against **every** address the name resolves to;
+* redirects are followed by hand so each hop is re-vetted (a public host that
+  302s to `127.0.0.1` is the standard bypass);
+* capped at 2 GB and 2 hours, so one paste cannot fill the disk or book hours of
+  GPU time.
+
+`yt-dlp` (in `backend/requirements.txt`) is what resolves a YouTube/Vimeo/TikTok
+watch page to a media stream. Without it, link jobs still work for a **direct**
+media URL and refuse a watch page with a message saying to install it. Keep it
+current: extractors break when a site changes its player, and a stale yt-dlp is
+the usual cause of "we couldn't download that video".
+
+One honest caveat: the browser cannot probe a link's duration, so the pre-flight
+credit gate for a link job runs on an estimate. The server learns the real length
+after fetching, and the charge settles against that — which means a long video
+can pass the pre-flight check and still be refused once measured.
 
 ---
 
