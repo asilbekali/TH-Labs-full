@@ -899,3 +899,172 @@ def asrab(path: str, truth: str = "", lang: str = "uz", out: str = "asrab"):
     Path(f"{out}.json").write_text(json.dumps(res, indent=2, ensure_ascii=False),
                                    encoding="utf-8")
     print(f"wrote {out}.json")
+
+
+# ── Lip sync, in an image of its own ───────────────────────────────────────
+# LatentSync cannot share the pipeline's environment: it pins torch 2.5.1 and
+# transformers 4.48, while this app runs torch 2.13 and needs transformers >=5.3
+# for OmniVoice. Modal gives each function its own image, which turns that
+# conflict into a non-issue — and has the useful side effect that lip sync runs
+# on its own container, so a slow diffusion job does not block the single serial
+# worker that everything else queues behind.
+#
+# Licence note: the CODE is Apache-2.0 but the WEIGHTS are OpenRAIL++, which
+# permits commercial use and attaches use-based restrictions that have to be
+# passed on downstream. That is the same family as MuseTalk's licence, and
+# unlike Wav2Lip, whose weights forbid commercial use outright.
+LATENTSYNC_DIR = "/opt/latentsync"
+LATENTSYNC_REPO = "ByteDance/LatentSync-1.6"   # 512px; 1.5 is the 8 GB option
+
+
+def _download_latentsync() -> None:
+    """Fetch LatentSync's checkpoints into the layout its scripts expect."""
+    from huggingface_hub import snapshot_download
+
+    try:
+        snapshot_download(LATENTSYNC_REPO,
+                          local_dir=f"{LATENTSYNC_DIR}/checkpoints")
+        print(f"  ok    {LATENTSYNC_REPO} -> {LATENTSYNC_DIR}/checkpoints")
+    except Exception as exc:
+        print(f"  SKIP  LatentSync weights -> {type(exc).__name__}: {exc}")
+
+
+lipsync_image = (
+    modal.Image.debian_slim(python_version="3.11")
+    # libgl/libglib are opencv's; build-essential is for the packages that have
+    # no wheel for this interpreter.
+    .apt_install("ffmpeg", "git", "libgl1", "libglib2.0-0", "build-essential")
+    .run_commands(
+        f"git clone --depth 1 https://github.com/bytedance/LatentSync.git {LATENTSYNC_DIR}",
+        f"cd {LATENTSYNC_DIR} && python -m pip install -r requirements.txt",
+    )
+    .run_function(_download_latentsync)
+)
+
+
+@app.function(image=lipsync_image, gpu="L4", timeout=3600, memory=16384)
+def lipsync_check(video: bytes, audio: bytes, steps: int = 20,
+                  guidance: float = 1.5) -> dict:
+    """Reshape a speaker's mouth to match dubbed audio, and hand back the video.
+
+        modal run deploy/modal/modal_app.py::lipsync --video clip.mp4 --audio dub.wav
+
+    Deliberately standalone rather than wired into the pipeline: the question
+    it answers is whether the result looks good enough on real content to be
+    worth the GPU time, and that is a judgement to make before committing to it.
+    Reports how long it took per second of video, since that is the other half
+    of the decision.
+    """
+    import subprocess
+    import time
+    from pathlib import Path
+
+    work = Path("/tmp/lipsync")
+    work.mkdir(parents=True, exist_ok=True)
+    vid, aud = work / "in.mp4", work / "in.wav"
+    out = work / "out.mp4"
+    vid.write_bytes(video)
+    aud.write_bytes(audio)
+
+    def probe(path: Path) -> float:
+        r = subprocess.run(["ffprobe", "-v", "error", "-show_entries",
+                            "format=duration", "-of",
+                            "default=nw=1:nk=1", str(path)],
+                           capture_output=True, text=True)
+        try:
+            return float(r.stdout.strip())
+        except ValueError:
+            return 0.0
+
+    seconds = probe(vid)
+    cmd = [
+        "python", "-m", "scripts.inference",
+        "--unet_config_path", "configs/unet/stage2_512.yaml",
+        "--inference_ckpt_path", "checkpoints/latentsync_unet.pt",
+        "--inference_steps", str(steps),
+        "--guidance_scale", str(guidance),
+        "--enable_deepcache",
+        "--video_path", str(vid),
+        "--audio_path", str(aud),
+        "--video_out_path", str(out),
+    ]
+    print(f"lipsync: {seconds:.1f}s of video, {steps} steps, guidance {guidance}")
+    t0 = time.perf_counter()
+    proc = subprocess.run(cmd, cwd=LATENTSYNC_DIR, capture_output=True,
+                          text=True, timeout=3300)
+    elapsed = time.perf_counter() - t0
+
+    if proc.returncode != 0:
+        tail = (proc.stderr or proc.stdout or "").strip().splitlines()[-25:]
+        print("lipsync FAILED, last lines of its output:")
+        for line in tail:
+            print("   ", line)
+        return {"ok": False, "seconds": round(elapsed, 1),
+                "error": " | ".join(tail[-6:])}
+
+    result = {
+        "ok": out.exists(),
+        "video_seconds": round(seconds, 1),
+        "elapsed_seconds": round(elapsed, 1),
+        "realtime_factor": round(elapsed / seconds, 2) if seconds else None,
+        "steps": steps,
+        "guidance": guidance,
+        "video": out.read_bytes() if out.exists() else None,
+    }
+    print(f"lipsync: done in {elapsed:.1f}s "
+          f"({result['realtime_factor']}x realtime)")
+    return result
+
+
+# Modal's per-second GPU prices, for turning a measured runtime into a cost.
+# L4 is the cheapest per second and the slowest, which is not the same as being
+# the cheapest per job: diffusion here is compute-bound, so a faster card can
+# finish far enough ahead to cost less overall. Worth measuring rather than
+# assuming, in either direction.
+GPU_PRICE_PER_SECOND = {
+    "T4": 0.000164, "L4": 0.000222, "A10": 0.000306, "L40S": 0.000542,
+    "A100-40GB": 0.000583, "A100-80GB": 0.000694, "H100": 0.001097,
+    "H200": 0.001261, "B200": 0.001736,
+}
+
+
+@app.local_entrypoint()
+def lipsync(video: str, audio: str, out: str = "lipsync_out", steps: int = 20,
+            gpus: str = "L4"):
+    """Run the lip-sync check, optionally across several GPUs to compare.
+
+        modal run ...::lipsync --video v.mp4 --audio a.wav --gpus L4,L40S,H100
+
+    Reports runtime AND cost per minute of video for each, because those two
+    do not move together: the cheapest card per second is the slowest, and the
+    dearest can be the cheaper way to finish the same job.
+    """
+    import json
+    from pathlib import Path
+
+    vid, aud = Path(video).read_bytes(), Path(audio).read_bytes()
+    rows = []
+    for gpu in [g.strip() for g in gpus.split(",") if g.strip()]:
+        fn = lipsync_check if gpu == "L4" else lipsync_check.with_options(gpu=gpu)
+        print(f"--- {gpu} ---")
+        res = fn.remote(vid, aud, steps)
+        data = res.pop("video", None)
+        if data:
+            Path(f"{out}_{gpu}.mp4").write_bytes(data)
+            print(f"wrote {out}_{gpu}.mp4 ({len(data)/1e6:.1f} MB)")
+        secs = res.get("elapsed_seconds")
+        vsecs = res.get("video_seconds") or 0
+        price = GPU_PRICE_PER_SECOND.get(gpu)
+        if secs and vsecs and price:
+            res["cost_per_video_minute"] = round(secs / vsecs * 60 * price, 3)
+        res["gpu"] = gpu
+        rows.append(res)
+        print(json.dumps(res, indent=2))
+
+    if len(rows) > 1:
+        print("")
+        print(f"{'gpu':10s} {'runtime':>9s} {'x realtime':>11s} {'$/video-min':>12s}")
+        for r in rows:
+            print(f"{r['gpu']:10s} {r.get('elapsed_seconds', 0):8.0f}s "
+                  f"{r.get('realtime_factor', 0):10.1f}x "
+                  f"{r.get('cost_per_video_minute', 0):12.3f}")
