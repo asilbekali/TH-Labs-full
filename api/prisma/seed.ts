@@ -17,7 +17,6 @@ const prisma = new PrismaClient();
 // once and then drips a month's worth every 30 days, twelve times — so the
 // number on the pricing page is `creditsGranted * grantsPerPeriod`:
 //
-//   Weekly  PRO       300 × 1  =    300      Weekly  STUDIO  1 200 × 1  =  1 200
 //   Monthly PRO     1 200 × 1  =  1 200      Monthly STUDIO  4 800 × 1  =  4 800
 //   Yearly  PRO     1 200 × 12 = 14 400      Yearly  STUDIO  4 800 × 12 = 57 600
 //
@@ -37,11 +36,9 @@ type PlanSeed = {
 const PLAN_SEED: PlanSeed[] = [
   { tier: 'FREE', cycle: 'MONTHLY', priceCents: 0, creditsGranted: 60, grantDays: 30, grantsPerPeriod: 1 },
 
-  { tier: 'PRO', cycle: 'WEEKLY', priceCents: 600, creditsGranted: 300, grantDays: 7, grantsPerPeriod: 1, productEnv: 'DODO_PRODUCT_PRO_WEEKLY' },
   { tier: 'PRO', cycle: 'MONTHLY', priceCents: 1950, creditsGranted: 1200, grantDays: 30, grantsPerPeriod: 1, productEnv: 'DODO_PRODUCT_PRO_MONTHLY' },
   { tier: 'PRO', cycle: 'YEARLY', priceCents: 19900, creditsGranted: 1200, grantDays: 30, grantsPerPeriod: 12, productEnv: 'DODO_PRODUCT_PRO_YEARLY' },
 
-  { tier: 'STUDIO', cycle: 'WEEKLY', priceCents: 1500, creditsGranted: 1200, grantDays: 7, grantsPerPeriod: 1, productEnv: 'DODO_PRODUCT_STUDIO_WEEKLY' },
   { tier: 'STUDIO', cycle: 'MONTHLY', priceCents: 4950, creditsGranted: 4800, grantDays: 30, grantsPerPeriod: 1, productEnv: 'DODO_PRODUCT_STUDIO_MONTHLY' },
   { tier: 'STUDIO', cycle: 'YEARLY', priceCents: 49900, creditsGranted: 4800, grantDays: 30, grantsPerPeriod: 12, productEnv: 'DODO_PRODUCT_STUDIO_YEARLY' },
 ];
