@@ -56,7 +56,7 @@ export class UpdatePlanDto {
 
   @ApiPropertyOptional({
     description:
-      'Allocations per paid period. 1 for weekly/monthly; 12 for yearly, which bills once and drips monthly.',
+      'Allocations per paid period. 1 for monthly; 12 for yearly, which bills once and drips monthly.',
   })
   @IsOptional()
   @IsInt()

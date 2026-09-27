@@ -38,6 +38,7 @@ from __future__ import annotations
 import ipaddress
 import logging
 import re
+import shutil
 import socket
 import urllib.error
 import urllib.parse
@@ -51,6 +52,9 @@ log = logging.getLogger(__name__)
 # still small enough that one paste cannot monopolise the box.
 MAX_BYTES = 2 * 1024 * 1024 * 1024        # 2 GiB on disk
 MAX_DURATION_SECONDS = 2 * 60 * 60        # 2 hours of media
+# Tallest video track worth fetching. The dub is re-encoded regardless, so
+# anything above this costs download time, disk and GPU for no visible gain.
+MAX_HEIGHT = 1080
 _CHUNK = 1024 * 1024                      # 1 MiB
 _MAX_REDIRECTS = 5
 _TIMEOUT = 30                             # seconds per connection
@@ -141,6 +145,51 @@ def _safe_name(value: str, fallback: str) -> str:
 
 # ── The two backends ──────────────────────────────────────────────────────
 
+def _format_selector() -> str:
+    """What to ask yt-dlp for, given whether ffmpeg is on the box.
+
+    YouTube no longer publishes a *progressive* stream (one file carrying both
+    video and audio) for the overwhelming majority of videos — a probe of a
+    normal public video returns 53 formats and zero progressive ones. A
+    selector built only out of `best`/`b` terms therefore matches nothing and
+    every YouTube link dies with "Requested format is not available", which is
+    exactly what "paste a link and dub it" was failing on.
+
+    So ask for separate video+audio and let yt-dlp mux them (`bv*+ba`). That
+    needs ffmpeg, which the dubbing pipeline requires anyway. Without ffmpeg
+    fall back to progressive-only: it still serves a direct .mp4 and the older
+    sites that publish one, and a site that does not gets an honest error
+    rather than a half-downloaded pair of streams that cannot be joined.
+
+    `b` stays last in both chains so a single-file source is preferred when one
+    exists and there is nothing to mux.
+    """
+    # Cap the video track. `bv*` alone means "the best there is", which on a
+    # 4K source is a multi-GB download the dub gains nothing from: the output
+    # is re-encoded anyway, and lip-sync and separation both run far longer at
+    # 2160p. 1080p is the deliverable, so fetch that and no more. The
+    # unrestricted terms stay at the end of each chain so a source that only
+    # publishes above the cap still downloads rather than failing.
+    cap = f"[height<={MAX_HEIGHT}]"
+    if shutil.which("ffmpeg"):
+        return (
+            # H.264 first, not merely "an mp4". YouTube serves AV1 in an mp4
+            # container for most videos now, and AV1 is the one codec the rest
+            # of this pipeline cannot be relied on to decode — Wav2Lip reads
+            # frames through OpenCV, whose bundled decoder often has no AV1 at
+            # all. avc1 plays everywhere.
+            f"bv*{cap}[vcodec^=avc1]+ba[ext=m4a]/"
+            f"bv*{cap}[ext=mp4]+ba[ext=m4a]/"  # mp4 pair — no re-encode on merge
+            f"bv*{cap}+ba/"                    # any container, still capped
+            f"b{cap}[ext=mp4]/b{cap}/"         # already-progressive source
+            "bv*+ba/b"                         # nothing under the cap exists
+        )
+    return (
+        f"b{cap}[ext=mp4][acodec!=none][vcodec!=none]/"
+        f"b{cap}[acodec!=none]/b{cap}/b"
+    )
+
+
 def _download_with_yt_dlp(url: str, dest_dir: Path, stem: str) -> tuple[Path, str]:
     import yt_dlp
 
@@ -184,9 +233,10 @@ def _download_with_yt_dlp(url: str, dest_dir: Path, stem: str) -> tuple[Path, st
     outtmpl = str(dest_dir / f"{stem}.%(ext)s")
     download_opts = {
         **probe_opts,
-        # Prefer a single progressive mp4 so there is nothing to mux; fall back
-        # to yt-dlp's own best when a site offers no such stream.
-        "format": "best[ext=mp4][acodec!=none][vcodec!=none]/best[acodec!=none]/best",
+        "format": _format_selector(),
+        # Merging DASH video+audio produces a .mkv unless told otherwise, and
+        # the pipeline is happiest with mp4.
+        "merge_output_format": "mp4",
         "outtmpl": outtmpl,
         "noprogress": True,
         "max_filesize": MAX_BYTES,
@@ -226,6 +276,16 @@ def _explain_yt_dlp(exc: Exception) -> str:
     if "unsupported url" in low or "no video formats" in low:
         return ("We couldn't find a video at that link. Paste a link to the video "
                 "page itself, or upload the file.")
+    if "requested format is not available" in low:
+        # Almost always ffmpeg missing on the server: the site publishes video
+        # and audio as separate streams (YouTube no longer ships a combined
+        # one), and without ffmpeg there is nothing to join them with.
+        if not shutil.which("ffmpeg"):
+            return ("This server can't combine that video's separate audio and "
+                    "video streams — ffmpeg is not installed. Upload the file "
+                    "instead, or ask an admin to install ffmpeg.")
+        return ("We couldn't fetch a usable version of that video. Try a "
+                "different link, or upload the file instead.")
     if "geo" in low and "restrict" in low:
         return "That video is blocked in the region this server runs in."
     log.warning("yt-dlp failed: %s", raw)
@@ -314,10 +374,24 @@ def _download_direct(url: str, dest_dir: Path, stem: str) -> tuple[Path, str]:
     raise SourceFetchError("That link redirects too many times.")
 
 
+# Per-format parts yt-dlp writes while muxing: "link_ab12.f399.mp4" alongside
+# "link_ab12.f140.m4a". They are deleted once the merge succeeds.
+_FRAGMENT = re.compile(r"\.f\d+$")
+
+
 def _locate(dest_dir: Path, stem: str) -> Path | None:
-    """The file yt-dlp wrote, whatever extension it settled on."""
+    """The finished file yt-dlp wrote, whatever extension it settled on.
+
+    Merged downloads leave per-format parts on disk until the mux completes, so
+    a plain `sorted(glob)[0]` can hand back `…f140.m4a` — an audio-only track —
+    when the merge failed. The pipeline would then "dub" a file with no video.
+    Prefer the merged output and treat parts as a last resort.
+    """
     matches = sorted(dest_dir.glob(f"{stem}.*"))
-    return matches[0] if matches else None
+    if not matches:
+        return None
+    merged = [m for m in matches if not _FRAGMENT.search(m.stem)]
+    return merged[0] if merged else matches[0]
 
 
 # ── Entry point ───────────────────────────────────────────────────────────

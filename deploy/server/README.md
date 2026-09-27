@@ -194,7 +194,7 @@ is why `/payments/plans` now reports a `checkout` block the Plans page reads to
 disable the buttons and say why.
 
 **1. Products** — Dashboard → Products, one subscription product per paid plan
-(PRO and STUDIO × weekly/monthly/yearly). Price each to match the matrix in
+(PRO and STUDIO × monthly/yearly). Price each to match the matrix in
 `api/PAYMENTS.md`, and give each a **subscription period longer than its
 payment frequency** (e.g. 20 years / monthly) — equal values expire the
 subscription after one cycle instead of renewing it.

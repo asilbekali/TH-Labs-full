@@ -143,7 +143,6 @@ enum PlanTier {
 }
 
 enum BillingCycle {
-  WEEKLY
   MONTHLY
   YEARLY
 }
@@ -171,18 +170,18 @@ enum CreditReason {
   ADMIN_ADJUSTMENT
 }
 
-// Catalog of purchasable plans (seven rows: FREE + PRO/STUDIO × weekly/monthly/yearly).
+// Catalog of purchasable plans (five rows: FREE + PRO/STUDIO × monthly/yearly).
 model Plan {
   id              String       @id @default(cuid())
   tier            PlanTier
   cycle           BillingCycle
   priceCents      Int
   /// Credits handed out by ONE allocation, not the headline number on the
-  /// pricing page. For weekly/monthly the two are the same; for yearly the
+  /// pricing page. For monthly the two are the same; for yearly the
   /// advertised total is `creditsGranted * grantsPerPeriod`.
   creditsGranted  Int
-  grantDays       Int // 7 or 30
-  /// How many allocations one paid period is worth. 1 for weekly/monthly; 12
+  grantDays       Int // 30
+  /// How many allocations one paid period is worth. 1 for monthly; 12
   /// for yearly, which Dodo bills once but which drips a month at a time.
   /// The cron stops at this count so a year's credits can't all land early.
   grantsPerPeriod Int          @default(1)

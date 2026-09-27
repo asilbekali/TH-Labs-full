@@ -43,8 +43,8 @@ export class PaymentCron {
 
     let granted = 0;
     for (const sub of candidates) {
-      // The period is only worth grantsPerPeriod allocations (1 for weekly and
-      // monthly, 12 for yearly). Checkout and renewal each count as the first,
+      // The period is only worth grantsPerPeriod allocations (1 for monthly,
+      // 12 for yearly). Checkout and renewal each count as the first,
       // so this is the ceiling that stops a 365-day period paying out a
       // thirteenth month.
       if (sub.grantsIssued >= sub.plan.grantsPerPeriod) continue;

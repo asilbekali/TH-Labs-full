@@ -3,6 +3,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import {
@@ -34,14 +35,6 @@ type Tx = Omit<
   PrismaClient,
   '$connect' | '$disconnect' | '$on' | '$transaction' | '$use' | '$extends'
 >;
-
-// Length of one billing period, in days, per cycle. Only WEEKLY is expressed
-// in days — monthly and yearly are calendar arithmetic (see cyclePeriodEnd).
-const CYCLE_DAYS: Record<BillingCycle, number> = {
-  WEEKLY: 7,
-  MONTHLY: 30,
-  YEARLY: 365,
-};
 
 @Injectable()
 export class PaymentService {
@@ -216,12 +209,47 @@ export class PaymentService {
     };
   }
 
+  // The webhook is the ONLY thing that grants credits. With no signing secret
+  // every delivery is rejected, so a checkout that "succeeds" takes the money
+  // and hands back nothing — and the customer sees Dodo's own success page.
+  //
+  // So refuse to mint the URL at all. A 503 in front of the pay button is a
+  // bug report; a silent charge with no credits is a refund and a lost user.
+  // DODO_ALLOW_UNVERIFIED_CHECKOUT=true opts out for a dev box that only wants
+  // to exercise the redirect, and is ignored once the secret is set.
+  private assertCreditsCanBeGranted(): void {
+    if (this.dodo.webhookConfigured) return;
+
+    if (
+      this.config.get<string>('DODO_ALLOW_UNVERIFIED_CHECKOUT')?.trim() ===
+      'true'
+    ) {
+      this.logger.warn(
+        'Issuing a checkout URL with DODO_WEBHOOK_SECRET unset — this purchase ' +
+          'will NOT grant credits (DODO_ALLOW_UNVERIFIED_CHECKOUT=true).',
+      );
+      return;
+    }
+
+    this.logger.error(
+      'Refusing checkout: DODO_WEBHOOK_SECRET is not set, so the webhook would ' +
+        'reject the payment event and no credits could be granted.',
+    );
+    throw new ServiceUnavailableException(
+      'Payments are temporarily unavailable. The server is not configured to ' +
+        'confirm purchases (DODO_WEBHOOK_SECRET is missing), so a payment could ' +
+        'not be credited. No charge has been made.',
+    );
+  }
+
   private async checkoutUrlFor(opts: {
     productId: string | null;
     linkUrl: string | null;
     user: { email: string; name: string };
     metadata: Record<string, string>;
   }): Promise<string> {
+    this.assertCreditsCanBeGranted();
+
     const customer = { email: opts.user.email, name: opts.user.name };
 
     if (this.dodo.enabled && opts.productId) {
@@ -693,11 +721,6 @@ export class PaymentService {
   // period ending Feb 28 (or 29), which is what Dodo does too.
   cyclePeriodEnd(cycle: BillingCycle, from: Date = new Date()): Date {
     const end = new Date(from);
-    if (cycle === 'WEEKLY') {
-      end.setDate(end.getDate() + CYCLE_DAYS.WEEKLY);
-      return end;
-    }
-
     const months = cycle === 'YEARLY' ? 12 : 1;
     const day = end.getDate();
     // setMonth on the 31st would roll into the next month (Jan 31 → Mar 3).

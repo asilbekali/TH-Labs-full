@@ -16,6 +16,7 @@ page and uptime checks can read status without a session.
 from __future__ import annotations
 
 import json
+import logging
 import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -35,10 +36,11 @@ from .logging_config import setup_logging
 # actually reaches Modal's log stream.
 setup_logging()
 from .jobs import manager
-from .pipeline import media
+from .pipeline import fetch, media
 from .schemas import (DubOptions, HealthInfo, JobStatus, Quality, StageInfo)
 
 settings = get_settings()
+log = logging.getLogger(__name__)
 
 _UPLOAD_CHUNK = 1024 * 1024      # 1 MiB: streamed upload copy buffer
 
@@ -168,6 +170,21 @@ async def create_job(
                 source_url, settings.uploads_dir, f"link_{_safe_id()}")
         except fetch.SourceFetchError as exc:
             raise HTTPException(400, str(exc)) from exc
+        except Exception as exc:
+            # Anything the fetcher did not anticipate — a full disk, a
+            # read-only uploads dir, an extractor raising a type the wrapper
+            # missed. Unhandled, Starlette answers with the plain-text body
+            # "Internal Server Error", which reaches the Studio as
+            # "job creation failed: 500 Internal Server Error": no cause, and
+            # nothing the person who pasted the link can act on.
+            #
+            # Log the traceback for the server and return a sentence for them.
+            log.exception("link job failed for %s", source_url)
+            raise HTTPException(
+                502,
+                "We couldn't fetch that link — something went wrong on our side. "
+                "Try again, or upload the file instead.",
+            ) from exc
         filename = title
     elif sample or file is None:
         # self-contained sample clip (generated once via ffmpeg). It carries no

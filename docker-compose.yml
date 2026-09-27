@@ -64,6 +64,38 @@ services:
       # Only used to print the banner URL on boot; the server binds all
       # interfaces regardless, which is what lets the port mapping reach it.
       HOST: localhost
+
+      # ── Dodo Payments ─────────────────────────────────────────────────────
+      # These were missing, and nothing in the container inherits api/.env —
+      # the Dockerfile does not copy it and compose does not read it. So the
+      # API booted with no key, no signing secret and test_mode, which is the
+      # "Webhook NOT configured / No Dodo API key / Test mode" the admin panel
+      # reports. Passed through from the .env NEXT TO THIS FILE.
+      #
+      # Unset is tolerated here (unlike deploy/server/docker-compose.yml, which
+      # hard-fails) because this stack is also how the app is run with no
+      # merchant account at all. With no secret the checkout endpoints 503
+      # instead of selling something that can never be credited.
+      DODO_PAYMENTS_API_KEY: ${DODO_PAYMENTS_API_KEY:-}
+      DODO_WEBHOOK_SECRET: ${DODO_WEBHOOK_SECRET:-}
+      DODO_PAYMENTS_ENVIRONMENT: ${DODO_PAYMENTS_ENVIRONMENT:-test_mode}
+      # Dev-only. 'true' lets checkout hand out a URL with no signing secret —
+      # the customer pays and receives nothing. Never set this on a real box.
+      DODO_ALLOW_UNVERIFIED_CHECKOUT: ${DODO_ALLOW_UNVERIFIED_CHECKOUT:-}
+
+      # Read by `prisma db seed` onto Plan.dodoProductId / dodoLinkUrl. Each
+      # takes a product id (pdt_…) or a full payment link.
+      DODO_PRODUCT_PRO_MONTHLY: ${DODO_PRODUCT_PRO_MONTHLY:-}
+      DODO_PRODUCT_PRO_YEARLY: ${DODO_PRODUCT_PRO_YEARLY:-}
+      DODO_PRODUCT_STUDIO_MONTHLY: ${DODO_PRODUCT_STUDIO_MONTHLY:-}
+      DODO_PRODUCT_STUDIO_YEARLY: ${DODO_PRODUCT_STUDIO_YEARLY:-}
+      # Slugs must match CREDIT_PACK_SEED in api/src/payment/credit-packs.ts.
+      DODO_PRODUCT_PACK_100: ${DODO_PRODUCT_PACK_100:-}
+      DODO_PRODUCT_PACK_500: ${DODO_PRODUCT_PACK_500:-}
+      DODO_PRODUCT_PACK_2000: ${DODO_PRODUCT_PACK_2000:-}
+
+      APP_URL: ${APP_URL:-}
+      FREE_DUB_MAX_SECONDS: ${FREE_DUB_MAX_SECONDS:-120}
     ports:
       - "127.0.0.1:${API_PORT:-3000}:3000"
     # PID 1 reaper, so Ctrl-C and `docker compose stop` terminate promptly.

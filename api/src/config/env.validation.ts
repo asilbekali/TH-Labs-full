@@ -37,16 +37,20 @@ export interface AppEnv {
 
   DODO_PAYMENTS_API_KEY?: string;
   DODO_WEBHOOK_SECRET?: string;
+  /**
+   * 'true' lets /payments/checkout hand out a URL even with no webhook secret.
+   * Dev only: such a purchase takes money and grants nothing, so without this
+   * the checkout endpoints 503 rather than sell something they cannot honour.
+   */
+  DODO_ALLOW_UNVERIFIED_CHECKOUT: boolean;
   /** 'test_mode' (default) or 'live_mode'. Decides which Dodo host we talk to. */
   DODO_PAYMENTS_ENVIRONMENT: 'test_mode' | 'live_mode';
 
   // One Dodo product per purchasable plan. Each accepts a product id
   // (`pdt_…`) or the full payment link copied from the dashboard; the seed
   // reads them onto the Plan rows.
-  DODO_PRODUCT_PRO_WEEKLY?: string;
   DODO_PRODUCT_PRO_MONTHLY?: string;
   DODO_PRODUCT_PRO_YEARLY?: string;
-  DODO_PRODUCT_STUDIO_WEEKLY?: string;
   DODO_PRODUCT_STUDIO_MONTHLY?: string;
   DODO_PRODUCT_STUDIO_YEARLY?: string;
 
@@ -81,10 +85,18 @@ export function validateEnv(config: RawEnv): AppEnv {
     );
   }
 
+  const allowUnverifiedCheckout =
+    config.DODO_ALLOW_UNVERIFIED_CHECKOUT?.trim() === 'true';
+
   if (!config.DODO_WEBHOOK_SECRET) {
-    logger.warn(
+    logger.error(
       'DODO_WEBHOOK_SECRET not set — /payments/webhook will reject every event, ' +
-        'so no purchase can ever grant credits. Checkout links still work.',
+        'so no purchase can ever grant credits. ' +
+        (allowUnverifiedCheckout
+          ? 'DODO_ALLOW_UNVERIFIED_CHECKOUT=true, so checkout still hands out ' +
+            'URLs: anyone who pays gets NOTHING. Never set this in production.'
+          : 'Checkout is therefore disabled (503) rather than selling something ' +
+            'that cannot be credited.'),
     );
   }
   if (!config.DODO_PAYMENTS_API_KEY) {
@@ -124,15 +136,14 @@ export function validateEnv(config: RawEnv): AppEnv {
 
     DODO_PAYMENTS_API_KEY: config.DODO_PAYMENTS_API_KEY,
     DODO_WEBHOOK_SECRET: config.DODO_WEBHOOK_SECRET,
+    DODO_ALLOW_UNVERIFIED_CHECKOUT: allowUnverifiedCheckout,
     DODO_PAYMENTS_ENVIRONMENT:
       config.DODO_PAYMENTS_ENVIRONMENT?.trim() === 'live_mode'
         ? 'live_mode'
         : 'test_mode',
 
-    DODO_PRODUCT_PRO_WEEKLY: config.DODO_PRODUCT_PRO_WEEKLY,
     DODO_PRODUCT_PRO_MONTHLY: config.DODO_PRODUCT_PRO_MONTHLY,
     DODO_PRODUCT_PRO_YEARLY: config.DODO_PRODUCT_PRO_YEARLY,
-    DODO_PRODUCT_STUDIO_WEEKLY: config.DODO_PRODUCT_STUDIO_WEEKLY,
     DODO_PRODUCT_STUDIO_MONTHLY: config.DODO_PRODUCT_STUDIO_MONTHLY,
     DODO_PRODUCT_STUDIO_YEARLY: config.DODO_PRODUCT_STUDIO_YEARLY,
 
