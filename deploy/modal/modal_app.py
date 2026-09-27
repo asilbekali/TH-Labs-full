@@ -175,6 +175,17 @@ image = (
         # Verifies the bearer tokens minted by the NestJS account API. Without
         # it every /api/jobs call 503s — see backend/app/auth.py.
         "PyJWT>=2.8",
+        # Resolves a pasted watch-page URL to a media stream for
+        # POST /api/jobs?source_url= (backend/app/pipeline/fetch.py). It is in
+        # backend/requirements.txt but this image installs an explicit list
+        # rather than that file, so it was simply absent here: every YouTube /
+        # Vimeo / TikTok link fell through to the direct-HTTP path, which sees
+        # a text/html watch page and refuses it. "Paste a link and dub it" has
+        # never worked on the deployed Studio for that reason.
+        #
+        # Unpinned on purpose — extractors break whenever a site changes its
+        # player, so the newest release at build time is what we want.
+        "yt-dlp>=2024.8.6",
         "openai-whisper", "sentencepiece", "edge-tts", "soundfile",
         "silero-vad", "demucs", "huggingface_hub",
     )

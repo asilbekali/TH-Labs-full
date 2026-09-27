@@ -83,17 +83,17 @@ services:
       # takes a product id or a payment link. The seed leaves an existing
       # product alone when one of these is unset, so a partial .env degrades to
       # "stale products" rather than "checkout 400s".
-      DODO_PRODUCT_PRO_WEEKLY: ${DODO_PRODUCT_PRO_WEEKLY:-}
       DODO_PRODUCT_PRO_MONTHLY: ${DODO_PRODUCT_PRO_MONTHLY:-}
       DODO_PRODUCT_PRO_YEARLY: ${DODO_PRODUCT_PRO_YEARLY:-}
-      DODO_PRODUCT_STUDIO_WEEKLY: ${DODO_PRODUCT_STUDIO_WEEKLY:-}
       DODO_PRODUCT_STUDIO_MONTHLY: ${DODO_PRODUCT_STUDIO_MONTHLY:-}
       DODO_PRODUCT_STUDIO_YEARLY: ${DODO_PRODUCT_STUDIO_YEARLY:-}
       # One-time credit packs. Optional: an unset one hides that pack's button.
-      DODO_PRODUCT_PACK_120: ${DODO_PRODUCT_PACK_120:-}
-      DODO_PRODUCT_PACK_240: ${DODO_PRODUCT_PACK_240:-}
-      DODO_PRODUCT_PACK_600: ${DODO_PRODUCT_PACK_600:-}
-      DODO_PRODUCT_PACK_1500: ${DODO_PRODUCT_PACK_1500:-}
+      # The names must match `productEnv` in api/src/payment/credit-packs.ts —
+      # these read PACK_120/240/600/1500, which no longer exist, so every pack
+      # product was dropped on the floor before it reached the seed.
+      DODO_PRODUCT_PACK_100: ${DODO_PRODUCT_PACK_100:-}
+      DODO_PRODUCT_PACK_500: ${DODO_PRODUCT_PACK_500:-}
+      DODO_PRODUCT_PACK_2000: ${DODO_PRODUCT_PACK_2000:-}
       FREE_DUB_MAX_SECONDS: ${FREE_DUB_MAX_SECONDS:-120}
       # Always allowed through CORS on top of the built-in list, and what
       # decides the refresh cookie's Secure/SameSite pair (api/src/auth).

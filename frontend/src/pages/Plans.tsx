@@ -39,9 +39,8 @@ import type {
   Subscription,
 } from '../lib/payments-api'
 
-// Weekly billing is no longer sold. The API still knows the cycle (existing
-// weekly subscribers keep renewing, and the subscription card below prints
-// whatever cycle their row carries) — it is simply not offered to new buyers.
+// The two cycles the API sells. Weekly billing was retired: the plan rows,
+// the products and the BillingCycle value are all gone.
 type Cycle = 'monthly' | 'yearly'
 const CYCLES: { key: Cycle; label: string; suffix: string; per: string; api: BillingCycle }[] = [
   { key: 'monthly', label: 'Monthly', suffix: '/mo', per: 'month', api: 'MONTHLY' },
@@ -59,7 +58,7 @@ interface UiTier {
   credits: Record<Cycle, number>
   /** Credits in one allocation — differs from `credits` only for yearly. */
   perGrant: Record<Cycle, number>
-  /** Allocations per period: 1 for weekly/monthly, 12 for yearly. */
+  /** Allocations per period: 1 for monthly, 12 for yearly. */
   grants: Record<Cycle, number>
   /**
    * Set when the tier exists at exactly one cycle (FREE, which is only sold
@@ -105,8 +104,8 @@ function creditsOf(row: ServerPlan | undefined): {
 
 function buildTiers(plans: ServerPlan[]): UiTier[] {
   return TIER_META.map((m) => {
-    // FREE only has a MONTHLY row — there is nothing to buy weekly or yearly —
-    // so fall back to it and the tier still renders under every switch.
+    // FREE only has a MONTHLY row — there is nothing to buy yearly — so fall
+    // back to it and the tier still renders under every switch.
     const rowFor = (c: Cycle): ServerPlan | undefined => {
       const api = CYCLES.find((x) => x.key === c)!.api
       return (
@@ -123,9 +122,8 @@ function buildTiers(plans: ServerPlan[]): UiTier[] {
       highlight: m.highlight,
       features: m.features,
       prices: byCycle((c) => (Number(rowFor(c)?.priceCents) || 0) / 100),
-      // Every cycle reads its OWN plan row. Reading the monthly row for all
-      // three was why weekly, monthly and yearly all advertised the same
-      // number of credits.
+      // Every cycle reads its OWN plan row. Reading the monthly row for both
+      // was why monthly and yearly advertised the same number of credits.
       perGrant: byCycle((c) => creditsOf(rowFor(c)).perGrant),
       grants: byCycle((c) => creditsOf(rowFor(c)).grants),
       credits: byCycle((c) => creditsOf(rowFor(c)).total),

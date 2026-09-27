@@ -4,7 +4,7 @@
 import { authJson } from './http'
 
 export type PlanTier = 'FREE' | 'PRO' | 'STUDIO'
-export type BillingCycle = 'WEEKLY' | 'MONTHLY' | 'YEARLY'
+export type BillingCycle = 'MONTHLY' | 'YEARLY'
 export type SubscriptionStatus = 'ACTIVE' | 'PAST_DUE' | 'CANCELED' | 'EXPIRED'
 export type PaymentStatus = 'PENDING' | 'SUCCEEDED' | 'FAILED' | 'REFUNDED'
 
@@ -17,7 +17,7 @@ export interface ServerPlan {
   creditsGranted: number
   grantDays: number
   /**
-   * Allocations per paid period: 1 for weekly/monthly, 12 for yearly.
+   * Allocations per paid period: 1 for monthly, 12 for yearly.
    *
    * Optional because an API deployed before the grant-allocation change simply
    * omits it. Treat a missing value as 1 — never multiply by it unguarded, or
