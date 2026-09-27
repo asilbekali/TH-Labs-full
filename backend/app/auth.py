@@ -42,6 +42,10 @@ class StudioUser:
     id: int
     email: str
     role: str
+    # The raw bearer token this user presented. Carried so app/billing.py can
+    # forward it to the account API's credit endpoints on the user's behalf,
+    # instead of this service holding a credential of its own.
+    token: str = ""
 
 
 def _unauthorized(detail: str) -> HTTPException:
@@ -115,6 +119,7 @@ def _decode(token: str) -> StudioUser:
         id=user_id,
         email=str(payload.get("email", "")),
         role=str(payload.get("role", "USER")),
+        token=token,
     )
 
 

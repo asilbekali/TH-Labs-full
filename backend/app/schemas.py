@@ -111,4 +111,9 @@ class HealthInfo(BaseModel):
     version: str
     mode: str
     ffmpeg: bool
+    # Whether dubs are charged against the credit ledger. False means
+    # TH_LABS_ACCOUNT_API_URL is unset and this deployment runs jobs unbilled —
+    # correct locally, a silent revenue leak anywhere the GPU costs money, so
+    # it is reported rather than left to be inferred from config.
+    billing: bool = False
     stages: list[StageInfo]

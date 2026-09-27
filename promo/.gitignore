@@ -1,0 +1,3 @@
+# Generated output: b-roll from ComfyUI, rendered cards, narration, the cut.
+# Everything here is reproducible with `python promo/build.py`.
+out/
