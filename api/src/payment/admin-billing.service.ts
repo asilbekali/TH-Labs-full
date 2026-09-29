@@ -11,7 +11,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { DodoService } from './dodo.service';
 import { parseProductRef } from './dodo-product-ref';
 import { CREDITS_PER_MINUTE, QUALITY_MULTIPLIER } from './credit-packs';
-import { QUALITY_COST } from './quality-cost';
+import { CREDITS_PER_MINUTE_BY_QUALITY } from './quality-cost';
 import {
   CreateCreditPackDto,
   UpdateCreditPackDto,
@@ -193,8 +193,8 @@ export class AdminBillingService {
           (this.dodo.environment === 'live_mode' && testLinks > 0) ||
           (this.dodo.environment === 'test_mode' && liveLinks > 0),
       },
-      /** Credits a dub costs, per quality. Enforced by can-dub / commit-dub. */
-      qualityCost: QUALITY_COST,
+      /** Credits a MINUTE of dubbing costs, per quality. Enforced by can-dub. */
+      qualityCost: CREDITS_PER_MINUTE_BY_QUALITY,
       /** What the pricing-page estimator quotes with. */
       tariff: {
         creditsPerMinute: CREDITS_PER_MINUTE,

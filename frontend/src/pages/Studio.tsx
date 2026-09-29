@@ -34,6 +34,10 @@ import StepCard from "../components/studio/StepCard";
 import StatTile from "../components/studio/StatTile";
 import MagneticButton from "../components/MagneticButton";
 import Equalizer from "../components/studio/Equalizer";
+import VoicePicker, {
+  voiceModeLabel,
+  type VoiceMode,
+} from "../components/studio/VoicePicker";
 import ThinkingOrbs from "../components/ThinkingOrbs";
 import PipelineFlow from "../components/studio/PipelineFlow";
 import type { FlowNode } from "../components/studio/PipelineFlow";
@@ -49,6 +53,7 @@ import {
   tapScale,
 } from "../lib/motion";
 import {
+  PaymentRequiredError,
   createJob,
   mediaUrl,
   pipelineDown,
@@ -64,12 +69,18 @@ import {
   markTourSeen,
   shouldAutoStartTour,
 } from "../lib/onboarding";
-import { useWallet, QUALITY_COST } from "../lib/wallet";
+import {
+  useWallet,
+  CREDITS_PER_MINUTE_BY_QUALITY,
+  affordableSeconds,
+  estimateDubCost,
+} from "../lib/wallet";
 import {
   useCanDub,
   useCommitDub,
   useHealth,
   useLanguages,
+  usePlans,
 } from "../lib/queries";
 import { useWorks, workTitle } from "../lib/works";
 import { gradientFor } from "../lib/thumb";
@@ -95,7 +106,25 @@ function safeHost(url: string): string {
   }
 }
 
+/** `95.4` -> `1m 35s`. The same phrasing the server uses in its notices. */
+export function formatSeconds(seconds: number | null | undefined): string {
+  const total = Math.floor(Math.max(0, Number(seconds) || 0));
+  if (total < 60) return `${total}s`;
+  const m = Math.floor(total / 60);
+  const rest = total % 60;
+  return rest ? `${m}m ${rest}s` : `${m}m`;
+}
+
+// Best-effort source length, used for the estimate line and the preflight gate.
+//
+// NOT rounded any more. The cost is prorated per second, so the fraction is
+// real information — and rounding here was half of why every dub 402'd: the
+// browser sent a whole number that the API accepted while the server sent the
+// true fractional length that it rejected. Both now send the real value.
 async function probeDurationSeconds(file: File | null): Promise<number> {
+  // 60 is the assumption for a link or the sample clip: the media sits on
+  // someone else's server and the browser never sees it, so there is nothing to
+  // measure. The server measures it for real and the charge follows that.
   if (!file) return 60;
   return new Promise((resolve) => {
     try {
@@ -104,7 +133,7 @@ async function probeDurationSeconds(file: File | null): Promise<number> {
       el.preload = "metadata";
       el.onloadedmetadata = () => {
         URL.revokeObjectURL(url);
-        resolve(Number.isFinite(el.duration) ? Math.round(el.duration) : 0);
+        resolve(Number.isFinite(el.duration) ? el.duration : 0);
       };
       el.onerror = () => {
         URL.revokeObjectURL(url);
@@ -118,7 +147,7 @@ async function probeDurationSeconds(file: File | null): Promise<number> {
 }
 
 export default function Studio() {
-  const { balance } = useWallet();
+  const { balance, refresh: refreshWallet } = useWallet();
   const { works, addWork, updateWork } = useWorks();
   const { user, ready: authReady } = useAuth();
 
@@ -126,6 +155,10 @@ export default function Studio() {
   // and the health chip stays live across the whole session.
   const { data: languages = [] } = useLanguages();
   const { data: health = null, isError: healthQueryFailed } = useHealth();
+  // The live tariff (credits per minute, per quality). Public and cached, so the
+  // estimate line quotes the server's prices rather than a bundled copy that
+  // silently goes stale after a price change.
+  const { data: plansCatalog } = usePlans();
   // The health call itself now succeeds while the pipeline is asleep — the
   // account API answers for it — so "unreachable" is the response's `pipeline`
   // field, not just a failed query.
@@ -149,7 +182,21 @@ export default function Studio() {
   const [sourceLang, setSourceLang] = useState("auto");
   // Turkic-first product, so the default target is Uzbek rather than Spanish.
   const [targetLang, setTargetLang] = useState("uz");
-  const [voiceClone, setVoiceClone] = useState(true);
+  // Whose voice the dub speaks in, and in what accent. `voiceClone` is derived
+  // from it rather than stored: the pipeline still takes a boolean, and keeping
+  // two pieces of state that must agree is how they stop agreeing.
+  const [voiceMode, setVoiceMode] = useState<VoiceMode>("both");
+  // Optional clip of a different voice to dub in. Only meaningful when the dub
+  // is cloning something, so it is dropped when the mode goes to `native`.
+  const [reference, setReference] = useState<File | null>(null);
+  const voiceClone = voiceMode !== "native";
+  // "Duplicate these settings" from My works replays a run that only ever
+  // recorded a boolean, so a saved `true` lands on the default cloning mode
+  // rather than guessing which of the two it was.
+  const setVoiceClone = useCallback(
+    (v: boolean) => setVoiceMode(v ? "both" : "native"),
+    [],
+  );
   const [lipSync, setLipSync] = useState(false);
   const [keepBackground, setKeepBackground] = useState(true);
   const [quality, setQuality] = useState("balanced");
@@ -157,6 +204,12 @@ export default function Studio() {
   const [job, setJob] = useState<Job | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // True when `error` is a credit refusal, so the box can offer the fix.
+  const [needsCredits, setNeedsCredits] = useState(false);
+  // Measured length of the chosen upload. Probed as soon as a file is picked
+  // rather than at Start, because the price depends on it and a price that
+  // appears only after you commit is not a price.
+  const [sourceSeconds, setSourceSeconds] = useState<number | null>(null);
   const unsubRef = useRef<null | (() => void)>(null);
   const savedRef = useRef<string | null>(null);
 
@@ -164,6 +217,23 @@ export default function Studio() {
 
   useEffect(() => {
     if (file) setUseSample(false);
+  }, [file]);
+
+  // Measure the upload as soon as it is chosen. `stale` guards the usual
+  // async-in-effect hazard: pick a long file, then a short one before the first
+  // probe resolves, and without it the long file's duration wins.
+  useEffect(() => {
+    if (!file) {
+      setSourceSeconds(null);
+      return;
+    }
+    let stale = false;
+    void probeDurationSeconds(file).then((secs) => {
+      if (!stale) setSourceSeconds(secs > 0 ? secs : null);
+    });
+    return () => {
+      stale = true;
+    };
   }, [file]);
 
   // One source at a time, enforced in one place. Switching the tab drops what
@@ -271,6 +341,18 @@ export default function Studio() {
       sourceUrl: job.result.source_url,
       durationSec: job.result.duration,
       segments: job.result.segments,
+      // Carried through so the library can explain a short output later. For a
+      // link job this is the first the browser hears of it: the length was only
+      // ever known server-side.
+      trimmed: job.billing?.trimmed ?? false,
+      sourceSec: job.billing?.source_seconds ?? null,
+      // Spread, not `?? undefined`: updateWork merges the patch over the record,
+      // so a literal `undefined` here would ERASE the cost — which is exactly
+      // what the unbilled-backend path writes from its own commit-dub call.
+      // Only send the field when the server actually reported a charge.
+      ...(job.billing?.credits_charged != null
+        ? { creditsSpent: job.billing.credits_charged }
+        : {}),
       error: job.error,
       speakerSimilarity:
         job.result.metrics.speaker_similarity != null
@@ -284,36 +366,60 @@ export default function Studio() {
   // once here so the Start button and the hint can never disagree.
   const linkUrl = sourceMode === "link" ? readLink(sourceUrl).url : null;
   const isSampleRun = useSample && !file && !linkUrl;
+  // A source is chosen, so a price is worth quoting even if its length is only
+  // an assumption (link / sample).
+  const sourceReadyForQuote = !!(file || linkUrl || isSampleRun);
   const sampleLangNote = isSampleRun && !SAMPLE_LANGS.includes(targetLang);
-  const cost = QUALITY_COST[quality] ?? 10;
+  // ── The price, and whether the wallet covers it ──────────────────────────
+  // Per-second pricing means the estimate needs a length. For an upload that is
+  // measured; for a link or the sample it is the same 60s assumption the
+  // preflight uses, and the server settles the real number.
+  //
+  // `rates` prefers the server's published tariff over the bundled fallback, so
+  // a price change on the API does not need a Studio redeploy to show up.
+  const rates = plansCatalog?.qualityCost ?? CREDITS_PER_MINUTE_BY_QUALITY;
+  const quotedSeconds = sourceSeconds ?? (sourceReadyForQuote ? 60 : 0);
+  const cost = estimateDubCost(quotedSeconds, quality, rates);
+  // How much of this clip the balance actually covers. Below the clip's length
+  // means the dub will be cut short — the same arithmetic the server does, shown
+  // before the user commits rather than reported after.
+  const affordable = affordableSeconds(balance, quality, rates);
+  const willTrim = quotedSeconds > 0 && affordable < quotedSeconds;
+  const billableSeconds = Math.min(quotedSeconds, affordable);
+  const billableCost = estimateDubCost(billableSeconds, quality, rates);
+  // Nothing at all is affordable: the only way forward is to buy.
+  const walletEmpty = affordable <= 0;
+
   const sourceReady = !!(file || linkUrl || isSampleRun);
-  const canStart = sourceReady && !!targetLang;
+  const canStart = sourceReady && !!targetLang && !walletEmpty;
 
   const lastWork = works[0];
 
   async function start() {
     setError(null);
-    // Server-authoritative gate: the free dub, an active subscription, or enough
-    // credits. Read-only — it charges nothing.
+    setNeedsCredits(false);
+    // Server-authoritative gate. Read-only — it charges nothing.
+    //
+    // A refusal here now means only one thing: the balance buys no dubbing at
+    // all. A balance that covers PART of the clip is allowed through, and the
+    // server trims the source to what was paid for — so the job still runs and
+    // the user gets the first minute of their video rather than an error.
     //
     // A link has no duration to probe: the media is on someone else's server and
-    // the browser never sees it, so this falls back to the same default the
-    // sample clip uses. That means the pre-flight gate for a link job is an
-    // estimate — the server fetches the file, learns the real duration, and the
-    // actual charge is settled against that (see useCommitDub). A long video can
-    // therefore pass this check and still be refused once its length is known,
-    // which is the right way round: the alternative is charging for a duration
-    // nobody has measured.
+    // the browser never sees it, so this falls back to the same 60s default the
+    // sample clip uses. The server fetches the file, learns the real duration,
+    // and settles the charge against that — so a link's trim is decided there,
+    // not here, and the notice comes back on the job.
     const durationSeconds = await probeDurationSeconds(
       isSampleRun ? null : file,
     );
     try {
       const gate = await canDubGate.mutateAsync({ durationSeconds, quality });
       if (!gate.allowed) {
+        setNeedsCredits(true);
         setError(
-          gate.reason === "FREE_DUB_LENGTH_EXCEEDED"
-            ? `Your free dub covers clips up to 2 minutes — this one is longer. See Plans to continue.`
-            : `Not enough credits — this ${quality} dub costs ${gate.cost}, you have ${gate.balance}. Top up in Plans.`,
+          `You have ${gate.balance} credits — not enough to dub any of this ` +
+            `video. A minute costs ${gate.creditsPerMinute} at ${quality} quality.`,
         );
         return;
       }
@@ -336,7 +442,9 @@ export default function Studio() {
         target_lang: targetLang,
         source_lang: sourceLang,
         voice_clone: voiceClone,
-        lip_sync: lipSync,
+        voice_mode: voiceMode,
+        reference,
+        lip_sync: lipSyncAvailable && lipSync,
         keep_background: keepBackground,
         quality,
         sample: isSampleRun,
@@ -360,26 +468,41 @@ export default function Studio() {
         sourceUrl: created.result.source_url,
         simulated: created.simulated,
         speakerSimilarity: null,
-        creditsSpent: null,
+        creditsSpent: created.billing?.credits_charged ?? null,
+        trimmed: created.billing?.trimmed ?? false,
+        sourceSec: created.billing?.source_seconds ?? null,
         settings: { voiceClone, lipSync, keepBackground, quality },
         segments: [],
         error: null,
         progress: 0,
         stage: null,
       });
-      // The job exists — now actually charge it (or consume the free dub).
-      // Idempotent on jobId; never blocks the pipeline UI, but the charge it
-      // reports back is what the library records as the real cost.
-      commit
-        .mutateAsync({ jobId: created.id, durationSeconds, quality })
-        .then((res) =>
-          // A free dub costs nothing even though the API still reports the
-          // tariff it would otherwise have charged.
-          updateWork(created.id, { creditsSpent: res.charged ? res.cost : 0 }),
-        )
-        .catch(() => {
-          /* the pipeline keeps running; cost stays unknown rather than guessed */
-        });
+
+      // Who charges for this dub.
+      //
+      // The dubbing backend charges server-side before it will queue a job, and
+      // it knows the real length AND the trimmed length — so when it reports a
+      // charge, that is the charge, and calling commit-dub from here would only
+      // repeat it (harmlessly, being idempotent on jobId) with a duration that
+      // is wrong for a trimmed run.
+      //
+      // The fallback matters for a backend with no account API configured — a
+      // local run, or the docker-compose stack — where nothing has been charged
+      // and the browser is the only thing that can do it.
+      if (created.billing?.credits_charged != null) {
+        // Already charged and already recorded above. Just refresh the wallet so
+        // the top-bar balance catches up with a charge this tab did not make.
+        void refreshWallet();
+      } else {
+        commit
+          .mutateAsync({ jobId: created.id, durationSeconds, quality })
+          .then((res) =>
+            updateWork(created.id, { creditsSpent: res.charged ? res.cost : 0 }),
+          )
+          .catch(() => {
+            /* the pipeline keeps running; cost stays unknown rather than guessed */
+          });
+      }
       const stopSse = subscribeJob(
         created.id,
         (evt) => setJob(evt.job),
@@ -390,6 +513,11 @@ export default function Studio() {
       );
       unsubRef.current = stopSse;
     } catch (e) {
+      // The server does the credit check again — the browser's preflight is a
+      // courtesy, not the authority — so a refusal can land here even though the
+      // gate above said yes: a link's real length is only known server-side, and
+      // the balance can move between the two calls. Offer the fix either way.
+      if (e instanceof PaymentRequiredError) setNeedsCredits(true);
       setError(e instanceof Error ? e.message : "Failed to start job");
     } finally {
       setBusy(false);
@@ -492,10 +620,18 @@ export default function Studio() {
     [languages],
   );
 
+  // Whether this deployment can actually lip-sync, straight from /health:
+  // Wav2Lip is optional and usually absent, and a toggle that silently does
+  // nothing is worse than one that says it cannot.
+  const lipSyncAvailable =
+    health?.stages.some((s) => s.key === "lipsync" && s.mode === "real") ??
+    false;
+
   const optionSummary = [
-    voiceClone ? "Voice clone" : "Generic voice",
+    voiceModeLabel(voiceMode),
+    reference ? "Custom voice" : null,
     keepBackground ? "Keep background" : "Speech only",
-    lipSync ? "Lip sync" : null,
+    lipSyncAvailable && lipSync ? "Lip sync" : null,
   ]
     .filter(Boolean)
     .join(" · ");
@@ -919,15 +1055,21 @@ export default function Studio() {
         onToggle={() => toggleStep("options")}
         tour="tour-options"
       >
-        <OptionToggle
-          checked={voiceClone}
-          onChange={(v) => {
-            setVoiceClone(v);
+        <VoicePicker
+          mode={voiceMode}
+          onMode={(m) => {
+            setVoiceMode(m);
+            // A reference clip has no meaning without a voice to clone onto,
+            // so switching to "a native speaker" drops it rather than keeping
+            // a file the run will ignore.
+            if (m === "native") setReference(null);
             markTouched("options");
           }}
-          title="Voice cloning"
-          description="Preserve the original speaker's voice instead of a generic narrator."
-          icon={<path d="M3 12h3l2-6 3 15 3-12 2 5h4" />}
+          reference={reference}
+          onReference={(f) => {
+            setReference(f);
+            markTouched("options");
+          }}
         />
         <OptionToggle
           checked={keepBackground}
@@ -942,14 +1084,19 @@ export default function Studio() {
           }
         />
         <OptionToggle
-          checked={lipSync}
+          checked={lipSyncAvailable && lipSync}
+          disabled={!lipSyncAvailable}
           onChange={(v) => {
             setLipSync(v);
             markTouched("options");
           }}
           accent="magenta"
           title="Lip sync (optional)"
-          description="Reshape the speaker's mouth to match the translated speech (Wav2Lip)."
+          description={
+            lipSyncAvailable
+              ? "Reshape the speaker's mouth to match the translated speech."
+              : "Not available on this deployment — dubs run without it."
+          }
           icon={<path d="M3 12c3-3 15-3 18 0-3 4-15 4-18 0zM7 12h10" />}
         />
       </StepCard>
@@ -1035,6 +1182,9 @@ export default function Studio() {
             <Equalizer idle className="text-white/70" />
           )}
           <span>
+            {/* What this run will actually charge. On a trimmed run that is the
+                affordable part, not the whole clip — quoting `cost` there would
+                name a price the user is not about to pay. */}
             <span
               className={
                 short
@@ -1042,7 +1192,7 @@ export default function Studio() {
                   : "font-medium text-white"
               }
             >
-              {cost}
+              {billableCost}
             </span>{" "}
             / {balance.toLocaleString()} cr
           </span>
@@ -1053,7 +1203,11 @@ export default function Studio() {
         onClick={start}
         disabled={busy || running || !canStart}
         title={
-          !canStart ? "Choose a source and a target language first" : undefined
+          walletEmpty
+            ? "You have no credits left — buy credits or a plan to dub"
+            : !canStart
+              ? "Choose a source and a target language first"
+              : undefined
         }
         className="btn-on-deep focusable above w-full py-3.5 font-mono text-sm"
       >
@@ -1071,9 +1225,16 @@ export default function Studio() {
               ? "Starting…"
               : running
                 ? `Dubbing… ${overall}%`
-                : canStart
-                  ? `Start dubbing · ${cost} →`
-                  : "Add a clip to start"}
+                : walletEmpty
+                  ? "No credits left"
+                  : canStart
+                    ? // On a trimmed run the button names the length too, so the
+                      // cut is stated at the moment of committing to it and not
+                      // only in the panel above.
+                      willTrim
+                      ? `Dub first ${formatSeconds(billableSeconds)} · ${billableCost} →`
+                      : `Start dubbing · ${billableCost} →`
+                    : "Add a clip to start"}
           </motion.span>
         </AnimatePresence>
       </MagneticButton>
@@ -1236,7 +1397,71 @@ export default function Studio() {
             className="overflow-hidden"
           >
             <div className="card border-danger/30 bg-danger/10 px-5 py-4 text-sm text-danger">
-              {error}
+              <p>{error}</p>
+              {/* A credit refusal is the one failure the user can fix from
+                  here, so it ships with the fix attached rather than telling
+                  them to go and find the Plans page. */}
+              {needsCredits && (
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <Link
+                    to="/plans"
+                    className="btn-primary focusable px-4 py-2 font-mono text-xs"
+                  >
+                    Buy credits →
+                  </Link>
+                  <Link
+                    to="/plans"
+                    className="btn-ghost focusable px-4 py-2 font-mono text-xs"
+                  >
+                    See plans
+                  </Link>
+                </div>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ── The trim warning ──────────────────────────────────────────────
+          Shown BEFORE the run when the balance covers only part of the clip,
+          and after it when the server reports the same thing (a link's length
+          is only known server-side, so that is the only warning a link gets).
+
+          This is the whole point of per-second pricing: a short wallet dubs
+          the front of the video instead of being refused, and the user is told
+          plainly — with the price of the rest — rather than left wondering why
+          their five-minute upload came back a minute long. */}
+      <AnimatePresence initial={false}>
+        {(job?.billing?.trimmed || (!job && willTrim && sourceReadyForQuote)) && (
+          <motion.div
+            initial={{ opacity: 0, y: -8, height: 0 }}
+            animate={{ opacity: 1, y: 0, height: "auto" }}
+            exit={{ opacity: 0, y: -8, height: 0 }}
+            transition={{ duration: 0.25, ease: EASE_ENTRANCE }}
+            className="overflow-hidden"
+          >
+            <div className="card border-warn/30 bg-warn/10 px-5 py-4 text-sm">
+              <p className="font-medium text-primary">
+                {job?.billing?.trimmed
+                  ? "Only part of this video was dubbed"
+                  : "Your balance covers part of this video"}
+              </p>
+              <p className="mt-1 text-secondary">
+                {job?.billing?.notice ??
+                  `You have ${balance} credits, which covers ${formatSeconds(
+                    billableSeconds,
+                  )} of this ${formatSeconds(quotedSeconds)} video. ` +
+                    `We'll dub the first ${formatSeconds(billableSeconds)} for ` +
+                    `${billableCost} credits — the whole thing would cost ${cost}.`}
+              </p>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <Link
+                  to="/plans"
+                  className="btn-primary focusable px-4 py-2 font-mono text-xs"
+                >
+                  Buy credits to dub it all →
+                </Link>
+              </div>
             </div>
           </motion.div>
         )}

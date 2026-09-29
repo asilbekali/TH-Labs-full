@@ -89,6 +89,20 @@ export interface CreateJobInput {
   target_lang: string
   source_lang?: string
   voice_clone?: boolean
+  /**
+   * Whose voice, and in what accent — 'both' (their timbre, native accent),
+   * 'speaker' (their voice and their accent) or 'native' (a target-language
+   * voice, nothing kept).
+   *
+   * Sent alongside `voice_clone` rather than replacing it: the pipeline still
+   * branches on the boolean, and the mode refines what it does when cloning.
+   */
+  voice_mode?: string
+  /**
+   * Optional clip of a DIFFERENT voice to dub in, instead of the speaker in
+   * the source. Only sent when the mode clones a voice at all.
+   */
+  reference?: File | null
   lip_sync?: boolean
   keep_background?: boolean
   quality?: string
@@ -116,11 +130,30 @@ export class AuthRequiredError extends Error {
   }
 }
 
+/**
+ * The dub was refused for want of credits (HTTP 402).
+ *
+ * Typed separately because it is the one failure with a fix the user can act on
+ * themselves, and the UI has to offer that fix — a buy-credits route — rather
+ * than printing a sentence into an error box. Everything else that can go wrong
+ * with a job is a plain Error.
+ */
+export class PaymentRequiredError extends Error {
+  constructor(message: string) {
+    super(message || 'You need more credits to dub this video.')
+    this.name = 'PaymentRequiredError'
+  }
+}
+
 export async function createJob(input: CreateJobInput): Promise<Job> {
   const fd = new FormData()
   fd.append('target_lang', input.target_lang)
   fd.append('source_lang', input.source_lang ?? 'auto')
   fd.append('voice_clone', String(input.voice_clone ?? true))
+  // Both optional on the pipeline, so only sent when set — an older backend
+  // that does not know these fields simply never sees them.
+  if (input.voice_mode) fd.append('voice_mode', input.voice_mode)
+  if (input.reference) fd.append('reference', input.reference)
   fd.append('lip_sync', String(input.lip_sync ?? false))
   fd.append('keep_background', String(input.keep_background ?? true))
   fd.append('quality', input.quality ?? 'balanced')
@@ -145,6 +178,10 @@ export async function createJob(input: CreateJobInput): Promise<Job> {
     } catch {
       /* not JSON — fall through to the raw body */
     }
+    // 402 is the one status with a fix the user can act on themselves, so it
+    // gets its own type and the Studio offers the fix instead of printing the
+    // sentence into an error box.
+    if (r.status === 402) throw new PaymentRequiredError(detail)
     if (detail) throw new Error(detail)
     throw new Error(`job creation failed: ${r.status} ${raw}`)
   }

@@ -29,13 +29,43 @@ export interface Plan {
 // GET /v1/payments/plans, which is the only source that can be wrong-by-drift.
 const PLAN_NAMES: Record<PlanId, string> = { free: 'Free', pro: 'Pro', studio: 'Studio' }
 
-// Fallback credit cost per quality — a display hint for the Studio's estimate
-// line before can-dub answers. The server table (GET /payments/plans →
+// Fallback credits-per-MINUTE per quality — a display hint for the Studio's
+// estimate line before can-dub answers. The server table (GET /payments/plans →
 // qualityCost) is the authority, and can-dub is what actually decides.
-export const QUALITY_COST: Record<string, number> = {
-  fast: 5,
-  balanced: 10,
-  studio: 20,
+//
+// These were flat per-dub costs (5/10/20), which meant the Studio quoted the
+// same price for a 20-second clip and an hour-long film. Cost is per second now;
+// see api/src/payment/quality-cost.ts.
+export const CREDITS_PER_MINUTE_BY_QUALITY: Record<string, number> = {
+  fast: 10,
+  balanced: 20,
+  studio: 40,
+}
+
+/**
+ * Credits `seconds` of source costs at `quality`. Mirrors costForDub() on the
+ * server — prorated per second, rounded up, minimum 1 for any real length.
+ * A quote, not a charge: can-dub is what decides.
+ */
+export function estimateDubCost(
+  seconds: number,
+  quality: string,
+  ratePerMinute: Record<string, number> = CREDITS_PER_MINUTE_BY_QUALITY,
+): number {
+  const rate = ratePerMinute[quality] ?? CREDITS_PER_MINUTE_BY_QUALITY.balanced
+  if (!Number.isFinite(seconds) || seconds <= 0) return 0
+  return Math.max(1, Math.ceil((seconds * rate) / 60))
+}
+
+/** Seconds of dubbing `balance` credits buys at `quality`. Mirrors the server. */
+export function affordableSeconds(
+  balance: number,
+  quality: string,
+  ratePerMinute: Record<string, number> = CREDITS_PER_MINUTE_BY_QUALITY,
+): number {
+  const rate = ratePerMinute[quality] ?? CREDITS_PER_MINUTE_BY_QUALITY.balanced
+  if (!Number.isFinite(balance) || balance <= 0) return 0
+  return Math.floor((balance * 60) / rate)
 }
 
 const TIER_TO_PLAN: Record<PlanTier, PlanId> = {

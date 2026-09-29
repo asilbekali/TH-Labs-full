@@ -99,8 +99,12 @@ model User {
   role     Role   @default(USER)
 
   // ── Billing & credits (step 05, additive) ──────────────────────────────
-  credits        Int     @default(60) // cached balance; CreditEntry ledger is the truth
-  freeDubUsed    Boolean @default(false) // the one free 2-minute dub
+  /// Cached balance; the CreditEntry ledger is the truth. Defaults to 0 and is
+  /// funded by an explicit SIGNUP_BONUS ledger entry at registration (see
+  /// UsersService.create) — a bare column default gave every account credits
+  /// that no ledger row accounted for, which is exactly the drift
+  /// /payments/credits/reconcile exists to report.
+  credits        Int     @default(0)
   /// Dodo Payments customer id (`cus_…`), stamped the first time a payment of
   /// theirs is processed. Lets us open the Dodo customer portal for them.
   dodoCustomerId String? @unique

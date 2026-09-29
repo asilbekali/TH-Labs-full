@@ -34,7 +34,12 @@ type PlanSeed = {
 };
 
 const PLAN_SEED: PlanSeed[] = [
-  { tier: 'FREE', cycle: 'MONTHLY', priceCents: 0, creditsGranted: 60, grantDays: 30, grantsPerPeriod: 1 },
+  // The FREE row is a catalog entry, not a recurring grant: the cron only pays
+  // out against real Subscription rows, and a free account has none. Its
+  // creditsGranted is therefore exactly the one-time welcome bonus registration
+  // hands out (SIGNUP_BONUS_CREDITS = 20 = one minute at Balanced), so the
+  // pricing page and the wallet cannot disagree about what "free" means.
+  { tier: 'FREE', cycle: 'MONTHLY', priceCents: 0, creditsGranted: 20, grantDays: 30, grantsPerPeriod: 1 },
 
   { tier: 'PRO', cycle: 'MONTHLY', priceCents: 1950, creditsGranted: 1200, grantDays: 30, grantsPerPeriod: 1, productEnv: 'DODO_PRODUCT_PRO_MONTHLY' },
   { tier: 'PRO', cycle: 'YEARLY', priceCents: 19900, creditsGranted: 1200, grantDays: 30, grantsPerPeriod: 12, productEnv: 'DODO_PRODUCT_PRO_YEARLY' },

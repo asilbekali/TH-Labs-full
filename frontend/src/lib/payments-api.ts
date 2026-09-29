@@ -53,8 +53,14 @@ export interface CheckoutInfo {
 
 export interface PlansResponse {
   plans: ServerPlan[]
+  /** Credits a MINUTE of dubbing costs, per quality. Was a flat per-dub cost. */
   qualityCost: Record<string, number>
-  freeDubMaxSeconds: number
+  /** Balanced-quality tariff: credits per minute of source. */
+  creditsPerMinute?: number
+  qualityMultiplier?: Record<string, number>
+  /** Seconds of dubbing the signup bonus buys — the free minute. */
+  freeMinuteSeconds?: number
+  signupBonusCredits?: number
   /** Absent on an API deployed before the Dodo switch. */
   checkout?: CheckoutInfo
 }
@@ -185,18 +191,34 @@ export interface HistoryResponse {
   items: PaymentRow[]
 }
 
+// The gate's answer is no longer yes/no. Credits are priced per second, so a
+// balance that cannot pay for a whole video still pays for the front of it:
+// `allowed` means "some of this can be dubbed", and `trimmed` means "not all of
+// it". Only a balance that buys nothing at all comes back as allowed: false.
 export interface CanDubResult {
   allowed: boolean
-  reason: 'FREE_DUB_LENGTH_EXCEEDED' | 'INSUFFICIENT_CREDITS' | null
+  reason: 'INSUFFICIENT_CREDITS' | null
+  /** Credits the FULL clip would cost. */
   cost: number
-  isFreeDub: boolean
   balance: number
+  /** Length asked about, echoed back. */
+  durationSeconds: number
+  /** Seconds that will actually be dubbed and charged. */
+  billableSeconds: number
+  /** Credits for `billableSeconds` — what the charge will be. */
+  billableCost: number
+  /** True when the dub will be cut short to fit the balance. */
+  trimmed: boolean
+  /** Longest clip this balance could dub at this quality. */
+  affordableSeconds: number
+  creditsPerMinute: number
 }
 
 export interface CommitDubResult {
   jobId: string
   charged: boolean
-  isFreeDub: boolean
+  /** Seconds charged for — post-trim, so not always the source length. */
+  durationSeconds: number
   cost: number
   balance: number
   idempotent: boolean

@@ -836,22 +836,34 @@ function CompareDisclosure({
               {/* Everything below is the live tariff the credit gate enforces. */}
               <div className="mt-5 grid gap-4 border-t border-subtle pt-4 sm:grid-cols-2">
                 <div>
-                  <SectionMark>Credit cost per dub</SectionMark>
+                  {/* Per MINUTE now, not per dub. A flat per-dub price meant a
+                      20-second clip and an hour-long film cost the same. */}
+                  <SectionMark>Credit cost per minute</SectionMark>
                   <ul className="mt-2 space-y-1">
                     {Object.entries(catalog.qualityCost).map(([quality, cost]) => (
                       <li key={quality} className="flex items-center justify-between text-sm">
                         <span className="capitalize text-secondary">{quality}</span>
-                        <span className="font-mono text-primary">{cost} credits</span>
+                        <span className="font-mono text-primary">{cost} cr / min</span>
                       </li>
                     ))}
                   </ul>
+                  <p className="mt-2 text-[11px] text-muted">
+                    Charged per second, rounded up. Run out mid-video and we dub
+                    the part your balance covers, then tell you what the rest costs.
+                  </p>
                 </div>
                 <div>
-                  <SectionMark>Free dub</SectionMark>
+                  <SectionMark>Your first minute is free</SectionMark>
                   <p className="mt-2 text-sm text-secondary">
-                    Every account gets one free dub of up to{' '}
-                    <span className="font-mono text-primary">{Math.round(catalog.freeDubMaxSeconds / 60)} min</span>,
-                    charged at zero credits.
+                    Every new account starts with{' '}
+                    <span className="font-mono text-primary">
+                      {catalog.signupBonusCredits ?? 20} credits
+                    </span>
+                    {' '}— enough to dub{' '}
+                    <span className="font-mono text-primary">
+                      {Math.round((catalog.freeMinuteSeconds ?? 60) / 60)} min
+                    </span>{' '}
+                    at Balanced quality, with no card and nothing to cancel.
                   </p>
                 </div>
               </div>
