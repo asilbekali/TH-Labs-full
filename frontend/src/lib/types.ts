@@ -93,6 +93,25 @@ export interface DubOptions {
   preserve_timing: boolean
 }
 
+/**
+ * What this dub cost, straight from the server. `trimmed` is the field that
+ * matters to the UI: when a balance covers only part of a video the pipeline
+ * dubs the part it covers, and the user has to be told that what they are
+ * watching is not the whole thing.
+ *
+ * Optional throughout — a job from a backend deployed before per-second pricing
+ * carries none of it, and an unbilled deployment carries an empty object.
+ */
+export interface JobBilling {
+  billed_seconds: number | null
+  source_seconds: number | null
+  credits_charged: number | null
+  balance_after: number | null
+  trimmed: boolean
+  /** A sentence written for the user; set only when the dub was cut short. */
+  notice: string | null
+}
+
 export interface Job {
   id: string
   status: JobStatus
@@ -101,6 +120,7 @@ export interface Job {
   simulated: boolean
   stages: StageState[]
   result: JobResult
+  billing?: JobBilling
   error: string | null
   created_at: number
   updated_at: number

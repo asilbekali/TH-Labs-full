@@ -35,9 +35,10 @@ from .logging_config import setup_logging
 # Before anything else imports a module-level logger, so the pipeline's trace
 # actually reaches Modal's log stream.
 setup_logging()
-from .jobs import manager
+from .jobs import manager, new_job_id
 from .pipeline import fetch, media
-from .schemas import (DubOptions, HealthInfo, JobStatus, Quality, StageInfo)
+from .schemas import (DubOptions, HealthInfo, JobBilling, JobStatus, Quality,
+                      StageInfo)
 
 settings = get_settings()
 log = logging.getLogger(__name__)
@@ -218,31 +219,79 @@ async def create_job(
     # Runs here, not only in the Studio: a bearer token proves who is asking,
     # not that they have paid, and this route spends GPU minutes. See
     # app/billing.py. No-ops unless TH_LABS_ACCOUNT_API_URL is configured.
-    duration_seconds = 0.0
+    #
+    # Credits are priced per second, so a wallet that cannot pay for the whole
+    # video still pays for the front of it. When that happens the source is cut
+    # to the affordable length and the dub runs on that, with a notice carried
+    # back to the user — a minute of a five-minute video is worth more to them
+    # than a 402, and a brand-new account's free minute is exactly this path
+    # rather than a special case.
+    #
+    # ORDER MATTERS. The id is reserved first, the charge settles against it,
+    # and only then is the job queued. `manager.create` enqueues onto the
+    # worker's loop, so anything awaited after it races the pipeline: a charge
+    # that failed there would be marking a job failed that had already started
+    # dubbing, and the status would be overwritten by the worker moments later.
+    job_id = new_job_id()
+    job_billing = JobBilling()
     if billing.enabled():
         probed = media.probe_duration(input_video)
         if probed is None:
-            # Length decides whether this qualifies as the free dub, so an
-            # unknown duration must not silently be treated as zero.
+            # The charge is computed FROM the length, so an unknown duration
+            # cannot be quietly treated as zero — that would dub for free.
             raise HTTPException(400, "Could not read the video's duration.")
-        duration_seconds = probed
-        await billing.can_dub(user.token, duration_seconds, quality.value)
+        source_seconds = probed
+        gate = await billing.can_dub(user.token, source_seconds, quality.value)
+        duration_seconds = source_seconds
+
+        if gate.trimmed:
+            # Cut to what the balance covers, then bill the cut length. Trimming
+            # BEFORE the pipeline is the point: the GPU only ever processes what
+            # has been paid for.
+            trimmed_path = (settings.uploads_dir /
+                            f"trim_{_safe_id()}{input_video.suffix or '.mp4'}")
+            ok = await run_in_threadpool(
+                media.trim_to_seconds, input_video, trimmed_path,
+                gate.billable_seconds)
+            if not ok:
+                # No ffmpeg, or the cut failed. Charging for the full clip would
+                # overdraw a wallet we already know is short, and dubbing it
+                # would be unpaid GPU — so refuse, and say what would have run.
+                log.error("trim to %.1fs failed for source %s",
+                          gate.billable_seconds, input_video)
+                raise HTTPException(
+                    402,
+                    f"You have {gate.balance} credits, which covers "
+                    f"{int(gate.billable_seconds)}s of this video, but we "
+                    "couldn't cut it to that length. Buy credits to dub the "
+                    "whole video.",
+                )
+            input_video = trimmed_path
+            # Bill the length ffmpeg actually produced, not the length we asked
+            # for. They agree to within a frame, but the charge must follow the
+            # file, not the request.
+            actual = media.probe_duration(trimmed_path)
+            duration_seconds = (actual if actual is not None
+                                else gate.billable_seconds)
+
+        # The charge, for the seconds that will actually be dubbed. Idempotent
+        # on job_id, so the Studio issuing the same call is harmless. A refusal
+        # here means no job is ever created, so there is nothing half-paid to
+        # clean up and no orphan in the library.
+        charged = await billing.commit_dub(user.token, job_id,
+                                           duration_seconds, quality.value)
+        job_billing = JobBilling(
+            billed_seconds=duration_seconds,
+            source_seconds=source_seconds,
+            credits_charged=charged.billable_cost,
+            balance_after=charged.balance,
+            trimmed=gate.trimmed,
+            notice=gate.notice(source_seconds),
+        )
 
     job = manager.create(options, input_video, scenario, filename,
-                         owner_id=user.id, force_simulate=force_simulate)
-
-    if billing.enabled():
-        # Charge now that the job has an id. Idempotent on it, so the Studio
-        # issuing the same call is harmless. If the charge fails the job must
-        # not run — mark it failed rather than leaving a paid-for-nothing run
-        # in the library, and let the 402 reach the caller.
-        try:
-            await billing.commit_dub(user.token, job.id, duration_seconds,
-                                     quality.value)
-        except HTTPException:
-            job.status = JobStatus.failed
-            job.error = "Billing declined this dub."
-            raise
+                         owner_id=user.id, force_simulate=force_simulate,
+                         job_id=job_id, billing=job_billing)
 
     return {"id": job.id, "job": job.model_dump(mode="json")}
 

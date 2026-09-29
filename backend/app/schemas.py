@@ -81,6 +81,28 @@ class JobResult(BaseModel):
     detected_source_lang: Optional[str] = None
 
 
+class JobBilling(BaseModel):
+    """What this dub cost, and whether it was cut short to fit the wallet.
+
+    Present on every job so the Studio and My Works can report the real charge
+    instead of re-deriving an estimate. `trimmed` is the interesting field: a
+    balance that cannot pay for the whole video still pays for the front of it,
+    and the user has to be told plainly that what they are watching is not the
+    whole thing.
+    """
+    # Length actually dubbed and charged for.
+    billed_seconds: Optional[float] = None
+    # Full length of the source, before any trim. Equal to billed_seconds when
+    # nothing was cut.
+    source_seconds: Optional[float] = None
+    credits_charged: Optional[int] = None
+    balance_after: Optional[int] = None
+    trimmed: bool = False
+    # A sentence written for the user, shown verbatim by the Studio. Set only
+    # when the dub was cut short.
+    notice: Optional[str] = None
+
+
 class Job(BaseModel):
     id: str
     # User id from the verified JWT (`sub`). Jobs carry the uploaded video and
@@ -93,6 +115,9 @@ class Job(BaseModel):
     simulated: bool = True
     stages: list[StageState] = Field(default_factory=list)
     result: JobResult = Field(default_factory=JobResult)
+    # Credit accounting for this run. Always present; empty when this
+    # deployment runs unbilled (TH_LABS_ACCOUNT_API_URL unset).
+    billing: JobBilling = Field(default_factory=JobBilling)
     error: Optional[str] = None
     created_at: float
     updated_at: float

@@ -17,10 +17,19 @@ import {
 
 import { PrismaService } from '../prisma/prisma.service';
 import { DodoService } from './dodo.service';
-import { CREDITS_PER_MINUTE, QUALITY_MULTIPLIER } from './credit-packs';
 import { CanDubDto, CanDubResult } from './dto/can-dub.dto';
 import { CommitDubDto, CommitDubResult } from './dto/commit-dub.dto';
-import { QUALITY_COST, costForQuality } from './quality-cost';
+import { PaymentRequiredException } from './payment-required.exception';
+import {
+  CREDITS_PER_MINUTE,
+  CREDITS_PER_MINUTE_BY_QUALITY,
+  FREE_MINUTE_SECONDS,
+  QUALITY_MULTIPLIER,
+  SIGNUP_BONUS_CREDITS,
+  affordableSeconds,
+  costForDub,
+  rateFor,
+} from './quality-cost';
 
 // Metadata we stamp on every checkout and read back off the webhook. Prefixed
 // so it can never collide with a key the dashboard or a discount campaign
@@ -46,8 +55,12 @@ export class PaymentService {
     private readonly config: ConfigService,
   ) {}
 
-  private get freeDubMaxSeconds(): number {
-    return Number(this.config.get('FREE_DUB_MAX_SECONDS')) || 120;
+  // The free allowance is no longer a special-cased "one free dub of up to N
+  // seconds". A new account is simply given SIGNUP_BONUS_CREDITS, which buys
+  // exactly this many seconds at Balanced quality. Reported to clients so the
+  // pricing page can state the offer without hardcoding it.
+  private get freeMinuteSeconds(): number {
+    return FREE_MINUTE_SECONDS;
   }
 
   private get appUrl(): string {
@@ -79,8 +92,12 @@ export class PaymentService {
 
     return {
       plans,
-      qualityCost: QUALITY_COST,
-      freeDubMaxSeconds: this.freeDubMaxSeconds,
+      // Per-MINUTE price list now, not a flat per-dub cost.
+      qualityCost: CREDITS_PER_MINUTE_BY_QUALITY,
+      creditsPerMinute: CREDITS_PER_MINUTE,
+      qualityMultiplier: QUALITY_MULTIPLIER,
+      freeMinuteSeconds: this.freeMinuteSeconds,
+      signupBonusCredits: SIGNUP_BONUS_CREDITS,
       checkout: {
         provider: 'dodo' as const,
         mode: this.dodo.environment === 'live_mode' ? ('live' as const) : ('test' as const),
@@ -369,88 +386,87 @@ export class PaymentService {
     });
   }
 
-  // ── The free-dub / credit gate ──────────────────────────────────────────
+  // ── The credit gate ─────────────────────────────────────────────────────
+  //
+  // Read-only, charges nothing. Answers three things at once: whether any
+  // dubbing can be paid for, how much of the clip the balance actually covers,
+  // and what that portion costs.
+  //
+  // The important departure from the old gate is that a short balance is no
+  // longer a flat refusal. Cost is per second, so a wallet that cannot pay for
+  // a five-minute video can still pay for the first minute of it — and that is
+  // what a new account's one free minute is: not a special case, just a small
+  // balance. The caller trims to `billableSeconds` and charges for that.
   async canDub(userId: number, dto: CanDubDto): Promise<CanDubResult> {
-    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { credits: true },
+    });
     if (!user) throw new NotFoundException('User not found.');
 
-    const cost = costForQuality(dto.quality);
-    const max = this.freeDubMaxSeconds;
+    const duration = Math.max(0, Number(dto.durationSeconds) || 0);
+    const cost = costForDub(duration, dto.quality);
+    const affordable = affordableSeconds(user.credits, dto.quality);
+    const billableSeconds = Math.min(duration, affordable);
+    const billableCost = costForDub(billableSeconds, dto.quality);
 
-    // 1. The one free dub, if unused and within the length cap.
-    if (!user.freeDubUsed && dto.durationSeconds <= max) {
-      return {
-        allowed: true,
-        isFreeDub: true,
-        cost: 0,
-        balance: user.credits,
-        reason: null,
-      };
-    }
-
-    // 2. Enough credits → paid dub. A subscription alone is not enough: a
-    //    subscriber who has spent the month's allocation has to wait for the
-    //    next grant like everyone else. This has to agree with commitDub,
-    //    which enforces the balance unconditionally — letting a subscription
-    //    pass here just moved the failure from a clean preflight refusal to a
-    //    mid-job INSUFFICIENT_CREDITS.
-    if (user.credits >= cost) {
-      return {
-        allowed: true,
-        isFreeDub: false,
-        cost,
-        balance: user.credits,
-        reason: null,
-      };
-    }
-
-    // 3. Denied. If the free dub is still unused, the blocker is length;
-    //    otherwise it's an empty wallet.
     return {
-      allowed: false,
-      isFreeDub: false,
+      // Not "can you afford the whole thing" but "is there anything to dub".
+      // A balance of zero buys zero seconds and is the only refusal.
+      allowed: billableSeconds > 0,
+      reason: billableSeconds > 0 ? null : 'INSUFFICIENT_CREDITS',
       cost,
       balance: user.credits,
-      reason:
-        !user.freeDubUsed && dto.durationSeconds > max
-          ? 'FREE_DUB_LENGTH_EXCEEDED'
-          : 'INSUFFICIENT_CREDITS',
+      durationSeconds: duration,
+      billableSeconds,
+      billableCost,
+      // A refusal is not a trim. Without the first clause a wallet that buys
+      // nothing reports `trimmed: true` alongside `allowed: false`, which reads
+      // as "we cut your video" when in fact nothing is going to be dubbed.
+      trimmed: billableSeconds > 0 && billableSeconds < duration,
+      affordableSeconds: affordable,
+      creditsPerMinute: rateFor(dto.quality),
     };
   }
 
-  // Charge the dub. This is where credits actually move (or the free dub is
-  // consumed). Idempotent on jobId: a retried request returns the first result
-  // and never charges twice.
+  // Charge the dub. This is where credits actually move. `durationSeconds` is
+  // the length ACTUALLY DUBBED — the caller has already trimmed to what the
+  // balance covers — so this charges for exactly that and refuses if the
+  // balance no longer stretches to it.
+  //
+  // Idempotent on jobId: a retried request returns the first result and never
+  // charges twice.
   async commitDub(userId: number, dto: CommitDubDto): Promise<CommitDubResult> {
-    const cost = costForQuality(dto.quality);
-    const max = this.freeDubMaxSeconds;
+    const duration = Math.max(0, Number(dto.durationSeconds) || 0);
+    const cost = costForDub(duration, dto.quality);
 
     return this.prisma.$transaction(async (tx) => {
       // Idempotency: a ledger row already tagged with this jobId means we've
-      // committed it before. (Free dubs write a delta:0 marker row.)
+      // committed it before.
       const existing = await tx.creditEntry.findFirst({
         where: { userId, refId: dto.jobId, reason: CreditReason.DUB_SPEND },
       });
-      const user = await tx.user.findUnique({ where: { id: userId } });
+      const user = await tx.user.findUnique({
+        where: { id: userId },
+        select: { credits: true },
+      });
       if (!user) throw new NotFoundException('User not found.');
 
       if (existing) {
         return {
           jobId: dto.jobId,
           charged: existing.delta < 0,
-          isFreeDub: existing.delta === 0,
+          durationSeconds: duration,
           cost: Math.abs(existing.delta),
           balance: user.credits,
           idempotent: true,
         };
       }
 
-      // Free dub path — consume it, charge nothing, but leave a marker row.
-      if (!user.freeDubUsed && dto.durationSeconds <= max) {
-        await tx.user.update({
-          where: { id: userId },
-          data: { freeDubUsed: true },
-        });
+      // A zero-length dub costs nothing and has nothing to charge. Still write
+      // the marker row, so a retry is recognised as already-committed rather
+      // than charged on the second attempt.
+      if (cost === 0) {
         await tx.creditEntry.create({
           data: {
             userId,
@@ -458,26 +474,38 @@ export class PaymentService {
             balance: user.credits,
             reason: CreditReason.DUB_SPEND,
             refId: dto.jobId,
-            note: 'free dub',
+            note: `dub ${dto.jobId} (0s)`,
           },
         });
         return {
           jobId: dto.jobId,
           charged: false,
-          isFreeDub: true,
+          durationSeconds: duration,
           cost: 0,
           balance: user.credits,
           idempotent: false,
         };
       }
 
-      // Paid path — atomic guarded decrement.
+      // Atomic guarded decrement: two concurrent commits can never both pass
+      // the balance check, and the balance never goes negative.
       const decremented = await tx.user.updateMany({
         where: { id: userId, credits: { gte: cost } },
         data: { credits: { decrement: cost } },
       });
       if (decremented.count === 0) {
-        throw new BadRequestException('INSUFFICIENT_CREDITS');
+        // 402, not 400. The request was well-formed; the wallet is empty. A
+        // 400 here was indistinguishable from a validation error to every
+        // caller — see PaymentRequiredException.
+        throw new PaymentRequiredException({
+          reason: 'INSUFFICIENT_CREDITS',
+          message:
+            `Not enough credits — dubbing ${Math.round(duration)}s at ` +
+            `${dto.quality} costs ${cost}, you have ${user.credits}.`,
+          cost,
+          balance: user.credits,
+          affordableSeconds: affordableSeconds(user.credits, dto.quality),
+        });
       }
       const after = await tx.user.findUnique({
         where: { id: userId },
@@ -490,13 +518,13 @@ export class PaymentService {
           balance: after!.credits,
           reason: CreditReason.DUB_SPEND,
           refId: dto.jobId,
-          note: `dub ${dto.jobId} (${dto.quality})`,
+          note: `dub ${dto.jobId} (${Math.round(duration)}s ${dto.quality})`,
         },
       });
       return {
         jobId: dto.jobId,
         charged: true,
-        isFreeDub: false,
+        durationSeconds: duration,
         cost,
         balance: after!.credits,
         idempotent: false,

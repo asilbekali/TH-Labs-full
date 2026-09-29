@@ -56,9 +56,10 @@ class Settings(BaseSettings):
     # one denies the job rather than granting free GPU time.
     billing_timeout: float = 10.0
 
-    # Only used to phrase the 402 when a clip exceeds the free-dub allowance.
-    # The account API owns the real number; this just keeps the message honest.
-    free_dub_max_seconds: int = 120
+    # There is deliberately no free-dub length setting here any more. Credits
+    # are priced per second, so "how much may this user dub" has exactly one
+    # answer — their balance — and the account API computes it. A local copy of
+    # the number could only ever disagree with the authority.
 
     # CORS — browser origins allowed to call this API.
     # The deployed Studio is served by THIS app (main.py mounts frontend/dist),

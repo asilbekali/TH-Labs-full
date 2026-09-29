@@ -9,6 +9,7 @@ export default function OptionToggle({
   description,
   icon,
   accent = 'brand',
+  disabled = false,
 }: {
   checked: boolean
   onChange: (v: boolean) => void
@@ -16,6 +17,14 @@ export default function OptionToggle({
   description: string
   icon?: ReactNode
   accent?: 'brand' | 'magenta'
+  /**
+   * For an option this deployment cannot honour — Lip sync where Wav2Lip is
+   * not installed. Shown greyed and inert rather than hidden, so the feature
+   * is still discoverable and the `description` can say why it is off; a
+   * toggle that silently did nothing would be worse than one that says it
+   * cannot.
+   */
+  disabled?: boolean
 }) {
   // A monotonically-increasing key so each toggle re-mounts (and replays) the
   // brand-tinted ripple that blooms from the knob.
@@ -28,16 +37,20 @@ export default function OptionToggle({
       type="button"
       role="switch"
       aria-checked={checked}
+      disabled={disabled}
       onClick={() => {
+        if (disabled) return
         onChange(!checked)
         setRipple((r) => r + 1)
       }}
       className={`focusable flex w-full items-start gap-3 rounded-2xl border p-4 text-left transition-colors ${
-        checked
-          ? isMagenta
-            ? 'border-magenta/40 bg-magenta/[0.06]'
-            : 'border-brand/40 bg-brand/[0.06]'
-          : 'border-subtle bg-sunken hover:border-strong hover:bg-raised'
+        disabled
+          ? 'cursor-not-allowed border-subtle bg-sunken opacity-50'
+          : checked
+            ? isMagenta
+              ? 'border-magenta/40 bg-magenta/[0.06]'
+              : 'border-brand/40 bg-brand/[0.06]'
+            : 'border-subtle bg-sunken hover:border-strong hover:bg-raised'
       }`}
     >
       {icon && (

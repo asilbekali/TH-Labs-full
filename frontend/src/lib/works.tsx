@@ -32,6 +32,14 @@ export interface Work {
   speakerSimilarity: number | null
   /** Credits actually charged by POST /v1/payments/commit-dub. */
   creditsSpent: number | null
+  /**
+   * True when the balance covered only part of the source and the dub was cut
+   * to fit. Worth keeping in the library: months later, "why is this clip only a
+   * minute long?" has an answer, and the row can offer to redo it in full.
+   */
+  trimmed?: boolean
+  /** Full length of the source before the trim, when one happened. */
+  sourceSec?: number | null
   settings: {
     voiceClone: boolean
     lipSync: boolean

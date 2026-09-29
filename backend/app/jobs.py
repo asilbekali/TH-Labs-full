@@ -11,9 +11,18 @@ import time
 import uuid
 from pathlib import Path
 
-from .schemas import (DubOptions, Job, JobResult, JobStatus, StageState,
-                      StageStatus)
+from .schemas import (DubOptions, Job, JobBilling, JobResult, JobStatus,
+                      StageState, StageStatus)
 from .pipeline.orchestrator import Orchestrator
+
+
+def new_job_id() -> str:
+    """A job id, mintable before the job exists.
+
+    Callers that must bill against the id — the charge is idempotent on it —
+    need it in hand before `JobManager.create` enqueues anything.
+    """
+    return uuid.uuid4().hex[:12]
 
 _STAGE_DEFS = [
     ("asr", "Speech-to-Text"),
@@ -58,8 +67,18 @@ class JobManager:
     def create(self, options: DubOptions, input_video: Path,
                scenario: str, filename: str | None,
                owner_id: int | None = None,
-               force_simulate: bool = False) -> Job:
-        job_id = uuid.uuid4().hex[:12]
+               force_simulate: bool = False,
+               job_id: str | None = None,
+               billing: JobBilling | None = None) -> Job:
+        """Register a job and queue it for the serial worker.
+
+        `job_id` lets the caller reserve the id BEFORE the job exists. The credit
+        charge is keyed on it (it is the idempotency key), and the charge has to
+        settle before the pipeline starts — this method enqueues, so anything
+        billed after it returns races the worker, and a refused charge would be
+        marking a job failed that was already burning GPU. See main.py.
+        """
+        job_id = job_id or new_job_id()
         now = time.time()
         stages = [
             StageState(key=k, label=l, status=_initial_status(k, options))
@@ -70,6 +89,7 @@ class JobManager:
                   options=options, filename=filename,
                   simulated=simulated,
                   stages=stages, result=JobResult(),
+                  billing=billing or JobBilling(),
                   created_at=now, updated_at=now)
         self._jobs[job_id] = job
         self._subs[job_id] = []

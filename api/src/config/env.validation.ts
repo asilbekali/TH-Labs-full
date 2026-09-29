@@ -20,7 +20,11 @@ export interface AppEnv {
 
   PORT: number;
   APP_URL: string;
-  FREE_DUB_MAX_SECONDS: number;
+
+  // FREE_DUB_MAX_SECONDS is gone. The free allowance is no longer a length cap
+  // on a special "one free dub" — a new account is granted credits worth one
+  // minute (SIGNUP_BONUS_CREDITS in src/payment/quality-cost.ts) and the balance
+  // alone decides from then on. Setting it in an env file now does nothing.
 
   // Origin of the dubbing pipeline (FastAPI), probed by GET /v1/health.
   // Optional: an account API with no pipeline attached is a valid deployment,
@@ -124,7 +128,6 @@ export function validateEnv(config: RawEnv): AppEnv {
 
     PORT: toInt(config.PORT, 3000),
     APP_URL: config.APP_URL ?? 'http://localhost:5173',
-    FREE_DUB_MAX_SECONDS: toInt(config.FREE_DUB_MAX_SECONDS, 120),
 
     DUB_API_URL: config.DUB_API_URL?.trim() || undefined,
 

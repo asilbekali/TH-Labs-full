@@ -46,16 +46,11 @@ export const CREDIT_PACK_SEED: CreditPackSeed[] = [
   },
 ];
 
-// Credits a minute of source burns at Balanced quality, and the multiplier per
-// quality. Used by the estimator on the Plans page — a quote, not a charge:
-// what a dub actually costs is QUALITY_COST in quality-cost.ts.
+// The tariff itself now lives in quality-cost.ts, which is also what can-dub
+// and commit-dub charge with — the estimator on the Plans page and the actual
+// charge can no longer drift apart, because they read the same numbers.
 //
-// 20 a minute is the headline tariff the pricing page is built on ("1 minute of
-// dubbed video = 20 credits"), and every pack above divides into it exactly:
+// 20 a minute is the headline the pricing page is built on ("1 minute of dubbed
+// video = 20 credits"), and every pack above divides into it exactly:
 // 100 → 5 min, 500 → 25 min, 2000 → 100 min.
-export const CREDITS_PER_MINUTE = 20;
-export const QUALITY_MULTIPLIER: Record<string, number> = {
-  fast: 0.5,
-  balanced: 1,
-  studio: 2,
-};
+export { CREDITS_PER_MINUTE, QUALITY_MULTIPLIER } from './quality-cost';

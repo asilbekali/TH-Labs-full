@@ -7,7 +7,7 @@
 // POST /v1/payments/commit-dub charged. Nothing on this page is seeded.
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { AnimatePresence, LayoutGroup, motion } from 'framer-motion'
 import Page from '../components/Page'
 import ScrollColumn from '../components/layout/ScrollColumn'
@@ -890,8 +890,36 @@ function DetailPanel({ work, isSheet, onClose }: { work: Work; isSheet: boolean;
               <div className="flex items-baseline gap-2">
                 <span className="font-mono text-3xl font-medium text-primary">{work.creditsSpent}</span>
                 <span className="font-mono text-xs text-muted">
-                  {work.creditsSpent === 0 ? 'credits — covered by your free dub' : 'credits spent'}
+                  {work.creditsSpent === 0 ? 'credits — nothing charged' : 'credits spent'}
                 </span>
+              </div>
+            )}
+            {/* Why this dub is shorter than the file that was uploaded. Without
+                it, a trimmed run looks like a pipeline bug months later. */}
+            {work.trimmed && (
+              <div className="mt-3 rounded-lg border border-warn/30 bg-warn/10 px-3 py-2">
+                <p className="text-xs text-secondary">
+                  Your balance covered only part of this video, so the first{' '}
+                  <span className="font-mono text-primary">
+                    {fmtDur(work.durationSec ?? 0)}
+                  </span>{' '}
+                  was dubbed
+                  {work.sourceSec ? (
+                    <>
+                      {' '}of{' '}
+                      <span className="font-mono text-primary">
+                        {fmtDur(work.sourceSec)}
+                      </span>
+                    </>
+                  ) : null}
+                  .
+                </p>
+                <Link
+                  to="/plans"
+                  className="mt-2 inline-block font-mono text-xs text-brand underline-offset-2 hover:underline"
+                >
+                  Buy credits to dub it in full →
+                </Link>
               </div>
             )}
           </Section>

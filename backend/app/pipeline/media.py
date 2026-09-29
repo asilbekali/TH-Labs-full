@@ -64,6 +64,45 @@ def probe_duration(path: Path) -> float | None:
         return None
 
 
+def trim_to_seconds(src: Path, out_path: Path, seconds: float) -> bool:
+    """Cut `src` down to its first `seconds` and write that to `out_path`.
+
+    This is the credit gate's other half: when a balance covers only part of a
+    video, the pipeline dubs the part it covers rather than refusing the whole
+    job. The cut is from the START, which is the only defensible choice — it is
+    the part of a clip a viewer will actually check, and any other window would
+    need the user to choose it.
+
+    Re-encoded rather than stream-copied (`-c copy`). A copy can only cut at a
+    keyframe, so a request for 60s silently yields anything from 58 to 70 —
+    and we are about to CHARGE for that number, so it has to be the number we
+    get. Re-encoding costs a few seconds of CPU on a clip this short, next to a
+    dubbing pipeline that runs for minutes.
+
+    Returns False if ffmpeg is unavailable or the cut produced nothing; the
+    caller then treats the dub as unaffordable rather than billing for a trim
+    that did not happen.
+    """
+    ffmpeg = _bin("ffmpeg")
+    if not ffmpeg or not src.exists() or seconds <= 0:
+        return False
+    return _run_ffmpeg(
+        [ffmpeg, "-y", "-i", str(src),
+         # -t after -i: duration of OUTPUT, decoded from the start. Accurate to
+         # the frame, unlike the keyframe-aligned fast seek.
+         "-t", f"{seconds:.3f}",
+         # Re-encode both streams. A sane, fast default: this is an
+         # intermediate the pipeline consumes, not a deliverable.
+         "-c:v", "libx264", "-preset", "veryfast", "-crf", "23",
+         "-c:a", "aac", "-b:a", "128k",
+         "-movflags", "+faststart",
+         str(out_path)],
+        out_path, f"trim to {seconds:.1f}s",
+        # Long sources take a while to transcode even a short window out of.
+        timeout=600,
+    )
+
+
 def extract_audio(video: Path, out_wav: Path) -> bool:
     ffmpeg = _bin("ffmpeg")
     if not ffmpeg:
