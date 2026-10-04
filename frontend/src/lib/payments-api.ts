@@ -24,10 +24,10 @@ export interface ServerPlan {
    * every credit figure in the UI renders as NaN.
    */
   grantsPerPeriod?: number
-  /** The Dodo product this plan is sold as. Null means it cannot be bought. */
-  dodoProductId: string | null
-  /** Static payment link for the same product, when one is configured. */
-  dodoLinkUrl: string | null
+  /** The Lemon Squeezy share link this plan is sold through. Null: cannot be bought. */
+  checkoutUrl: string | null
+  /** The LS variant behind that link — what a paid order is matched on. */
+  lsVariantId: string | null
   active: boolean
 }
 
@@ -39,16 +39,19 @@ export interface ServerPlan {
  * confident "live payments" badge over a checkout that took test cards.
  */
 export interface CheckoutInfo {
-  provider: 'dodo'
-  mode: 'test' | 'live'
-  /** True when at least one paid plan has a Dodo product configured. */
+  provider: 'lemonsqueezy'
+  /** Read by the server off the catalog's LS variants, not from this bundle. */
+  mode: 'test' | 'live' | 'unknown' | 'unconfigured'
+  /** True when at least one paid plan has a checkout link to open. */
   configured: boolean
   /** `TIER/CYCLE` for each paid plan still missing one. */
   missingProducts: string[]
-  /** False when the API has no key, so checkout falls back to static links. */
-  apiConfigured: boolean
-  /** False when DODO_WEBHOOK_SECRET is unset — no purchase could grant credits. */
-  webhookConfigured: boolean
+  /**
+   * False when the API holds no Lemon Squeezy key. A purchase then cannot be verified,
+   * so it cannot be credited — the UI disables Buy rather than taking money it
+   * has no way to honour. This is the one to check first.
+   */
+  canGrantCredits: boolean
 }
 
 export interface PlansResponse {
@@ -61,7 +64,7 @@ export interface PlansResponse {
   /** Seconds of dubbing the signup bonus buys — the free minute. */
   freeMinuteSeconds?: number
   signupBonusCredits?: number
-  /** Absent on an API deployed before the Dodo switch. */
+  /** Absent on an API deployed before the payments rework. */
   checkout?: CheckoutInfo
 }
 
@@ -91,9 +94,10 @@ export interface CreditPack {
   /** Marks the pack the page highlights. */
   popular?: boolean
   /**
-   * False when the API knows this pack but has no Dodo product for it. The
-   * price is still real information worth showing — the button is not.
-   * Undefined from the built-in fallback catalog, where nothing is known.
+   * False when the API knows this pack but has no checkout link for it, or
+   * holds no Lemon Squeezy key. The price is still real information worth showing — the
+   * button is not. Undefined from the built-in fallback catalog, where nothing
+   * is known.
    */
   available?: boolean
 }
@@ -113,6 +117,29 @@ export interface CreditCheckoutResponse {
   packId: string
   credits: number
   priceCents: number
+}
+
+/** What POST /v1/payments/claim answers. */
+export interface ClaimResponse {
+  /** True when THIS call credited at least one purchase. */
+  claimed: boolean
+  /** Each purchase this call credited, in the API's words. */
+  granted: { orderId: string; description: string; creditsGranted: number }[]
+  /** Sum of `granted` — 0 when nothing new was found. */
+  creditsGranted: number
+  /** The balance after the grant — authoritative, not a local sum. */
+  balance: number
+  /** LS has an order still processing — ask again in a few seconds. */
+  pending: boolean
+  /** Paid orders that match nothing in the catalog. Support settles these. */
+  unmatched: number
+  /**
+   * Purchases credited in the last hour, by this call or an earlier one (the
+   * server also checks every few minutes). How a reload, or a buyer who comes
+   * back after the server already credited them, still sees "done".
+   */
+  recent: { description: string; createdAt: string }[]
+  subscription: unknown | null
 }
 
 const DEFAULT_CREDIT_PACKS: Omit<CreditPacksResponse, 'fromServer'> = {
@@ -304,17 +331,19 @@ export async function cancelSubscription(): Promise<{ subscription: Subscription
 }
 
 /**
- * A link into Dodo's own customer portal — invoices, the card on file, and
- * cancellation, all handled by Dodo rather than proxied through us.
+ * The claim. Ask the API to credit this account's paid Lemon Squeezy orders.
  *
- * 400s until the user's first payment: the Dodo customer id is stamped on the
- * account by the payment webhook, so before then there is no portal to open.
+ * Takes no input on purpose: LS's return trip carries no order id, and nothing
+ * the browser could send would be trusted anyway. The API asks LS for the
+ * orders filed under this account's email and credits each new one, once.
+ * The server also does this on its own every few minutes after a checkout is
+ * opened, so this call only makes it instant — it is not the only chance.
  */
-export function getCustomerPortalUrl(): Promise<{ url: string }> {
-  return authJson<{ url: string }>(
-    '/payments/portal',
-    {},
-    'Could not open the billing portal',
+export function claimPurchases(): Promise<ClaimResponse> {
+  return authJson<ClaimResponse>(
+    '/payments/claim',
+    { method: 'POST' },
+    'Could not confirm your payment',
   )
 }
 

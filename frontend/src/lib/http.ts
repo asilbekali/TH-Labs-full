@@ -67,11 +67,30 @@ export function apiUrl(path: string): string {
   return `${BASE}${path}`
 }
 
-// A single in-flight refresh shared across concurrent 401s, so a burst of
-// requests triggers one refresh, not one each.
-let refreshInFlight: Promise<string | null> | null = null
+/**
+ * A single in-flight refresh, shared by EVERY caller.
+ *
+ * This is not an optimisation, it is a correctness requirement. The account API
+ * uses rotating refresh tokens with reuse detection: `/auth/refresh` revokes the
+ * token it was given and issues a replacement, and presenting an
+ * already-revoked one is treated as a stolen-token event — it revokes the whole
+ * family, signing the user out of everything (see
+ * api/src/auth/refresh-token.service.ts).
+ *
+ * So two concurrent refreshes do not merely waste a round trip. They send the
+ * same cookie twice; the first rotates it, the second arrives holding a token
+ * that no longer exists, and the user is logged out *because* they successfully
+ * refreshed. Sharing one promise is what makes that impossible.
+ *
+ * It bites hardest in development, where React StrictMode double-invokes the
+ * bootstrap effect and fires two refreshes a millisecond apart — sign in, get
+ * bounced straight back to the sign-in screen. In production it is the subtler
+ * version: two API calls 401 at once on a stale token and the retry logs you
+ * out instead of recovering.
+ */
+let refreshInFlight: Promise<RefreshedSession | null> | null = null
 
-async function refreshOnce(): Promise<string | null> {
+function refreshOnce(): Promise<RefreshedSession | null> {
   if (!refreshInFlight) {
     refreshInFlight = (async () => {
       try {
@@ -83,10 +102,12 @@ async function refreshOnce(): Promise<string | null> {
         const data = (await r.json()) as RefreshedSession
         accessToken = data.accessToken
         onRefreshed?.(data)
-        return data.accessToken
+        return data
       } catch {
         return null
       } finally {
+        // Cleared only after the promise settles, so everyone who joined while
+        // it was running shares this result rather than starting a second one.
         refreshInFlight = null
       }
     })()
@@ -96,19 +117,13 @@ async function refreshOnce(): Promise<string | null> {
 
 // Bootstrap the session on app load: try to mint an access token from the
 // refresh cookie. Returns the refreshed session or null when signed out.
-export async function bootstrapSession(): Promise<RefreshedSession | null> {
-  try {
-    const r = await fetch(`${BASE}/auth/refresh`, {
-      method: 'POST',
-      credentials: 'include',
-    })
-    if (!r.ok) return null
-    const data = (await r.json()) as RefreshedSession
-    accessToken = data.accessToken
-    return data
-  } catch {
-    return null
-  }
+export function bootstrapSession(): Promise<RefreshedSession | null> {
+  // Through refreshOnce, NOT its own fetch. This used to call /auth/refresh
+  // directly, which meant it did not share the single-flight promise — and
+  // StrictMode's double-invoked effect then fired two refreshes with the same
+  // cookie, tripping the API's token-reuse detection and revoking the session
+  // it had just created. The symptom was sign-in that silently did not stick.
+  return refreshOnce()
 }
 
 async function readError(r: Response, fallback: string): Promise<string> {
@@ -146,8 +161,8 @@ export async function authFetchUrl(
   })
 
   if (res.status === 401 && _retry) {
-    const token = await refreshOnce()
-    if (!token) {
+    const session = await refreshOnce()
+    if (!session) {
       onCleared?.()
       return res
     }

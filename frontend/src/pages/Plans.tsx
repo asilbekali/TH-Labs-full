@@ -3,9 +3,9 @@
 // The whole page is the real billing API (NestJS, /v1/payments): prices, credit
 // grants, the free-dub allowance and the per-quality tariff all come from
 // GET /payments/plans, the subscription and payment rows from the user's own
-// account. Checkout is Dodo-hosted — the API opens a checkout session stamped
-// with this user's id and returns its URL, and we hand the browser over, so
-// card data never touches this origin and no payment key is shipped at all.
+// account. Checkout is a Lemon Squeezy share link — the API hands back the
+// link with this user's email prefilled, and we hand the browser over, so card
+// data never touches this origin and no payment key is shipped at all.
 import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { AnimatePresence, LayoutGroup, motion } from 'framer-motion'
@@ -25,8 +25,8 @@ import {
   usePlans,
   useSubscription,
 } from '../lib/queries'
-import { checkoutUnavailableReason, isTestCheckoutUrl, unbuyablePlans } from '../lib/dodo'
-import { creditsForMinutes, getCustomerPortalUrl, packFor } from '../lib/payments-api'
+import { checkoutUnavailableReason, unbuyablePlans } from '../lib/lemonsqueezy'
+import { creditsForMinutes, packFor } from '../lib/payments-api'
 import type {
   BillingCycle,
   CheckoutInfo,
@@ -146,34 +146,30 @@ export default function Plans() {
   const [cycle, setCycle] = useState<Cycle>('monthly')
   const [showCompare, setShowCompare] = useState(false)
   const [toast, setToast] = useState<{ id: number; msg: string } | null>(null)
-  const [portalBusy, setPortalBusy] = useState(false)
 
   const tiers = plansQuery.data ? buildTiers(plansQuery.data.plans) : []
   const subscription = subscriptionQuery.data?.subscription ?? null
   const history = historyQuery.data?.items ?? []
 
   // Whether money can move is the server's answer, not a guess from a
-  // build-time key: only the API knows which Dodo products are configured and
-  // whether the webhook that grants the credits is wired up at all.
+  // build-time key: only the API knows which checkout links are configured and
+  // whether it holds the LS key that lets a purchase be confirmed at all.
   const checkoutInfo: CheckoutInfo | undefined = plansQuery.data?.checkout
   const checkoutBlocked = checkoutUnavailableReason(checkoutInfo)
   const missingProducts = unbuyablePlans(checkoutInfo)
 
-  // A configured payment link keeps whichever host it was copied from, so a
-  // live-mode API can still be handing out test links. Say so when they
-  // disagree rather than printing a confident badge over the wrong one.
-  const linkIsTest = (plansQuery.data?.plans ?? []).some((p) =>
-    isTestCheckoutUrl(p.dodoLinkUrl),
-  )
-  const inTestCheckout = checkoutInfo?.mode === 'test' || linkIsTest
-  const modeMismatch = checkoutInfo?.mode === 'live' && linkIsTest
+  // The server reads the mode off the catalog's own LS products, so a live
+  // site still selling test products shows it here.
+  const inTestCheckout = checkoutInfo?.mode === 'test'
 
   const activeTier: PlanTier =
     subscription && subscription.status === 'ACTIVE' ? (subscription.plan?.tier ?? 'FREE') : 'FREE'
   const activeCycle = subscription?.plan?.cycle
 
-  // Hand the browser to Dodo's hosted checkout. Dodo owns the whole payment
-  // UI — there is no client-side SDK to load.
+  // Hand the browser to Lemon Squeezy. LS owns the whole payment UI — there is no
+  // client-side SDK to load, and nothing in this bundle decides what a purchase
+  // grants: the API matches the paid order's variant, and the credits are
+  // settled on the way back by /plans/success (or by the server's own poll).
   async function startCheckout(t: UiTier) {
     if (t.tier === 'FREE' || checkoutBlocked) return
     try {
@@ -189,8 +185,8 @@ export default function Plans() {
   }
 
   // One-time pack purchase. Same handover as a subscription — the API returns
-  // a Dodo-hosted URL and the browser goes there — so card data never touches
-  // this origin. A pack with no Dodo product configured surfaces as a toast
+  // the LS link and the browser goes there — so card data never touches
+  // this origin. A pack with no payment link configured surfaces as a toast
   // rather than a silent no-op.
   async function buyCredits(packId: string) {
     if (checkoutBlocked) return
@@ -202,24 +198,6 @@ export default function Plans() {
         id: Date.now(),
         msg: e instanceof Error ? e.message : 'Could not start checkout',
       })
-    }
-  }
-
-  // Dodo's own portal, in a new tab: the user is mid-session here and should
-  // come back to it, not lose the page to an external redirect.
-  async function openPortal() {
-    if (portalBusy) return
-    setPortalBusy(true)
-    try {
-      const { url } = await getCustomerPortalUrl()
-      window.open(url, '_blank', 'noopener,noreferrer')
-    } catch (e) {
-      setToast({
-        id: Date.now(),
-        msg: e instanceof Error ? e.message : 'Could not open the billing portal',
-      })
-    } finally {
-      setPortalBusy(false)
     }
   }
 
@@ -244,17 +222,11 @@ export default function Plans() {
           database. Never let that be a surprise. */}
       {inTestCheckout && (
         <div className="rounded-card border border-warn/40 bg-warn/10 px-4 py-3 text-sm text-warn">
-          <strong className="font-medium">Dodo Payments test mode.</strong> Checkout accepts test cards
-          only — no money moves. Set{' '}
-          <code className="font-mono text-xs">DODO_PAYMENTS_ENVIRONMENT=live_mode</code> on the API, with
-          live products, to take real payments.
-          {modeMismatch && (
-            <>
-              {' '}
-              <strong className="font-medium">The API is in live mode but some products are test
-              links</strong> — one of the two is wrong.
-            </>
-          )}
+          <strong className="font-medium">Lemon Squeezy test mode.</strong> Checkout accepts test
+          cards only (4242 4242 4242 4242) — no money moves, but credits granted here are real. Switch
+          the products, links and{' '}
+          <code className="font-mono text-xs">LEMONSQUEEZY_API_KEY</code> to live mode to take real
+          payments.
         </div>
       )}
       {checkoutBlocked && (
@@ -266,8 +238,8 @@ export default function Plans() {
           one card is explained instead of reading as a bug. */}
       {!checkoutBlocked && missingProducts.length > 0 && (
         <div className="rounded-card border border-warn/40 bg-warn/10 px-4 py-3 text-sm text-warn">
-          <strong className="font-medium">Not every plan is on sale yet.</strong> No Dodo product is
-          configured for {missingProducts.join(', ')}.
+          <strong className="font-medium">Not every plan is on sale yet.</strong> No Lemon Squeezy
+          checkout link is configured for {missingProducts.join(', ')}.
         </div>
       )}
 
@@ -342,8 +314,6 @@ export default function Plans() {
             subscription={subscription}
             canceling={cancel.isPending}
             onCancel={() => void onCancel()}
-            onManage={() => void openPortal()}
-            openingPortal={portalBusy}
           />
         </motion.div>
 
@@ -353,7 +323,7 @@ export default function Plans() {
           </motion.div>
         )}
 
-        <CheckoutFooter live={checkoutInfo?.mode === 'live' && !linkIsTest} />
+        <CheckoutFooter live={checkoutInfo?.mode === 'live'} />
       </motion.section>
 
       <AnimatePresence>
@@ -664,8 +634,8 @@ function TopUpSection({
               minutes={p.credits / catalog.creditsPerMinute}
               recommended={recommended?.id === p.id}
               busy={busyPackId === p.id}
-              // `available === false` is the server saying it has no Dodo
-              // product for this pack. Undefined means the fallback catalog,
+              // `available === false` is the server saying it has no LS
+              // link or variant for this pack. Undefined means the fallback catalog,
               // which knows nothing either way — don't disable on that.
               disabled={disabled || busyPackId !== null || p.available === false}
               unavailable={p.available === false}
@@ -692,7 +662,7 @@ function PackCard({
   recommended: boolean
   busy: boolean
   disabled: boolean
-  /** No Dodo product configured for this pack — the price is real, the button isn't. */
+  /** No payment link configured for this pack — the price is real, the button isn't. */
   unavailable?: boolean
   onBuy: () => void
 }) {
@@ -946,14 +916,10 @@ function SubscriptionCard({
   subscription,
   canceling,
   onCancel,
-  onManage,
-  openingPortal,
 }: {
   subscription: Subscription | null
   canceling: boolean
   onCancel: () => void
-  onManage: () => void
-  openingPortal: boolean
 }) {
   if (!subscription || subscription.status === 'CANCELED' || subscription.status === 'EXPIRED') {
     return (
@@ -987,16 +953,10 @@ function SubscriptionCard({
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        {/* Invoices and the card on file live with Dodo, not here — there is
-            nothing to gain from rebuilding that surface, and a receipt the
-            merchant of record issued is the one a customer needs. */}
-        <button
-          onClick={onManage}
-          disabled={openingPortal}
-          className="focusable rounded-control border border-subtle bg-sunken px-4 py-2 font-mono text-xs text-secondary hover:text-primary disabled:opacity-60"
-        >
-          {openingPortal ? 'Opening…' : 'Invoices & payment method'}
-        </button>
+        {/* No "invoices & payment method" button. The receipt Lemon Squeezy
+            emails links the customer to their own orders and card, which is
+            the thing they actually need. Cancel below stops the renewal at LS
+            itself, not just here. */}
 
         {!subscription.cancelAtPeriodEnd && (
           <button
@@ -1053,15 +1013,15 @@ function HistoryCard({ rows }: { rows: PaymentRow[] }) {
 
 /* ── Small pieces ───────────────────────────────────────────────────────── */
 
-// `live` is deliberately the AND of the API's mode and the configured links:
-// the badge is a claim that real money moves, so anything less than both
-// agreeing must not show it.
+// `live` only when the server read live mode off the catalog's own LS
+// products: the badge is a claim that real money moves, so 'unknown' must not
+// show it.
 function CheckoutFooter({ live }: { live: boolean }) {
   return (
     <div className="flex flex-wrap items-center justify-between gap-3 rounded-card border border-subtle bg-sunken/50 px-5 py-4">
       <p className="font-mono text-xs text-muted">
-        Payments are processed by Dodo Payments, our merchant of record. Card details never reach this
-        site, and credits are granted automatically once Dodo confirms the payment.
+        Payments are processed by Lemon Squeezy. Card details never reach this site, and credits are
+        granted automatically as soon as Lemon Squeezy confirms the payment.
       </p>
       {live && (
         <span className="shrink-0 rounded-pill bg-success/12 px-2.5 py-1 font-mono text-[10px] uppercase tracking-wide text-success">
