@@ -28,7 +28,7 @@ import { readLink } from '../components/LinkInput'
 import { EASE_ENTRANCE, EASE_EXIT, rise, springLayout, stagger } from '../lib/motion'
 import { useHealth, useLanguages } from '../lib/queries'
 import { pipelineDown } from '../lib/api'
-import { gradientFor } from '../lib/thumb'
+import WorkThumb from '../components/WorkThumb'
 import { useAuth } from '../lib/auth'
 import { useWorks, workPair, workTitle } from '../lib/works'
 import type { Language } from '../lib/types'
@@ -213,7 +213,9 @@ export default function Home() {
                 className="card card-hover focusable relative flex items-center gap-4 overflow-hidden p-4 text-left"
               >
                 <span className="beam" aria-hidden />
-                <span className="h-12 w-16 shrink-0 rounded-lg" style={{ background: gradientFor(w.id) }} />
+                <span className="relative h-12 w-16 shrink-0 overflow-hidden rounded-lg">
+                  <WorkThumb work={w} />
+                </span>
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-sm font-medium text-primary">{workTitle(w)}</span>
                   <span className="mt-0.5 block text-[12px] text-muted">
@@ -393,10 +395,7 @@ export default function Home() {
                 className="card card-hover focusable w-60 shrink-0 snap-start overflow-hidden p-0 text-left"
               >
                 <div className="relative aspect-video overflow-hidden">
-                  <div
-                    className={`thumb-grad absolute inset-0 ${w.status === 'failed' ? 'grayscale' : ''}`}
-                    style={{ backgroundImage: gradientFor(w.id) }}
-                  />
+                  <WorkThumb work={w} />
                 </div>
                 <div className="p-3.5">
                   <div className="truncate text-sm font-medium text-primary">{workTitle(w)}</div>

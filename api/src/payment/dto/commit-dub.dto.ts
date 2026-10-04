@@ -24,7 +24,8 @@ export class CommitDubDto {
 
   @ApiProperty({
     example: 60.0,
-    description: 'Seconds actually dubbed — after any trim (fractional allowed)',
+    description:
+      'Seconds actually dubbed — after any trim (fractional allowed)',
   })
   @IsNumber({ allowNaN: false, allowInfinity: false })
   @Min(0)

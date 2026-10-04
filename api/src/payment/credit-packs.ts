@@ -7,6 +7,10 @@
 //
 // Seeding never overwrites a pack an admin has since edited (see seed.ts): the
 // point of moving this into the database was that the panel wins.
+//
+// The three prices below are the ones on the pricing page ($1.19 / $4.99 /
+// $17.99), and match the Lemon Squeezy products. What a purchase GRANTS is
+// decided by the order's variant id, not by these numbers.
 
 export interface CreditPackSeed {
   slug: string;
@@ -14,8 +18,9 @@ export interface CreditPackSeed {
   priceCents: number;
   currency: string;
   popular?: boolean;
-  /** Optional env var holding a Dodo product id — a convenience for first boot. */
-  productEnv: string;
+  /** Lemon Squeezy share link and the variant it sells (test mode). */
+  checkoutUrl: string;
+  lsVariantId: string;
 }
 
 export const CREDIT_PACK_SEED: CreditPackSeed[] = [
@@ -25,7 +30,9 @@ export const CREDIT_PACK_SEED: CreditPackSeed[] = [
     credits: 100,
     priceCents: 119,
     currency: 'usd',
-    productEnv: 'DODO_PRODUCT_PACK_100',
+    checkoutUrl:
+      'https://th-labs.lemonsqueezy.com/checkout/buy/158094fd-d3ba-4dfd-8e9d-f9d713036ea4',
+    lsVariantId: '2203420',
   },
   {
     // "Creator" — 25 minutes. The middle pack is the one to push.
@@ -34,7 +41,9 @@ export const CREDIT_PACK_SEED: CreditPackSeed[] = [
     priceCents: 499,
     currency: 'usd',
     popular: true,
-    productEnv: 'DODO_PRODUCT_PACK_500',
+    checkoutUrl:
+      'https://th-labs.lemonsqueezy.com/checkout/buy/a6fbdc9a-72fd-41ed-b280-4871d78a94f6',
+    lsVariantId: '2203424',
   },
   {
     // "Pro" — 100 minutes, and the cheapest per minute at $0.18.
@@ -42,7 +51,9 @@ export const CREDIT_PACK_SEED: CreditPackSeed[] = [
     credits: 2000,
     priceCents: 1799,
     currency: 'usd',
-    productEnv: 'DODO_PRODUCT_PACK_2000',
+    checkoutUrl:
+      'https://th-labs.lemonsqueezy.com/checkout/buy/5b957817-415b-4822-bb44-ae521847222f',
+    lsVariantId: '2203428',
   },
 ];
 

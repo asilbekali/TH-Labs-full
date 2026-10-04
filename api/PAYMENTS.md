@@ -1,58 +1,107 @@
-# Payments, credits & the free-dub gate
+# Payments, credits & the dub gate
 
-Auth, plans, a credit ledger, and Dodo Payments products wired to an idempotent
-webhook that grants credits. Everything below lives in `api/`.
+Auth, plans, a credit ledger, and **Lemon Squeezy share links**, verified by
+reading the order back from the LS API. Everything below lives in `api/`.
 
 The API is URI-versioned (`defaultVersion: '1'`), so every path is prefixed with
 `/v1`. Swagger UI is at **`/docs`**.
 
-Dodo Payments is a **merchant of record**: it owns the checkout page, the card
-data, tax and the invoice. This app never sees a card number and ships no
-payment SDK to the browser.
+Lemon Squeezy owns the checkout page, the card data, tax and the receipt. This
+app never sees a card number and ships no payment SDK to the browser.
+
+## There is no webhook (yet)
+
+A share link never calls this API, and LS's redirect back carries no order id.
+So "was this paid, and by whom?" is answered by *asking LS*:
+
+```
+  Buy button
+      │  GET /v1/payments/checkout?tier=PRO&cycle=MONTHLY
+      ▼
+  { url: "https://th-labs.lemonsqueezy.com/checkout/buy/<uuid>
+          ?checkout[email]=<account email>&checkout[custom][user_id]=46…" }
+      │       (also stamps User.lsCheckoutStartedAt = now)
+      ▼  browser → lemonsqueezy.com, customer pays
+      │
+      ├─► buyer returns to /plans/success ──► POST /v1/payments/claim  (polls ~60 s)
+      └─► cron, every 5 min, for 24 h after the checkout was opened
+                         │
+                         ▼
+  API ──https──► LS: GET /orders?filter[store_id]&filter[user_email]=<account email>
+      ◄───────── status, first_order_item.variant_id, total_usd, created_at
+      │
+      ├─ status ≠ paid?                 skipped (pending → "ask again")
+      ├─ variant matches no row?        skipped, logged loudly (support settles)
+      ├─ order older than the account?  skipped
+      └─ new paid order ──► credits + Payment row (UNIQUE lsOrderId), one transaction
+```
+
+Renewals are not orders: LS records them as **subscription invoices**. An hourly
+cron asks LS about every subscription at the end of its period and credits each
+paid `renewal` invoice once (UNIQUE `Payment.lsInvoiceId`), moving the period to
+LS's `renews_at`.
+
+### What is trusted
+
+| Value | Comes from | Trusted for |
+|---|---|---|
+| order `status` | LS | **whether money moved.** Only `paid` grants. |
+| `first_order_item.variant_id` | LS | **what was bought.** Matched to `Plan.lsVariantId` / `CreditPack.lsVariantId`. The buyer cannot change it. |
+| order email | LS (prefilled by us) | **whose it is.** Emails are unique here; an order older than the account is ignored. |
+| `total_usd` | LS | Logged when it differs >10% from `priceCents`; never refuses (LS localises prices, discounts are legitimate). |
+| `checkout[custom]` | the URL | nothing today — it is there for the future webhook. |
+
+**The one gap:** a buyer who changes the email on the LS form is not matched
+automatically. The success page says so; support credits them by hand.
+
+### Adding the webhook later
+
+Point it at the **API** (e.g. `https://<api-host>/v1/payments/webhook`), not at a
+Studio page, and grant through the same `grantPlanOrder` / `grantPackOrder` /
+`grantRenewal` paths. The UNIQUE order and invoice ids mean the webhook and the
+polling can both run and still pay out once.
 
 ---
 
 ## Setup
 
 ```bash
-# 1. env — copy the template and fill in the Dodo values
-cp .env.example .env        # DODO_PAYMENTS_API_KEY / DODO_WEBHOOK_SECRET / DODO_PRODUCT_*
+# api/.env
+LEMONSQUEEZY_API_KEY=…      # Settings → API. TEST-mode key while the links are test-mode.
+LEMONSQUEEZY_STORE_ID=      # only if the key sees more than one store
 
-# 2. schema + seed (writes the products from .env onto the Plan rows)
-npx prisma migrate deploy
-npx prisma db seed
-
-# 3. run
-yarn start:dev              # http://localhost:3001  (Swagger at /docs)
+npx prisma migrate deploy   # (or psql — see the migration notes)
+npx prisma db seed          # fills empty checkoutUrl / lsVariantId from the seed
+yarn start:dev
 ```
 
-### Two ways to configure a product
+Per LS product (optional but faster): set its redirect / confirmation button
+link to `${APP_URL}/plans/success`. Without it the buyer is still credited by
+the cron within ~5 minutes.
 
-**From the admin panel** (`PATCH /v1/admin/billing/plans/:id`) — an ADMIN
-pastes the Dodo product link, saves, and the site sells it on the next
-request. No deploy, no re-seed. This is the normal path; see
-[Admin billing API](#admin-billing-api) below.
+**Keys are per-mode.** A test-mode key only sees test orders. When going live:
+copy the products to live mode (new variant ids), paste the new links and
+variant ids in the admin panel, and swap the key.
 
-**From the environment** — the `DODO_PRODUCT_*` variables below are read by
-`prisma/seed.ts` and written onto the rows. Useful for bringing a fresh
-environment up with products already attached; after that the panel is
-authoritative and re-seeding leaves edited rows alone.
+| Variable | What breaks without it |
+|---|---|
+| `LEMONSQUEEZY_API_KEY` | **Nothing can be verified, so nothing can be credited.** Buy buttons 503 instead. |
 
-### The three things to configure
+### Catalog (test mode)
 
-| Variable | Where it comes from | What breaks without it |
+| Item | Variant | Grants |
 |---|---|---|
-| `DODO_PAYMENTS_API_KEY` | Dashboard → Settings → API keys | Checkout falls back to static payment links; cancel and the customer portal 503 |
-| `DODO_WEBHOOK_SECRET` | Dashboard → Settings → Webhooks, on the endpoint | **Every webhook is rejected — a customer can pay and never get credits** |
-| `DODO_PRODUCT_<TIER>_<CYCLE>` | Dashboard → Products | `/payments/checkout` 400s for that plan |
+| PRO monthly | 2203365 | 1 200 |
+| STUDIO monthly | 2203401 | 4 800 |
+| PRO yearly | 2203407 | 1 200 × 12 (monthly drip) |
+| STUDIO yearly | 2203414 | 4 800 × 12 (monthly drip) |
+| pack_100 | 2203420 | 100 |
+| pack_500 | 2203424 | 500 |
+| pack_2000 | 2203428 | 2 000 |
 
-`DODO_PAYMENTS_ENVIRONMENT` is `test_mode` (default) or `live_mode`. It selects
-the Dodo host, so the key and the products must come from the same side.
-
-Each `DODO_PRODUCT_*` accepts **either** a product id (`pdt_…`) **or** the whole
-payment link copied out of the dashboard — `parseProductRef` derives the other
-half. Products are read by `prisma/seed.ts` at *seed* time, not on boot:
-re-run `yarn prisma:seed` after editing them.
+Change any of it from the admin panel: `PATCH /v1/admin/billing/plans/:id` or
+`/credit-packs/:id` with `checkoutUrl`, `lsVariantId`, `creditsGranted`,
+`priceCents`. An item is sold only when it has **both** a link and a variant id.
 
 ## Plan matrix (seeded from `prisma/seed.ts`)
 
@@ -64,10 +113,12 @@ re-run `yarn prisma:seed` after editing them.
 | STUDIO | MONTHLY | $49.50 | 4 800 | 30 days | 1 | **4 800** |
 | STUDIO | YEARLY | $499 | 4 800 | 30 days | 12 | **57 600** |
 
-Set each Dodo product's price to match `priceCents`. Unlike the old Stripe
-setup, the amount is **not** how a payment is resolved to a plan — the product
-id is — so a mismatch no longer silently withholds credits. It is still a lie
-to the customer, who was quoted the number on this page.
+**Set each Stripe product's price to match `priceCents` exactly.** This is
+enforced, not cosmetic: a claim compares `amount_total` from Stripe against the
+catalog price and refuses to grant credits when they differ. That check is what
+makes `client_reference_id` safe to use (see above), so it cannot be relaxed —
+which means a mispriced product does not quietly give the wrong credits, it
+stops purchases and logs loudly.
 
 **Yearly bills once but the cron drips one allocation every `grantDays`** —
 `Plan.grantsPerPeriod` (12) bounds it against `Subscription.grantsIssued`, so a
@@ -75,16 +126,19 @@ to the customer, who was quoted the number on this page.
 successful charge resets the counter to 1, having already granted the first
 allocation. See `payment.cron.ts`.
 
-**Set the Dodo subscription period longer than the payment frequency.** A
-product with period = frequency is valid for a single cycle and then `expired`
-instead of renewing. For an ongoing monthly plan use a long period (e.g. 20
-years) with a monthly payment frequency.
+**Renewals are not detected.** With no webhook, nothing tells this API that
+Stripe charged a card a second time. So a purchase opens ONE paid period and the
+user buys again from the same link when it lapses — see the next section. A
+Payment Link created in Stripe's *subscription* mode will keep billing them;
+`POST /payments/subscription/cancel` says so in its message and points them at
+their Stripe receipt, because this side cannot stop that charge.
 
 ## Period end & the drop back to Free
 
 `cyclePeriodEnd` steps by **calendar** units, not by 30/365 days: pay on Aug 25
-and the period ends Sep 25 (Jan 31 clamps to Feb 28/29). It is only a fallback
-— when the API key is set, the period end is Dodo's own `next_billing_date`.
+and the period ends Sep 25 (Jan 31 clamps to Feb 28/29). It is computed at claim
+time and it is the only word on when access ends — there is no renewal event to
+correct it with.
 
 Nothing stores a "current tier" — it is derived from the live `Subscription`
 row. So when a period ends with no renewal, `expireLapsedSubscriptions` (hourly)
@@ -129,9 +183,10 @@ curl -sX POST $BASE/auth/refresh -b cookies.txt -c cookies.txt
 
 ```bash
 curl -s $BASE/payments/plans
-# → { plans:[...], qualityCost:{...}, freeDubMaxSeconds:120,
-#     checkout:{ provider:"dodo", mode:"test", configured:true,
-#                missingProducts:[], apiConfigured:true, webhookConfigured:true } }
+# → { plans:[...], qualityCost:{...}, creditsPerMinute:20,
+#     freeMinuteSeconds:60, signupBonusCredits:20,
+#     checkout:{ provider:"stripe", mode:"test"|"live"|"unconfigured",
+#                configured:true, missingProducts:[], canGrantCredits:true } }
 
 curl -s $BASE/payments/credit-packs
 # → { packs:[{id,credits,priceCents,currency,available}], creditsPerMinute, qualityMultiplier }
@@ -146,40 +201,66 @@ the server reports it.
 ```bash
 curl -s "$BASE/payments/checkout?tier=PRO&cycle=MONTHLY" \
   -H "Authorization: Bearer $TOKEN"
-# → { url: "https://test.checkout.dodopayments.com/session/cks_...", tier, cycle, ... }
+# → { url: "https://buy.stripe.com/test_...?client_reference_id=th.46.plan.<id>
+#            &prefilled_email=...", tier, cycle, priceCents, creditsGranted }
 
 curl -s "$BASE/payments/checkout/credits?pack=pack_500" \
   -H "Authorization: Bearer $TOKEN"
 # → { url, packId, credits, priceCents }
 ```
 
-Redirect the user to `url`; on payment the webhook grants credits.
+Send the browser to `url`. Stripe takes the payment and redirects back to
+`/plans/success?session_id=…`, which claims it:
+
+```bash
+# the ONLY call that grants credits for money. Idempotent on sessionId.
+curl -sX POST $BASE/payments/stripe/claim \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"sessionId":"cs_test_a1b2c3..."}'
+# → { claimed:true,  alreadyClaimed:false, creditsGranted:1200, balance:1243,
+#     description:"PRO MONTHLY — 1200 credits", subscription:{...} }
+# → { claimed:false, alreadyClaimed:true,  creditsGranted:0, ... }  (reloaded page)
+# 409 the session is not paid yet, or its amount does not match the item
+# 404 Stripe does not know it, or it belongs to another account
+# 503 no STRIPE_SECRET_KEY, or Stripe is unreachable — the money is safe, retry
+```
 
 ### Subscription / portal / history / ledger (auth)
 
 ```bash
 curl -s $BASE/payments/subscription        -H "Authorization: Bearer $TOKEN"
 curl -sX POST $BASE/payments/subscription/cancel -H "Authorization: Bearer $TOKEN"
-curl -s $BASE/payments/portal              -H "Authorization: Bearer $TOKEN"  # Dodo customer portal
 curl -s "$BASE/payments/history?page=1&limit=20"  -H "Authorization: Bearer $TOKEN"
 curl -s "$BASE/payments/credits?page=1&limit=20"  -H "Authorization: Bearer $TOKEN"
 curl -s $BASE/payments/credits/reconcile   -H "Authorization: Bearer $TOKEN"  # dev drift check
 ```
 
-### The free-dub gate (auth)
+### The dub gate (auth)
+
+Priced per second — 20 credits a minute at Balanced, times the quality
+multiplier. There is no "one free dub" special case any more: a new account is
+granted 20 credits (one minute) and the balance alone decides from then on.
 
 ```bash
-# preflight — read-only, charges nothing
+# preflight — read-only, charges nothing. durationSeconds is a REAL number:
+# ffprobe reports 49.017, never a whole number.
 curl -sX POST $BASE/payments/can-dub \
   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-  -d '{"durationSeconds":90,"quality":"balanced"}'
-# fresh user → { allowed:true, isFreeDub:true, cost:0, balance:60 }
+  -d '{"durationSeconds":49.017,"quality":"balanced"}'
+# → { allowed:true, cost:17, balance:60, billableSeconds:49.017,
+#     billableCost:17, trimmed:false, affordableSeconds:180,
+#     creditsPerMinute:20 }
 
-# commit — charges (or consumes the free dub); idempotent on jobId
+# a short wallet is not a refusal — it buys the FRONT of the video
+# 10 credits, 49s clip → { allowed:true, billableSeconds:30, billableCost:10,
+#                          trimmed:true, affordableSeconds:30 }
+# the caller trims to billableSeconds and charges for that.
+
+# commit — charges for the seconds actually dubbed. Idempotent on jobId.
 curl -sX POST $BASE/payments/commit-dub \
   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-  -d '{"jobId":"job_1","durationSeconds":90,"quality":"balanced"}'
-# → { charged:false, isFreeDub:true, cost:0, balance:60 }   (free dub consumed)
+  -d '{"jobId":"job_1","durationSeconds":30,"quality":"balanced"}'
+# → { jobId:"job_1", charged:true, cost:10, balance:0, idempotent:false }
 ```
 
 ---
@@ -193,37 +274,54 @@ deleting a credit pack is SUPERADMIN alone.
 ```bash
 # Health: mode, what is wired up, what is missing. Render a status page off this.
 curl -s $BASE/admin/billing/overview -H "Authorization: Bearer $TOKEN"
-# → { provider, mode:"test"|"live", apiConfigured, webhookConfigured,
+# → { provider:"stripe", mode:"test"|"live"|"unconfigured", canGrantCredits,
+#     successUrl:"https://th-labs.uz/plans/success?session_id={CHECKOUT_SESSION_ID}",
+#     webhook:{ required:false, note:"…" },
 #     plans:{ total, sellable, unconfigured:["PRO/MONTHLY", …] },
 #     creditPacks:{ total, active, unconfigured:["pack_500", …] },
 #     links:{ live, test, mixed }, qualityCost, tariff }
 ```
 
-**Read `webhookConfigured` first.** False means a customer can pay and never
-receive credits — the one failure that is invisible until someone is charged.
-`links.mixed` is the other one worth surfacing: a live-mode API pointed at
-test checkout links, or the reverse.
+**Read `canGrantCredits` first.** False (no `STRIPE_SECRET_KEY`) means a
+purchase could never be verified, so nothing could be credited — the Buy button
+503s rather than taking the money. Show `successUrl` somewhere copyable: it is
+the redirect every Payment Link needs, and the one piece of Stripe-side setup
+that silently breaks a purchase if it is wrong. `links.mixed` is the other flag
+worth surfacing: a live key pointed at test links, or the reverse, which charges
+the card and then cannot credit it.
 
 ### Plans
 
 ```bash
 curl -s $BASE/admin/billing/plans -H "Authorization: Bearer $TOKEN"
 # → { plans:[ { id, tier, cycle, priceCents, creditsGranted, grantDays,
-#               grantsPerPeriod, dodoProductId, dodoLinkUrl, active,
+#               grantsPerPeriod, stripePaymentLink, stripeProductId, active,
 #               configured, sellable, creditsPerPeriod, linkIsTestMode } ] }
 
-# Put a plan on sale — paste the link OR the product id, either works
+# Put a plan on sale, and set what it grants and costs. This is the whole job.
 curl -sX PATCH $BASE/admin/billing/plans/<id> \
   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-  -d '{"dodoProduct":"https://checkout.dodopayments.com/buy/pdt_abc","priceCents":1900}'
+  -d '{"stripePaymentLink":"https://buy.stripe.com/test_8x27sNc6m4U6buM11q6AM01",
+       "creditsGranted":1500,"priceCents":1950}'
+# → { plan:{…}, warning:"priceCents is 1950. It must equal what the Stripe
+#                        product charges, to the cent — …" }
 
-# Take it off sale without deactivating it: clear the product
-curl -sX PATCH $BASE/admin/billing/plans/<id> … -d '{"dodoProduct":""}'
+# Take it off sale without deactivating it: clear the link
+curl -sX PATCH $BASE/admin/billing/plans/<id> … -d '{"stripePaymentLink":""}'
 ```
 
-Every field is optional — send only what changed. `dodoProduct` accepts a
-product id (`pdt_…`) or a full payment link and derives the other half;
-anything it cannot read is a `400` rather than a silent save.
+Every field is optional — send only what changed, and it takes effect on the
+next request with no deploy and no re-seed. **Changing `creditsGranted` from
+1200 to 1500 is exactly this call.**
+
+`stripePaymentLink` must be a `https://buy.stripe.com/…` URL; anything else is a
+`400` rather than a silent save, because a wrong value here is a Buy button that
+sends a paying customer somewhere unintended.
+
+`stripeProductId` normally needs no attention: the first completed purchase
+records it automatically (`PaymentService.learnProductId`). It is writable for
+the case where a product is re-created in the dashboard and the stored id has to
+be corrected.
 
 ### Credit packs (one-time credit purchases)
 
@@ -234,18 +332,21 @@ panel:
 curl -s  $BASE/admin/billing/credit-packs -H "Authorization: Bearer $TOKEN"
 curl -sX POST $BASE/admin/billing/credit-packs \
   -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
-  -d '{"slug":"pack_3000","credits":3000,"priceCents":13900,"dodoProduct":"pdt_xyz"}'
+  -d '{"slug":"pack_3000","credits":3000,"priceCents":13900,
+       "stripePaymentLink":"https://buy.stripe.com/test_…"}'
 curl -sX PATCH  $BASE/admin/billing/credit-packs/<id> … -d '{"priceCents":12900}'
 curl -sX DELETE $BASE/admin/billing/credit-packs/<id> …   # SUPERADMIN only
 ```
 
-`slug` is permanent: it travels in the checkout metadata and is what the
-webhook reads back, so renaming one would orphan a checkout already in flight.
-Retiring a pack means `{"active":false}`, not delete — a deleted slug can no
-longer be resolved and a payment still in flight would arrive with nothing to
-grant.
+`slug` is permanent: it travels to Stripe as the session's
+`client_reference_id` and is read back on the claim, so renaming one would
+orphan a checkout already in flight. Retiring a pack means `{"active":false}`,
+not delete — a deleted slug can no longer be resolved, and a payment still in
+flight would arrive with nothing to grant. (A claim deliberately ignores
+`active`: someone who has already paid for a pack retired mid-checkout still
+gets their credits.)
 
-**One Dodo product sells exactly one thing.** Attaching a product already used
+**One Stripe product sells exactly one thing.** Attaching a product already used
 by another plan or pack is a `409`, checked across both tables — otherwise a
 payment could not be resolved back to what was bought.
 
@@ -320,69 +421,79 @@ Notes worth knowing before wiring up the panel:
 
 ---
 
-## Webhook
+## Claiming a purchase
 
-Dodo posts to `POST /v1/payments/webhook`. It is public but every request is:
+`POST /v1/payments/stripe/claim` is the only path that turns money into credits.
+It is **authenticated** — the credits have to land on a specific account — and
+idempotent on the session id.
 
-1. **Signature-verified** against `DODO_WEBHOOK_SECRET` using the
-   [Standard Webhooks](https://www.standardwebhooks.com/) scheme — the
-   `webhook-id`, `webhook-timestamp` and `webhook-signature` headers over the
-   raw body (kept intact by `rawBody: true` in `main.ts`). Bad signature → `400`,
-   nothing written.
-2. **Idempotency-guarded** by the `WebhookEvent.eventId` unique constraint on
-   the `webhook-id` header, before any business logic — a retry can never
-   double-credit.
+### What it checks, in order
 
-### Which event grants credits
+1. **Already claimed?** A `Payment` row with this `stripeCheckoutSessionId`
+   means we have been here. Returns `alreadyClaimed: true` and grants nothing.
+   A row belonging to a *different* user is a `404`, not a `403`: that it exists
+   at all is not information this caller can otherwise obtain.
+2. **Paid?** `checkout.sessions.retrieve`, then `payment_status`. `paid` and
+   `no_payment_required` (a 100 % coupon) count; anything else is a `409` with
+   Stripe's own word for the state.
+3. **Which account?** `client_reference_id` is decoded (`th.<userId>.plan|pack.<id>`)
+   and cross-checked against the bearer token. A mismatch is a `404`.
+4. **How much?** `amount_total` and `currency` must equal the catalog row,
+   exactly. A mismatch is a `409`, logged with both figures and the Stripe
+   product ids. **This is the check that makes step 3 safe** — editing the
+   reference to name a bigger pack still pays the smaller product's price.
+5. **Grant.** The `Payment` row and the credit grant are written in **one
+   transaction**, so the UNIQUE index on the session id is what guarantees
+   exactly-once — not a check-then-write.
 
-**Only `payment.succeeded`.** It is the one event that means money actually
-moved, and it fires uniformly for the first charge *and* every renewal — where
-the subscription events split the same moment across `subscription.active` and
-`subscription.renewed`. The `subscription.*` events never grant; they only keep
-status, period and plan in sync. A mandate that authorises and then fails to
-charge therefore cannot hand out a month of credits.
+### Why there is no webhook
 
-| Event | Effect |
-|---|---|
-| `payment.succeeded` (with `subscription_id`) | Resolve the user and plan → create/reactivate the subscription, retire any other live one, record `Payment` SUCCEEDED, start a new period, grant allocation 1. |
-| `payment.succeeded` (no `subscription_id`) | One-time credit pack: resolve the pack from metadata, record the payment, grant its credits. |
-| `payment.failed` | Logged with Dodo's `error_message`. No state change. |
-| `subscription.active` / `renewed` / `updated` / `plan_changed` / `unpaused` | Sync status, period end and plan. Opens the row if the payment event has not landed yet, with `grantsIssued: 0` and no grant. |
-| `subscription.past_due` / `on_hold` / `paused` | Status → `PAST_DUE`. Credits kept. A `past_due_ends_at` grace deadline becomes the period end, so access ends when Dodo says it does. |
-| `subscription.cancelled` | Status → `CANCELED`. Unspent credits kept. |
-| `subscription.expired` / `failed` | Status → `EXPIRED`. Unspent credits kept. |
+Covered at the top of this file. Briefly: it removes the only public endpoint
+that could move credits, the signing secret, the replay-dedupe table and the
+failure mode where a missed delivery means a customer paid and got nothing.
 
-Tier, cycle and amount are always derived from the Dodo object, never the
-client.
+The trade is that the grant needs the buyer's browser to come back. It is not
+lost if it does not: the session id stays claimable, `/plans/success` keeps it on
+screen, and the claim can be replayed safely at any time.
 
-### Who paid
+### Status codes, and what they mean to the customer
 
-Plan resolution: checkout metadata `th_plan_id` → `Plan.dodoProductId` →
-price match, in that order.
+| Code | Cause | What the page says |
+|---|---|---|
+| `200 claimed` | all good | "1,200 credits added" |
+| `200 alreadyClaimed` | page reloaded | "Already added. Nothing was charged twice." |
+| `409` | not paid yet, or amount mismatch | Stripe's state, or "does not match the item" |
+| `404` | Stripe does not know the session, or it is another user's | "If you were charged, contact support" |
+| `503` | no `STRIPE_SECRET_KEY`, or Stripe unreachable | "Your money is safe — reload in a moment" |
 
-User resolution is deliberately more suspicious. The metadata `th_user_id` is
-authoritative on a **hosted checkout session**, where it was set server-side.
-But on the **static-link fallback** it is a query parameter the customer can
-edit, so the handler cross-checks it against the email that actually paid:
-
-* metadata and email agree, or there is no email → take the metadata.
-* they disagree → credit the **payer**, and log the mismatch.
-* no usable metadata → fall back to the account matching the paying email.
-* neither → log an error and grant nothing.
+Every 4xx/5xx body is written for the person reading it, and the success page
+keeps the `session_id` visible on failure so support has the receipt.
 
 ### Testing locally
 
-Point a Dodo test-mode webhook endpoint at your machine (any tunnel works):
+No tunnel, and nothing to forward — that is the point. With a test key and test
+Payment Links:
 
 ```bash
-# whatever exposes localhost:3001 to the internet
-cloudflared tunnel --url http://localhost:3001
-# then Dashboard → Settings → Webhooks → add https://<tunnel>/v1/payments/webhook
-# copy the signing secret into DODO_WEBHOOK_SECRET and restart the API
+# 1. a test key is enough; a restricted key with
+#    "Checkout Sessions: read" is better
+STRIPE_SECRET_KEY=rk_test_... yarn start:dev
+
+# 2. the link's redirect must point at YOUR dev origin:
+#      http://localhost:5173/plans/success?session_id={CHECKOUT_SESSION_ID}
+#    Stripe allows an http://localhost redirect on a test-mode link.
+
+# 3. buy with 4242 4242 4242 4242, any future expiry, any CVC
 ```
 
-Then buy a plan with a Dodo test card. The Dodo CLI can also replay events at a
-local endpoint — see `dodo webhooks` in their docs.
+The claim is replayable, so a session id from the Stripe Dashboard can be posted
+by hand to re-test the whole path without paying again:
+
+```bash
+curl -sX POST http://localhost:3001/v1/payments/stripe/claim \
+  -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+  -d '{"sessionId":"cs_test_..."}'
+```
 
 ---
 
@@ -413,7 +524,12 @@ on, every failure path **denies** the dub: an unreachable billing API returns
   Every mutation writes both inside one `$transaction`.
 - `spendCredits` / `commit-dub` use a guarded `updateMany` (`credits >= amount`),
   so concurrent spends can never drive the balance negative — exactly one wins.
-- Webhook grants ride in the same transaction as the `Payment` row whose
-  `dodoPaymentId` unique constraint guards them, so a replayed event with a
-  fresh `webhook-id` still cannot double-grant.
+- Purchase grants ride in the same transaction as the `Payment` row whose
+  `stripeCheckoutSessionId` UNIQUE constraint guards them, so a reloaded success
+  page, a double-clicked button and a replayed session id all pay out once.
+- Every interactive transaction runs on the budget set in `PrismaService`
+  (`DB_TX_MAX_WAIT_MS` / `DB_TX_TIMEOUT_MS`, default 15 s / 20 s) and is retried
+  on a transient database failure. Prisma's own 2 s/5 s defaults are sized for a
+  Postgres on localhost and were too tight for this one — `commit-dub` threw
+  P2028 and surfaced as a 500.
 - `GET /payments/credits/reconcile` reports any drift between the two.

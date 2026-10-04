@@ -5,25 +5,128 @@ import { CreditReason, SubscriptionStatus } from '@prisma/client';
 import { PaymentService } from './payment.service';
 import { PrismaService } from '../prisma/prisma.service';
 
-// Two jobs run the subscription lifecycle between webhooks.
+// The jobs that stand in for a webhook, plus the subscription lifecycle.
 //
-// `grantDueSubscriptions` is what makes YEARLY plans drip: Dodo bills once,
-// but credits are handed out every `plan.grantDays`, `plan.grantsPerPeriod`
-// times. Without it a user could buy a year, burn 14 400 credits in a week and
-// cancel.
+// `claimPendingCheckouts` finds the buyer who paid and closed the tab: anyone
+// who opened a Lemon Squeezy checkout in the last day has their orders looked
+// up every few minutes, so credits arrive whether or not they come back.
+//
+// `syncRenewals` is the same idea for the charges after the first: LS bills a
+// subscription again at the end of each period, and those renewals are only
+// visible by asking.
+//
+// `grantDueSubscriptions` is what makes YEARLY plans drip: the purchase is
+// charged once, but credits are handed out every `plan.grantDays`,
+// `plan.grantsPerPeriod` times. Without it a user could buy a year, burn
+// 14 400 credits in a week and stop paying.
 //
 // `expireLapsedSubscriptions` is the other half: when a period ends and no
 // renewal arrives, the row has to stop counting as active or the user keeps
-// their paid tier forever. Buy on Aug 25, no renewal, and this drops them back
-// to Free on Sep 25.
+// their paid tier forever.
 @Injectable()
 export class PaymentCron {
   private readonly logger = new Logger(PaymentCron.name);
+  private claiming = false;
+  private syncing = false;
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly service: PaymentService,
   ) {}
+
+  // How long after opening a checkout an account keeps being checked.
+  private static readonly CHECKOUT_WATCH_MS = 24 * 60 * 60 * 1000;
+
+  @Cron(CronExpression.EVERY_5_MINUTES)
+  async claimPendingCheckouts(): Promise<number> {
+    // A slow LS response must not stack a second run on top of the first.
+    if (this.claiming) return 0;
+    this.claiming = true;
+    try {
+      const since = new Date(Date.now() - PaymentCron.CHECKOUT_WATCH_MS);
+      const users = await this.prisma.user.findMany({
+        where: { lsCheckoutStartedAt: { gte: since } },
+        select: { id: true },
+      });
+
+      let credited = 0;
+      for (const { id } of users) {
+        try {
+          const result = await this.service.claimOrders(id);
+          if (result.claimed) {
+            credited++;
+            this.logger.log(
+              `Cron credited user ${id} with ${result.creditsGranted} credits ` +
+                `(${result.granted.map((g) => g.description).join('; ')})`,
+            );
+          }
+        } catch (err) {
+          this.logger.warn(
+            `Pending-checkout claim for user ${id} failed, will retry: ${
+              err instanceof Error ? err.message : err
+            }`,
+          );
+        }
+      }
+      return credited;
+    } finally {
+      this.claiming = false;
+    }
+  }
+
+  // Renewals land at `renews_at`, which is what the stored period ends on — so
+  // only subscriptions at or past the end of their period need asking about,
+  // and the grace window in PaymentService.isLapsed keeps them on their tier
+  // meanwhile. Runs before the expiry sweep so a renewal charged in the last
+  // hour reactivates the row instead of racing it.
+  @Cron(CronExpression.EVERY_HOUR)
+  async syncRenewalsThenExpire(): Promise<void> {
+    await this.syncRenewals();
+    await this.expireLapsedSubscriptions();
+  }
+
+  async syncRenewals(): Promise<number> {
+    if (this.syncing) return 0;
+    this.syncing = true;
+    try {
+      const now = Date.now();
+      const subs = await this.prisma.subscription.findMany({
+        where: {
+          lsSubscriptionId: { not: null },
+          status: {
+            in: [
+              SubscriptionStatus.ACTIVE,
+              SubscriptionStatus.PAST_DUE,
+              SubscriptionStatus.EXPIRED,
+            ],
+          },
+          currentPeriodEnd: {
+            lte: new Date(now + 60 * 60 * 1000),
+            // A card LS gave up on long ago is not coming back.
+            gte: new Date(now - 40 * 24 * 60 * 60 * 1000),
+          },
+        },
+        include: { plan: true },
+      });
+
+      let renewed = 0;
+      for (const sub of subs) {
+        try {
+          renewed += (await this.service.syncRenewals(sub)).length;
+        } catch (err) {
+          this.logger.warn(
+            `Renewal sync for subscription ${sub.id} failed, will retry: ${
+              err instanceof Error ? err.message : err
+            }`,
+          );
+        }
+      }
+      if (renewed > 0) this.logger.log(`Credited ${renewed} renewal(s)`);
+      return renewed;
+    } finally {
+      this.syncing = false;
+    }
+  }
 
   @Cron(CronExpression.EVERY_HOUR)
   async grantDueSubscriptions(): Promise<number> {
@@ -51,7 +154,8 @@ export class PaymentCron {
 
       const dueAt = sub.lastGrantAt
         ? new Date(
-            sub.lastGrantAt.getTime() + sub.plan.grantDays * 24 * 60 * 60 * 1000,
+            sub.lastGrantAt.getTime() +
+              sub.plan.grantDays * 24 * 60 * 60 * 1000,
           )
         : new Date(0);
       if (dueAt > now) continue;
@@ -92,31 +196,48 @@ export class PaymentCron {
     }
 
     if (granted > 0) {
-      this.logger.log(`Recurring cron granted credits to ${granted} subscription(s)`);
+      this.logger.log(
+        `Recurring cron granted credits to ${granted} subscription(s)`,
+      );
     }
     return granted;
   }
 
   // Sweep subscriptions whose paid period has run out without a renewal.
   //
-  // A successful renewal pushes currentPeriodEnd forward (invoice.paid) long
-  // before this runs, so anything still sitting in the past has genuinely
-  // lapsed: cancelled, one-off, or a card that never recovered from PAST_DUE.
   // Flipping it to EXPIRED is what puts the user back on Free — nothing else
-  // reads a "current tier", it is derived from the live subscription row.
+  // reads a "current tier", it is derived from the live subscription row. A
+  // renewal that arrives later sets it ACTIVE again (syncRenewals).
   //
   // Unspent credits are deliberately left alone: they were paid for, and the
   // cancel endpoint makes the same promise.
-  @Cron(CronExpression.EVERY_HOUR)
   async expireLapsedSubscriptions(): Promise<number> {
     const now = new Date();
 
-    const { count } = await this.prisma.subscription.updateMany({
+    const candidates = await this.prisma.subscription.findMany({
       where: {
         status: {
           in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.PAST_DUE],
         },
         currentPeriodEnd: { lte: now },
+      },
+      select: {
+        id: true,
+        currentPeriodEnd: true,
+        lsSubscriptionId: true,
+        cancelAtPeriodEnd: true,
+      },
+    });
+    // Same rule as reads use, including the renewal grace for LS-billed plans.
+    const lapsed = candidates.filter((s) => this.service.isLapsed(s, now));
+    if (lapsed.length === 0) return 0;
+
+    const { count } = await this.prisma.subscription.updateMany({
+      where: {
+        id: { in: lapsed.map((s) => s.id) },
+        status: {
+          in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.PAST_DUE],
+        },
       },
       data: { status: SubscriptionStatus.EXPIRED },
     });

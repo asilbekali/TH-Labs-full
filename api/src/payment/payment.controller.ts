@@ -1,32 +1,23 @@
 import {
-  BadRequestException,
   Body,
   Controller,
   Get,
-  Headers,
   HttpCode,
   HttpStatus,
-  Logger,
   Post,
   Query,
-  Req,
   UseGuards,
-  type RawBodyRequest,
 } from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiOkResponse,
   ApiOperation,
   ApiQuery,
+  ApiServiceUnavailableResponse,
   ApiTags,
 } from '@nestjs/swagger';
-import { Prisma } from '@prisma/client';
-import type { Request } from 'express';
 
 import { PaymentService } from './payment.service';
-import { DodoService } from './dodo.service';
-import { DodoWebhookHandler } from './webhook.handler';
-import { PrismaService } from '../prisma/prisma.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../common/decorators/current-user.decorator';
@@ -39,100 +30,57 @@ import { PaginationQueryDto } from './dto/pagination-query.dto';
 @ApiTags('payments')
 @Controller('payments')
 export class PaymentController {
-  private readonly logger = new Logger(PaymentController.name);
-
-  constructor(
-    private readonly payments: PaymentService,
-    private readonly dodo: DodoService,
-    private readonly webhook: DodoWebhookHandler,
-    private readonly prisma: PrismaService,
-  ) {}
+  constructor(private readonly payments: PaymentService) {}
 
   // ── Public ────────────────────────────────────────────────────────────
   @Get('plans')
-  @ApiOperation({ summary: 'List active plans, quality costs, and free-dub cap (public)' })
+  @ApiOperation({
+    summary: 'List active plans, quality costs, and free-dub cap (public)',
+  })
   getPlans() {
     return this.payments.getPlans();
   }
 
   @Get('credit-packs')
-  @ApiOperation({ summary: 'One-time credit packs and the per-minute tariff (public)' })
+  @ApiOperation({
+    summary: 'One-time credit packs and the per-minute tariff (public)',
+  })
   getCreditPacks() {
     return this.payments.getCreditPacks();
   }
 
-  // Dodo Payments posts here. Public, but every payload is signature-verified
-  // and idempotency-guarded before any credits move. Needs the raw request
-  // body, enabled via `rawBody: true` in main.ts.
-  @Post('webhook')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({
-    summary: 'Dodo Payments webhook (public, raw body, signature-verified)',
-  })
-  async handleWebhook(@Req() req: RawBodyRequest<Request>) {
-    const raw = req.rawBody;
-    if (!raw) {
-      throw new BadRequestException('Missing raw request body for webhook.');
-    }
-
-    // 1. Verify — anything that doesn't verify is a 400 and is never
-    //    processed. The Standard Webhooks signature covers all three
-    //    webhook-* headers plus the exact bytes, so we hand it the raw body.
-    const event = this.dodo.constructEvent(raw, req.headers);
-
-    // 2. Idempotency, before any business logic. `webhook-id` is stable across
-    //    the provider's retries of one event, and the unique constraint on it
-    //    — not an `if` check — is what makes this safe under concurrency.
-    const eventId = String(req.headers['webhook-id']);
-    try {
-      await this.prisma.webhookEvent.create({
-        data: { eventId, type: event.type },
-      });
-    } catch (err) {
-      if (
-        err instanceof Prisma.PrismaClientKnownRequestError &&
-        err.code === 'P2002'
-      ) {
-        this.logger.debug(`Duplicate webhook ${eventId} ignored`);
-        return { received: true, duplicate: true };
-      }
-      throw err;
-    }
-
-    // 3. Dispatch. If it throws, drop the idempotency marker so the retry
-    //    reprocesses the event, and surface a 500.
-    try {
-      await this.webhook.dispatch(event);
-    } catch (err) {
-      await this.prisma.webhookEvent
-        .delete({ where: { eventId } })
-        .catch(() => undefined);
-      this.logger.error(
-        `Webhook ${event.type} (${eventId}) failed: ${
-          err instanceof Error ? err.message : err
-        }`,
-      );
-      throw err;
-    }
-
-    return { received: true };
-  }
+  // There is deliberately NO webhook route here (yet).
+  //
+  // A purchase is confirmed by asking Lemon Squeezy for this account's paid
+  // orders — see `claim` below and lemonsqueezy.service.ts. A webhook can be
+  // added later on top without changing anything here: it would grant through
+  // the same UNIQUE order id, so the two paths can never both pay out.
 
   // ── Authenticated ─────────────────────────────────────────────────────
   @Get('checkout')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Get a Dodo Payments checkout URL for a plan (auth)' })
-  @ApiOkResponse({ description: '{ url } — redirect the user here to pay' })
-  checkout(@CurrentUser() user: AuthenticatedUser, @Query() q: CheckoutQueryDto) {
+  @ApiOperation({
+    summary: "A plan's Lemon Squeezy checkout link, for this account (auth)",
+  })
+  @ApiOkResponse({
+    description:
+      '{ url } — send the browser here to pay. The link is the one an admin ' +
+      "pasted into the panel, with the account's email prefilled: that email " +
+      'is how the order is found again.',
+  })
+  checkout(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query() q: CheckoutQueryDto,
+  ) {
     return this.payments.getCheckoutUrl(user.id, q.tier, q.cycle);
   }
 
   @Get('checkout/credits')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Checkout URL for a one-time credit pack (auth)' })
-  @ApiOkResponse({ description: '{ url } — redirect the user here to pay' })
+  @ApiOperation({ summary: 'The same, for a one-time credit pack (auth)' })
+  @ApiOkResponse({ description: '{ url } — send the browser here to pay' })
   creditCheckout(
     @CurrentUser() user: AuthenticatedUser,
     @Query() q: CreditCheckoutQueryDto,
@@ -140,12 +88,32 @@ export class PaymentController {
     return this.payments.getCreditCheckoutUrl(user.id, q.pack);
   }
 
-  @Get('portal')
+  // The one endpoint that turns money into credits.
+  //
+  // Called by /plans/success when the buyer comes back from Lemon Squeezy (the
+  // cron calls the same code for those who do not). It takes no input at all:
+  // it asks LS for the paid orders filed under this account's email and
+  // credits each new one. Safe to call any number of times — every order pays
+  // out once, enforced by a UNIQUE index. See PaymentService.claimOrders.
+  @Post('claim')
+  @HttpCode(HttpStatus.OK)
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: "Link into Dodo's customer portal (auth)" })
-  portal(@CurrentUser() user: AuthenticatedUser) {
-    return this.payments.getCustomerPortalUrl(user.id);
+  @ApiOperation({
+    summary: "Credit this account's paid Lemon Squeezy orders (auth)",
+  })
+  @ApiOkResponse({
+    description:
+      '{ claimed, granted[], creditsGranted, balance, pending, unmatched, ' +
+      'recent[], subscription }. `claimed: false` with `pending: true` means ' +
+      'LS is still processing — ask again in a few seconds. `recent` lists ' +
+      'purchases credited in the last hour, including by the cron.',
+  })
+  @ApiServiceUnavailableResponse({
+    description: 'Lemon Squeezy is not configured or not reachable. Retry.',
+  })
+  claim(@CurrentUser() user: AuthenticatedUser) {
+    return this.payments.claimOrders(user.id);
   }
 
   @Get('subscription')
@@ -160,7 +128,9 @@ export class PaymentController {
   @HttpCode(HttpStatus.OK)
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Cancel at period end — keeps unspent credits (auth)' })
+  @ApiOperation({
+    summary: 'Stop this plan renewing here — keeps unspent credits (auth)',
+  })
   cancel(@CurrentUser() user: AuthenticatedUser) {
     return this.payments.cancelSubscription(user.id);
   }
@@ -171,7 +141,10 @@ export class PaymentController {
   @ApiOperation({ summary: 'Paginated payment history (auth)' })
   @ApiQuery({ name: 'page', required: false })
   @ApiQuery({ name: 'limit', required: false })
-  history(@CurrentUser() user: AuthenticatedUser, @Query() q: PaginationQueryDto) {
+  history(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query() q: PaginationQueryDto,
+  ) {
     return this.payments.getHistory(user.id, q.page, q.limit);
   }
 
@@ -181,14 +154,19 @@ export class PaymentController {
   @ApiOperation({ summary: 'Credit balance + paginated ledger (auth)' })
   @ApiQuery({ name: 'page', required: false })
   @ApiQuery({ name: 'limit', required: false })
-  credits(@CurrentUser() user: AuthenticatedUser, @Query() q: PaginationQueryDto) {
+  credits(
+    @CurrentUser() user: AuthenticatedUser,
+    @Query() q: PaginationQueryDto,
+  ) {
     return this.payments.getCredits(user.id, q.page, q.limit);
   }
 
   @Get('credits/reconcile')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Dev: report drift between cached balance and ledger (auth)' })
+  @ApiOperation({
+    summary: 'Dev: report drift between cached balance and ledger (auth)',
+  })
   reconcile(@CurrentUser() user: AuthenticatedUser) {
     return this.payments.reconcile(user.id);
   }
@@ -197,7 +175,9 @@ export class PaymentController {
   @HttpCode(HttpStatus.OK)
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Preflight gate check — read-only, charges nothing (auth)' })
+  @ApiOperation({
+    summary: 'Preflight gate check — read-only, charges nothing (auth)',
+  })
   canDub(@CurrentUser() user: AuthenticatedUser, @Body() dto: CanDubDto) {
     return this.payments.canDub(user.id, dto);
   }

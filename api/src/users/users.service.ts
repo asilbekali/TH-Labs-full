@@ -51,7 +51,7 @@ export class UsersService {
     );
 
     try {
-      const user = await this.prisma.$transaction(async (tx) => {
+      const user = await this.prisma.transaction(async (tx) => {
         const created = await tx.user.create({
           data: {
             ...createUserDto,
@@ -70,7 +70,7 @@ export class UsersService {
           },
         });
         return created;
-      });
+      }, 'registerUser');
 
       // Fire-and-forget: the account exists either way, and MailService
       // swallows and logs its own failures — registration must not fail on a

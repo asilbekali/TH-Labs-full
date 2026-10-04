@@ -8,8 +8,8 @@ import {
 import { CreditPack, Plan, PlanTier, Prisma } from '@prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service';
-import { DodoService } from './dodo.service';
-import { parseProductRef } from './dodo-product-ref';
+import { LemonSqueezyService } from './lemonsqueezy.service';
+import { PaymentService } from './payment.service';
 import { CREDITS_PER_MINUTE, QUALITY_MULTIPLIER } from './credit-packs';
 import { CREDITS_PER_MINUTE_BY_QUALITY } from './quality-cost';
 import {
@@ -20,18 +20,24 @@ import {
 
 // What the admin panel needs to run billing without a deploy.
 //
-// The whole point of this service is that pasting a Dodo product link into the
-// panel is enough to put a plan on sale. So it is deliberately forgiving about
-// what "a product link" means (id or URL, either way round) and deliberately
-// strict about telling the admin what is still missing — a plan that looks
-// saved but cannot be bought is the failure worth designing against.
+// The whole workflow is: make the product in the Lemon Squeezy dashboard,
+// copy its share link and variant id, paste them here with the credits and the
+// price. No deploy — so changing PRO from 1,200 credits to 1,500, or
+// repricing a pack, is a PATCH from the panel and takes effect on the next
+// request.
+//
+// This service is therefore deliberately strict about telling the admin what is
+// still missing or inconsistent: a row that looks saved but cannot be bought —
+// or, worse, can be bought but not credited — is the failure worth designing
+// against. A row is sellable only with BOTH a link and a variant id.
 @Injectable()
 export class AdminBillingService {
   private readonly logger = new Logger(AdminBillingService.name);
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly dodo: DodoService,
+    private readonly ls: LemonSqueezyService,
+    private readonly payments: PaymentService,
   ) {}
 
   // ── Shared shaping ──────────────────────────────────────────────────────
@@ -39,66 +45,76 @@ export class AdminBillingService {
     const sellable = plan.tier !== PlanTier.FREE;
     return {
       ...plan,
-      /** Free is never "missing" a product — there is nothing to buy. */
-      configured: !sellable || !!(plan.dodoProductId || plan.dodoLinkUrl),
+      /** Free is never "missing" a link — there is nothing to buy. */
+      configured: !sellable || (!!plan.checkoutUrl && !!plan.lsVariantId),
       sellable,
       /** Advertised total for the period: one allocation × allocations. */
       creditsPerPeriod: plan.creditsGranted * plan.grantsPerPeriod,
-      /** True when the saved link points at Dodo's test host. */
-      linkIsTestMode: this.dodo.isTestCheckoutUrl(plan.dodoLinkUrl),
     };
   }
 
   private packView(pack: CreditPack) {
     return {
       ...pack,
-      configured: !!(pack.dodoProductId || pack.dodoLinkUrl),
-      linkIsTestMode: this.dodo.isTestCheckoutUrl(pack.dodoLinkUrl),
+      configured: !!pack.checkoutUrl && !!pack.lsVariantId,
     };
   }
 
   /**
-   * Turn whatever the admin pasted into `{ dodoProductId, dodoLinkUrl }`.
+   * `undefined` → field not sent, leave it alone. `''` → clear it.
    *
-   * `undefined` means "field not sent, leave it alone"; an empty string means
-   * "clear it", which takes the item off sale without deactivating it. Anything
-   * else must parse, or we refuse — saving an unusable value would show as a
-   * green "saved" in the panel and a 400 at the customer's checkout.
+   * Clearing a payment link takes the item off sale without deactivating it,
+   * which is the usual way to pause something. The DTO has already checked the
+   * shape (`https://<store>.lemonsqueezy.com/checkout/buy/…`), so there is nothing to parse here —
+   * only the empty-string convention to apply.
    */
-  private productPatch(
-    raw: string | undefined,
-  ): { dodoProductId: string | null; dodoLinkUrl: string | null } | undefined {
+  private nullable(raw: string | undefined): string | null | undefined {
     if (raw === undefined) return undefined;
-    if (raw.trim() === '') return { dodoProductId: null, dodoLinkUrl: null };
-
-    const ref = parseProductRef(raw, this.dodo.environment);
-    if (!ref) {
-      throw new BadRequestException(
-        'Could not read a Dodo product from that value. Paste either the ' +
-          'product id (pdt_…) or the full payment link from the dashboard.',
-      );
-    }
-    return { dodoProductId: ref.productId, dodoLinkUrl: ref.linkUrl };
+    return raw.trim() === '' ? null : raw.trim();
   }
 
   /**
-   * Refuse a product already attached to something else.
+   * Warn — in the response, not the log — about a row that is half wired up.
+   *
+   * A link without a variant id takes money that cannot be matched back to
+   * anything, and a variant id without a link cannot be bought. Neither is
+   * saved as an error (the admin may be filling them in one at a time), but
+   * the item stays off sale until both are there.
+   */
+  private wiringWarning(row: {
+    checkoutUrl: string | null;
+    lsVariantId: string | null;
+  }) {
+    if (row.checkoutUrl && !row.lsVariantId) {
+      return (
+        'Checkout link saved, but no lsVariantId — this item stays off sale ' +
+        'until it has one, because a paid order could not be matched to it.'
+      );
+    }
+    if (!row.checkoutUrl && row.lsVariantId) {
+      return 'Variant id saved, but no checkoutUrl — this item cannot be bought yet.';
+    }
+    return null;
+  }
+
+  /**
+   * Refuse a Lemon Squeezy variant already attached to something else.
    *
    * The unique indexes only cover one table each, so they alone would let the
-   * same product sit on a plan AND a credit pack — and a payment for it would
-   * then resolve to whichever the webhook looked up first. One product sells
-   * exactly one thing, and that has to be checked across both tables.
+   * same variant sit on a plan AND a credit pack — and a payment for it could
+   * then resolve to either. One variant sells exactly one thing, and that has
+   * to be checked across both tables.
    */
-  private async assertProductFree(
-    productId: string | null | undefined,
+  private async assertVariantFree(
+    variantId: string | null | undefined,
     self: { planId?: string; packId?: string },
   ): Promise<void> {
-    if (!productId) return;
+    if (!variantId) return;
 
     const [plan, pack] = await Promise.all([
-      this.prisma.plan.findUnique({ where: { dodoProductId: productId } }),
+      this.prisma.plan.findUnique({ where: { lsVariantId: variantId } }),
       this.prisma.creditPack.findUnique({
-        where: { dodoProductId: productId },
+        where: { lsVariantId: variantId },
       }),
     ]);
 
@@ -108,25 +124,25 @@ export class AdminBillingService {
 
     if (clash) {
       throw new ConflictException(
-        `Dodo product ${productId} is already attached to ${clash}. One ` +
-          'product sells exactly one thing, or a payment cannot be resolved ' +
+        `Lemon Squeezy variant ${variantId} is already attached to ${clash}. One ` +
+          'variant sells exactly one thing, or a payment cannot be resolved ' +
           'back to what was bought.',
       );
     }
   }
 
-  /** Backstop for the same clash racing past assertProductFree. */
-  private rethrowDuplicateProduct(
+  /** Backstop for the same clash racing past assertVariantFree. */
+  private rethrowDuplicateVariant(
     err: unknown,
-    productId?: string | null,
+    variantId?: string | null,
   ): never {
     if (
       err instanceof Prisma.PrismaClientKnownRequestError &&
       err.code === 'P2002'
     ) {
       throw new ConflictException(
-        `Dodo product ${productId ?? ''} is already attached to another plan or ` +
-          'credit pack. One product sells exactly one thing, or a payment ' +
+        `Lemon Squeezy variant ${variantId ?? ''} is already attached to another ` +
+          'plan or credit pack. One variant sells exactly one thing, or a payment ' +
           'cannot be resolved back to what was bought.',
       );
     }
@@ -147,33 +163,35 @@ export class AdminBillingService {
     ]);
 
     const sellablePlans = plans.filter((p) => p.tier !== PlanTier.FREE);
-    const unconfiguredPlans = sellablePlans.filter(
-      (p) => !p.dodoProductId && !p.dodoLinkUrl,
-    );
+    const wired = (r: { checkoutUrl: string | null; lsVariantId: string | null }) =>
+      !!r.checkoutUrl && !!r.lsVariantId;
+    const unconfiguredPlans = sellablePlans.filter((p) => !wired(p));
     const activePacks = packs.filter((p) => p.active);
-    const unconfiguredPacks = activePacks.filter(
-      (p) => !p.dodoProductId && !p.dodoLinkUrl,
-    );
-
-    // A live-mode API pointed at test links (or the reverse) takes payments
-    // that will never settle where the admin expects. Worth its own flag.
-    const liveLinks = [...plans, ...packs].filter(
-      (r) => r.dodoLinkUrl && !this.dodo.isTestCheckoutUrl(r.dodoLinkUrl),
-    ).length;
-    const testLinks = [...plans, ...packs].filter((r) =>
-      this.dodo.isTestCheckoutUrl(r.dodoLinkUrl),
-    ).length;
+    const unconfiguredPacks = activePacks.filter((p) => !wired(p));
 
     return {
-      provider: 'dodo' as const,
-      mode:
-        this.dodo.environment === 'live_mode'
-          ? ('live' as const)
-          : ('test' as const),
-      /** Hosted checkout sessions. False means static links only. */
-      apiConfigured: this.dodo.enabled,
-      /** THE critical one: false and no purchase can ever grant credits. */
-      webhookConfigured: this.dodo.webhookConfigured,
+      provider: 'lemonsqueezy' as const,
+      /**
+       * THE critical one: false (no LEMONSQUEEZY_API_KEY) and no purchase can
+       * ever grant credits, because there is no way to ask LS whether an order
+       * was paid. Buy buttons are disabled rather than taking money that
+       * cannot be honoured.
+       */
+      canGrantCredits: this.ls.configured,
+      /**
+       * Set this as each LS product's redirect / confirmation button link, so
+       * the buyer comes straight back and is credited in seconds. Without it
+       * they are still credited, by the cron, within about five minutes.
+       */
+      successUrl: this.payments.successUrl,
+      webhook: {
+        required: false,
+        note:
+          'No webhook is needed. Purchases are found by asking the Lemon ' +
+          "Squeezy API for the account's orders: on return to the site, " +
+          'every 5 minutes for a day after opening a checkout, and hourly ' +
+          'for subscription renewals.',
+      },
       plans: {
         total: plans.length,
         sellable: sellablePlans.length,
@@ -183,15 +201,6 @@ export class AdminBillingService {
         total: packs.length,
         active: activePacks.length,
         unconfigured: unconfiguredPacks.map((p) => p.slug),
-      },
-      links: {
-        live: liveLinks,
-        test: testLinks,
-        /** Links from both modes, or links that disagree with the API mode. */
-        mixed:
-          (liveLinks > 0 && testLinks > 0) ||
-          (this.dodo.environment === 'live_mode' && testLinks > 0) ||
-          (this.dodo.environment === 'test_mode' && liveLinks > 0),
       },
       /** Credits a MINUTE of dubbing costs, per quality. Enforced by can-dub. */
       qualityCost: CREDITS_PER_MINUTE_BY_QUALITY,
@@ -215,19 +224,21 @@ export class AdminBillingService {
     const plan = await this.prisma.plan.findUnique({ where: { id } });
     if (!plan) throw new NotFoundException('Plan not found.');
 
-    const product = this.productPatch(dto.dodoProduct);
-    if (product && plan.tier === PlanTier.FREE && product.dodoProductId) {
+    const link = this.nullable(dto.checkoutUrl);
+    const variantId = this.nullable(dto.lsVariantId);
+    if (plan.tier === PlanTier.FREE && (link || variantId)) {
       throw new BadRequestException(
-        'The FREE tier cannot be sold, so it takes no Dodo product.',
+        'The FREE tier cannot be sold, so it takes no checkout link or variant.',
       );
     }
-    await this.assertProductFree(product?.dodoProductId, { planId: plan.id });
+    await this.assertVariantFree(variantId, { planId: plan.id });
 
     try {
       const updated = await this.prisma.plan.update({
         where: { id },
         data: {
-          ...(product ?? {}),
+          ...(link !== undefined ? { checkoutUrl: link } : {}),
+          ...(variantId !== undefined ? { lsVariantId: variantId } : {}),
           ...(dto.priceCents !== undefined
             ? { priceCents: dto.priceCents }
             : {}),
@@ -244,11 +255,19 @@ export class AdminBillingService {
 
       this.logger.log(
         `Plan ${updated.tier}/${updated.cycle} updated` +
-          (product ? ` (product → ${product.dodoProductId ?? 'cleared'})` : ''),
+          (link !== undefined
+            ? ` (checkout link → ${link ? 'set' : 'cleared'})`
+            : '') +
+          (dto.creditsGranted !== undefined
+            ? ` (credits → ${dto.creditsGranted})`
+            : ''),
       );
-      return { plan: this.planView(updated) };
+      return {
+        plan: this.planView(updated),
+        warning: this.wiringWarning(updated),
+      };
     } catch (err) {
-      this.rethrowDuplicateProduct(err, product?.dodoProductId);
+      this.rethrowDuplicateVariant(err, variantId);
     }
   }
 
@@ -261,8 +280,9 @@ export class AdminBillingService {
   }
 
   async createCreditPack(dto: CreateCreditPackDto) {
-    const product = this.productPatch(dto.dodoProduct);
-    await this.assertProductFree(product?.dodoProductId, {});
+    const link = this.nullable(dto.checkoutUrl);
+    const variantId = this.nullable(dto.lsVariantId);
+    await this.assertVariantFree(variantId, {});
 
     const existing = await this.prisma.creditPack.findUnique({
       where: { slug: dto.slug },
@@ -284,15 +304,16 @@ export class AdminBillingService {
           popular: dto.popular ?? false,
           sortOrder: dto.sortOrder ?? 0,
           active: dto.active ?? true,
-          ...(product ?? {}),
+          ...(link !== undefined ? { checkoutUrl: link } : {}),
+          ...(variantId !== undefined ? { lsVariantId: variantId } : {}),
         },
       });
       this.logger.log(
         `Credit pack ${pack.slug} created (${pack.credits} credits)`,
       );
-      return { pack: this.packView(pack) };
+      return { pack: this.packView(pack), warning: this.wiringWarning(pack) };
     } catch (err) {
-      this.rethrowDuplicateProduct(err, product?.dodoProductId);
+      this.rethrowDuplicateVariant(err, variantId);
     }
   }
 
@@ -300,14 +321,16 @@ export class AdminBillingService {
     const pack = await this.prisma.creditPack.findUnique({ where: { id } });
     if (!pack) throw new NotFoundException('Credit pack not found.');
 
-    const product = this.productPatch(dto.dodoProduct);
-    await this.assertProductFree(product?.dodoProductId, { packId: pack.id });
+    const link = this.nullable(dto.checkoutUrl);
+    const variantId = this.nullable(dto.lsVariantId);
+    await this.assertVariantFree(variantId, { packId: pack.id });
 
     try {
       const updated = await this.prisma.creditPack.update({
         where: { id },
         data: {
-          ...(product ?? {}),
+          ...(link !== undefined ? { checkoutUrl: link } : {}),
+          ...(variantId !== undefined ? { lsVariantId: variantId } : {}),
           ...(dto.credits !== undefined ? { credits: dto.credits } : {}),
           ...(dto.priceCents !== undefined
             ? { priceCents: dto.priceCents }
@@ -320,16 +343,22 @@ export class AdminBillingService {
           ...(dto.active !== undefined ? { active: dto.active } : {}),
         },
       });
-      this.logger.log(`Credit pack ${updated.slug} updated`);
-      return { pack: this.packView(updated) };
+      this.logger.log(
+        `Credit pack ${updated.slug} updated` +
+          (dto.credits !== undefined ? ` (credits → ${dto.credits})` : ''),
+      );
+      return {
+        pack: this.packView(updated),
+        warning: this.wiringWarning(updated),
+      };
     } catch (err) {
-      this.rethrowDuplicateProduct(err, product?.dodoProductId);
+      this.rethrowDuplicateVariant(err, variantId);
     }
   }
 
   // Hard delete, SUPERADMIN only. Deactivating is almost always what is
-  // wanted: a deleted slug can no longer be resolved by a webhook, so a
-  // payment still in flight when it goes would arrive with nothing to grant.
+  // wanted: a deleted row takes its variant id with it, so a payment still in
+  // flight when it goes would arrive with nothing to match and grant nothing.
   async deleteCreditPack(id: string) {
     const pack = await this.prisma.creditPack.findUnique({ where: { id } });
     if (!pack) throw new NotFoundException('Credit pack not found.');

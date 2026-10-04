@@ -83,7 +83,7 @@ import {
   usePlans,
 } from "../lib/queries";
 import { useWorks, workTitle } from "../lib/works";
-import { gradientFor } from "../lib/thumb";
+import WorkThumb from "../components/WorkThumb";
 
 const QUALITIES = [
   { key: "fast", label: "Fast" },
@@ -1693,10 +1693,9 @@ export default function Studio() {
                       }}
                       className="group flex items-center gap-3 rounded-control border border-subtle bg-sunken/60 p-2 transition-colors hover:border-brand/35"
                     >
-                      <span
-                        className="thumb-grad h-10 w-14 shrink-0 rounded-lg"
-                        style={{ backgroundImage: gradientFor(w.id) }}
-                      />
+                      <span className="relative h-10 w-14 shrink-0 overflow-hidden rounded-lg">
+                        <WorkThumb work={w} />
+                      </span>
                       <div className="min-w-0 flex-1">
                         <div className="truncate text-sm font-medium text-primary">
                           {workTitle(w)}
@@ -1877,16 +1876,28 @@ export default function Studio() {
                 className="bento"
               >
                 <motion.div variants={rise}>
+                  {/* mediaUrl(), not the raw path.
+                      The pipeline returns `/media/outputs/<id>.mp4` — a path on
+                      the DUBBING API's origin, which is not this one. Handed to
+                      <video src> as-is it resolves against the Studio's own
+                      origin, where /media is the SPA catch-all: index.html with
+                      a video content type, so the player silently shows nothing
+                      and both panels read "no media" after a dub that worked.
+                      mediaUrl prepends VITE_DUB_API when that is absolute and
+                      leaves the path alone when the two are same-origin (the
+                      deployed single-container case), so one call is right in
+                      both. My Works already did this; this panel and the
+                      download link below were the two places that did not. */}
                   <VideoCompare
-                    sourceUrl={job.result.source_url ?? undefined}
-                    outputUrl={job.result.output_url ?? undefined}
+                    sourceUrl={mediaUrl(job.result.source_url)}
+                    outputUrl={mediaUrl(job.result.output_url)}
                     simulated={job.simulated}
                   />
                 </motion.div>
                 {job.result.output_url && (
                   <motion.a
                     variants={rise}
-                    href={job.result.output_url}
+                    href={mediaUrl(job.result.output_url)}
                     download
                     whileHover={{ y: -2 }}
                     whileTap={tapScale}

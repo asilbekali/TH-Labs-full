@@ -14,9 +14,9 @@ import { usePaymentsInvalidation } from './lib/queries'
 
 export default function App() {
   const location = useLocation()
-  // Credits also move outside this app (a Dodo Payments webhook grants them
-  // after checkout completes on Dodo's domain), so billing queries are invalidated
-  // from one place at the root rather than per page.
+  // Credits also move outside this page (a purchase is claimed on
+  // /plans/success after the buyer returns from Lemon Squeezy), so billing queries
+  // are invalidated from one place at the root rather than per page.
   usePaymentsInvalidation()
   return (
     // Every route below is signed-in only, and the gate is AppShell itself —

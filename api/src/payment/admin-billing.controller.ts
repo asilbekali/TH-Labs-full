@@ -26,9 +26,15 @@ import {
   UpdatePlanDto,
 } from './dto/admin-billing.dto';
 
-// The admin panel's billing surface: put a plan on sale by pasting its Dodo
-// product link, price the credit packs, and see at a glance why checkout is
+// The admin panel's billing surface: put a plan on sale by pasting its Lemon
+// Squeezy checkout link and variant id, set how many credits it grants and
+// what it costs, price the credit packs, and see at a glance why checkout is
 // off.
+//
+// This is the whole of "managing credits" — changing PRO from 1,200 to 1,500 is
+// a PATCH here and takes effect on the next request, with no deploy. `overview`
+// also hands back the success URL every LS product should redirect to, so the
+// buyer is brought straight back and credited in seconds.
 //
 // Staff only. ADMIN may read and edit — that is the day-to-day job of pricing
 // and wiring up products. Deleting a credit pack is SUPERADMIN, matching
@@ -49,7 +55,9 @@ export class AdminBillingController {
   })
   @ApiOkResponse({
     description:
-      'Read `webhookConfigured` first — false means a purchase can never grant credits.',
+      'Read `canGrantCredits` first — false (no LEMONSQUEEZY_API_KEY) means a ' +
+      'purchase can never be verified, so Buy is disabled. `successUrl` is the ' +
+      'redirect every LS product should be configured with.',
   })
   overview() {
     return this.billing.getOverview();
@@ -57,7 +65,9 @@ export class AdminBillingController {
 
   // ── Plans ───────────────────────────────────────────────────────────────
   @Get('plans')
-  @ApiOperation({ summary: 'Every plan, active or not, with its Dodo product' })
+  @ApiOperation({
+    summary: 'Every plan, active or not, with its Lemon Squeezy link and variant',
+  })
   listPlans() {
     return this.billing.listPlans();
   }
@@ -65,7 +75,7 @@ export class AdminBillingController {
   @Patch('plans/:id')
   @ApiOperation({
     summary:
-      'Update a plan — paste a Dodo product id or payment link, set price, credits, cycle length',
+      'Update a plan — paste its LS link + variant id, set credits, price, cycle length',
   })
   updatePlan(@Param('id') id: string, @Body() dto: UpdatePlanDto) {
     return this.billing.updatePlan(id, dto);

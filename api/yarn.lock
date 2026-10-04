@@ -3203,13 +3203,6 @@ doctypes@^1.1.0:
   resolved "https://registry.yarnpkg.com/doctypes/-/doctypes-1.1.0.tgz#ea80b106a87538774e8a3a4a5afe293de489e0a9"
   integrity sha512-LLBi6pEqS6Do3EKQ3J0NqHWV5hhb78Pi8vvESYwyOy2c31ZEZVdtitdzsQsKb7878PEERhzUk0ftqGhG6Mz+pQ==
 
-dodopayments@^2.51.0:
-  version "2.51.0"
-  resolved "https://registry.yarnpkg.com/dodopayments/-/dodopayments-2.51.0.tgz#1503a2d49fe32ec06b4ce5d010093c6f496b9a69"
-  integrity sha512-dQRA3z218WZT25oNH1olCSwHuazeS7/bt7AkwE3qzwaIfImhQN8lfoQNc6exCQ6hdt8+pDfUkihuR5+pKtPQZA==
-  dependencies:
-    standardwebhooks "^1.0.0"
-
 dom-serializer@^1.0.1:
   version "1.4.1"
   resolved "https://registry.yarnpkg.com/dom-serializer/-/dom-serializer-1.4.1.tgz#de5d41b1aea290215dc45a6dae8adcf1d32e2d30"
@@ -6917,7 +6910,7 @@ stack-utils@^2.0.6:
   dependencies:
     escape-string-regexp "^2.0.0"
 
-standardwebhooks@^1.0.0, standardwebhooks@^1.1.1:
+standardwebhooks@^1.1.1:
   version "1.1.1"
   resolved "https://registry.yarnpkg.com/standardwebhooks/-/standardwebhooks-1.1.1.tgz#25b98fa2bbe4edad7b42778135c923563e3d5e2f"
   integrity sha512-bCbX9ZEyFkWPsRz7Bl3NuQUJohmwGSev/yhr7vhaGPlc4AfIrspIRa6cPTBuI1ItmrTDJ4d/S2hCsfe4+vQGnQ==

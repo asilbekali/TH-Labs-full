@@ -151,9 +151,9 @@ export function useHistory(page = 1, limit = 20, enabled = true): UseQueryResult
 }
 
 /**
- * Ask the API for a Dodo-hosted checkout URL. A mutation rather than a query
- * because it is a deliberate user action with a side effect (the API opens a
- * checkout session stamped with this user's id) and must never be replayed
+ * Ask the API for this plan's Lemon Squeezy checkout link. A mutation rather
+ * than a query because it is a deliberate user action with a side effect (the
+ * API starts watching this account for the order) and must never be replayed
  * from cache.
  */
 export function useCheckout(): UseMutationResult<
@@ -212,8 +212,8 @@ export function useCommitDub(): UseMutationResult<
  * Bridge the imperative CREDITS_CHANGED_EVENT into cache invalidation.
  *
  * payments-api.ts fires that event from plain (non-hook) call sites, and the
- * balance also moves outside this app entirely — a Dodo webhook credits the
- * account after checkout completes on Dodo's domain. Mounted once at the
+ * balance also moves outside this page — /plans/success credits the account when
+ * the buyer returns from Lemon Squeezy. Mounted once at the
  * app root.
  */
 export function usePaymentsInvalidation(): void {

@@ -6,9 +6,10 @@ import Sidebar from '../nav/Sidebar'
 import TopBar from '../nav/TopBar'
 import MobileTabBar from '../nav/MobileTabBar'
 import LogoLoader from '../brand/LogoLoader'
+import SignIn from '../../pages/SignIn'
 import { useIsDesktop } from '../../hooks/useMediaQuery'
 import { useAuth } from '../../lib/auth'
-import { leaveToLanding } from '../../lib/landing'
+import { leaveToLanding, LOCAL_AUTH } from '../../lib/landing'
 
 // Routes that render as their own workbench on desktop: they own two or three
 // internally-scrolling regions, so they take the content area raw instead of
@@ -25,6 +26,11 @@ const COLLAPSE_KEY = 'th:sidebar-collapsed'
  * unauthenticated visitor is not shown a sign-in form here, they are handed
  * back to th-labs.uz. Putting that in the shell rather than on each route means
  * no page can be added later that forgets it.
+ *
+ * The one exception is LOCAL_AUTH (src/lib/landing.ts, on in `vite dev` only),
+ * where the door opens inward instead: a signed-out visitor gets the in-app
+ * sign-in screen. Without it a dev server is unreachable — it has no session,
+ * so the gate below redirects off the origin before you can look at anything.
  */
 export default function AppShell({ children }: { children: ReactNode }) {
   const { pathname } = useLocation()
@@ -82,9 +88,20 @@ export default function AppShell({ children }: { children: ReactNode }) {
   // signed-out one. Redirecting during that window would bounce people who are
   // already signed in — including the ones arriving from the landing page with
   // a valid handoff code in the URL.
+  // Only when there is nowhere in here to sign in. Under LOCAL_AUTH the screen
+  // below takes over instead — but signing out still leaves for the landing
+  // site, because `logout()` calls leaveToLanding directly and that function is
+  // unconditional. Arriving without a session and choosing to go are different
+  // things.
   useEffect(() => {
-    if (ready && !user) leaveToLanding()
+    if (ready && !user && !LOCAL_AUTH) leaveToLanding()
   }, [ready, user])
+
+  // Signed out, and there is somewhere in here to sign in: show it. Only ever
+  // after `ready`, for the reason above — during the bootstrap window a
+  // signed-in user looks signed out, and flashing a login form at someone who
+  // is already authenticated is the same bug as redirecting them.
+  if (ready && !user && LOCAL_AUTH) return <SignIn />
 
   if (!ready || !user) {
     return (

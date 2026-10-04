@@ -40,7 +40,6 @@
     "class-transformer": "^0.5.1",
     "class-validator": "^0.15.1",
     "cookie-parser": "^1.4.7",
-    "dodopayments": "^2.51.0",
     "helmet": "^8.3.0",
     "multer": "^2.2.0",
     "nest-winston": "^1.10.2",

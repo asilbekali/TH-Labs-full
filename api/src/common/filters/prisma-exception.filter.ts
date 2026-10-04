@@ -42,6 +42,15 @@ const KNOWN: Record<string, { status: number; message: string }> = {
   P1011: { status: HttpStatus.SERVICE_UNAVAILABLE, message: UNREACHABLE }, // TLS error
   P1017: { status: HttpStatus.SERVICE_UNAVAILABLE, message: UNREACHABLE }, // server closed it
   P2024: { status: HttpStatus.SERVICE_UNAVAILABLE, message: UNREACHABLE }, // pool timeout
+  // A transaction that could not be started, or ran out of its time budget.
+  // Same family as P2024 and it was the one missing from this table: it fell
+  // through to 500, and 500 is what /payments/commit-dub was answering the
+  // dubbing backend with every time Neon made it open a fresh connection. A
+  // request that was never at fault was reported as a bug in itself, and the
+  // Studio showed "job creation failed: 500" for a database that was simply
+  // slow for two seconds. See PrismaService's transaction budget.
+  P2028: { status: HttpStatus.SERVICE_UNAVAILABLE, message: UNREACHABLE }, // transaction API
+  P2034: { status: HttpStatus.SERVICE_UNAVAILABLE, message: UNREACHABLE }, // write conflict
 
   // Unique constraint. The route that cares usually catches this itself and
   // says something specific ("already on the list"); this is the fallback.
@@ -114,7 +123,9 @@ export class PrismaExceptionFilter implements ExceptionFilter {
     // The full error, with its table and column names, stays here.
     this.logger.error(
       `${req.method} ${req.originalUrl} → ${status}${code ? ` (${code})` : ''}: ${
-        exception instanceof Error ? exception.message.split('\n')[0] : exception
+        exception instanceof Error
+          ? exception.message.split('\n')[0]
+          : exception
       }`,
     );
 

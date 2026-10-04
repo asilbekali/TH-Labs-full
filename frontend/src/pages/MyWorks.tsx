@@ -1,10 +1,10 @@
 // My works — the user's real dub library.
 //
-// Every row is a job this account actually ran: the thumbnail falls back to a
-// deterministic gradient only because the pipeline extracts no poster frame,
-// but the player streams the real source and dubbed media, the transcript is
-// the pipeline's own ASR/NMT segments, and the cost is what
-// POST /v1/payments/commit-dub charged. Nothing on this page is seeded.
+// Every row is a job this account actually ran: the thumbnail is a frame of the
+// dubbed video itself (see WorkThumb), the player streams the real source and
+// dubbed media, the transcript is the pipeline's own ASR/NMT segments, and the
+// cost is what POST /v1/payments/commit-dub charged. Nothing on this page is
+// seeded.
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
@@ -16,7 +16,7 @@ import LogoMark from '../components/brand/LogoMark'
 import { useIsDesktop, useMediaQuery } from '../hooks/useMediaQuery'
 import { springLayout } from '../lib/motion'
 import { mediaUrl } from '../lib/api'
-import { gradientFor } from '../lib/thumb'
+import WorkThumb from '../components/WorkThumb'
 import { usePointerSpotlight } from '../hooks/usePointerSpotlight'
 import {
   useWorks,
@@ -465,10 +465,7 @@ function GridCard({
         className="focusable relative block aspect-video w-full overflow-hidden text-left"
         aria-label={`Open ${workTitle(work)}`}
       >
-        <span
-          className={`thumb-grad absolute inset-0 ${failed ? 'grayscale' : ''}`}
-          style={{ backgroundImage: gradientFor(work.id) }}
-        />
+        <WorkThumb work={work} />
         {processing ? (
           <div className="absolute inset-x-0 bottom-0">
             <div className="flex items-center justify-between px-3 pb-2 font-mono text-[11px] text-white/90">
@@ -587,8 +584,12 @@ function ListRow({
       transition={springLayout}
       className={`group grid ${LIST_COLS} items-center gap-3 border-b border-subtle px-4 py-3 transition-colors last:border-0 hover:bg-sunken`}
     >
-      <button onClick={onOpen} className="focusable h-9 w-16 overflow-hidden rounded-lg" aria-label={`Open ${workTitle(work)}`}>
-        <span className={`thumb-grad block h-full w-full ${work.status === 'failed' ? 'grayscale' : ''}`} style={{ backgroundImage: gradientFor(work.id) }} />
+      <button
+        onClick={onOpen}
+        className="focusable relative h-9 w-16 overflow-hidden rounded-lg"
+        aria-label={`Open ${workTitle(work)}`}
+      >
+        <WorkThumb work={work} rounded />
       </button>
       <button onClick={onOpen} className="min-w-0 text-left">
         <div className="truncate font-mono text-sm font-medium text-primary">{workTitle(work)}</div>
