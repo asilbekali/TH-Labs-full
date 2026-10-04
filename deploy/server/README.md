@@ -181,67 +181,83 @@ After this, every push to `main` touching `api/**` deploys on its own.
 
 ---
 
-## 6. Dodo Payments
+## 6. Stripe
 
 Payments run **here**, on this API — not on Modal. The Studio has no payment
-code at all; it calls `/v1/payments/*` and follows the URL it is given. Dodo is
-the merchant of record, so it owns the checkout page, the card data and the
-invoice.
+code at all; it calls `/v1/payments/*`, follows the URL it is given, and posts
+the session id back when the buyer returns. Stripe owns the checkout page, the
+card data, 3-D Secure and the receipt.
 
-The API boots and serves `/payments/plans` whether or not Dodo is configured,
-so a broken setup is quiet. It shows up only when someone tries to pay — which
-is why `/payments/plans` now reports a `checkout` block the Plans page reads to
-disable the buttons and say why.
+**There is no webhook.** A Payment Link never calls this API, so the question
+"was this paid?" is answered by asking Stripe once, when the buyer returns with
+`?session_id=…`. No endpoint to register, no signing secret, and no failure mode
+where a missed delivery means a customer paid and got nothing. See
+`api/PAYMENTS.md` for the full reasoning.
 
-**1. Products** — Dashboard → Products, one subscription product per paid plan
-(PRO and STUDIO × monthly/yearly). Price each to match the matrix in
-`api/PAYMENTS.md`, and give each a **subscription period longer than its
-payment frequency** (e.g. 20 years / monthly) — equal values expire the
-subscription after one cycle instead of renewing it.
+`deploy/server/configure-stripe.sh` automates everything below except the
+dashboard work. Run it on the box: `cd /srv/th-labs && bash configure-stripe.sh`.
 
-Put each in `.env` as `DODO_PRODUCT_<TIER>_<CYCLE>`. Either the product id
-(`pdt_…`) or the full payment link works.
+**1. Products** — Dashboard → Products, one per paid plan (PRO and STUDIO ×
+monthly/yearly) plus the three credit packs. Price each to match the matrix in
+`api/PAYMENTS.md` **to the cent**: a claim compares what Stripe charged against
+the catalog price and refuses to grant credits when they differ. That check is a
+security control, not a nicety, so it cannot be relaxed for a mispriced product.
 
-**2. Webhook endpoint** — Dashboard → Settings → Webhooks → Add endpoint:
+**2. Payment Links** — Dashboard → Payment links, one per product. On each link,
+set **After payment → Redirect customers to a custom page** to exactly:
 
 ```
-https://th-labs.uz/v1/payments/webhook
+https://th-labs.uz/plans/success?session_id={CHECKOUT_SESSION_ID}
 ```
 
-Subscribe to exactly the events the handler dispatches: `payment.succeeded`,
-`payment.failed`, `subscription.active`, `subscription.renewed`,
-`subscription.updated`, `subscription.plan_changed`, `subscription.past_due`,
-`subscription.on_hold`, `subscription.paused`, `subscription.unpaused`,
-`subscription.cancelled`, `subscription.expired`, `subscription.failed`. Copy
-the signing secret into `DODO_WEBHOOK_SECRET`.
+The `{CHECKOUT_SESSION_ID}` token is literal — Stripe substitutes the real id.
+**This is the step that silently breaks a purchase if it is wrong:** without the
+token the customer pays, lands on the success page with nothing to verify, and
+no credits are granted. `GET /v1/admin/billing/overview` returns this URL ready
+to copy.
 
-**3. API key** — `DODO_PAYMENTS_API_KEY` in `.env`, plus
-`DODO_PAYMENTS_ENVIRONMENT=live_mode` for a production box. No key ships to the
-browser: checkout is a redirect to a Dodo-hosted page, so there is no client
-SDK and nothing public to configure on the frontend.
+Put each link in `.env` as `STRIPE_LINK_<TIER>_<CYCLE>` /
+`STRIPE_LINK_PACK_<N>`, or paste it straight into the admin panel — the panel
+takes effect immediately and wins over a re-seed.
 
-**4. Apply.** Products are read at seed time, not on boot, so re-seed:
+**3. Secret key** — `STRIPE_SECRET_KEY` in `.env`. A **restricted** key (`rk_…`)
+with *Checkout Sessions: read* is enough and is the better choice:
+`checkout.sessions.retrieve` is the only call this API makes. Nothing ships to
+the browser — there is no client SDK and no publishable key to configure.
+
+The key's mode must match the links'. A test key cannot read a live Checkout
+Session (Stripe answers 404), and the symptom is the worst kind: checkout works,
+the card is charged, and the claim fails. `/admin/billing/overview` reports this
+as `links.mixed`.
+
+**4. Apply.** Links are read at seed time, not on boot, so re-seed:
 
 ```bash
 cd /srv/th-labs && docker compose up -d api && docker compose exec api yarn prisma:seed
 ```
 
-**Verify** — the warning is the tell. If Dodo is wired up, this prints only the
+**Verify** — the warning is the tell. Wired up correctly, this prints only the
 live-mode line:
 
 ```bash
-docker compose logs api | grep -i "DODO_\|Dodo Payments:"
+docker compose logs api | grep -iE "STRIPE_|Stripe:|Stripe configured"
 ```
 
-Then confirm the products actually landed on the plan rows:
+Then confirm the links actually landed on the plan rows:
 
 ```bash
-docker compose exec -T db psql -U thlabs -d thlabs -tAc 'select tier, cycle, ("dodoProductId" is not null) as has_product from "Plan" order by tier, cycle;'
+docker compose exec -T db psql -U thlabs -d thlabs -tAc 'select tier, cycle, ("stripePaymentLink" is not null) as sellable from "Plan" order by tier, cycle;'
 ```
 
-Finally send a test event from the Dashboard and watch for a 200. A 503 means
-`DODO_WEBHOOK_SECRET` never reached the container; a 400 means it reached it
-but does not match the endpoint you created.
+Finally buy something with a test card (`4242 4242 4242 4242`) and watch the
+credits land. If they do not, the message on the success page names the cause:
+
+| On screen | Cause |
+|---|---|
+| "Nothing to confirm" | the link's redirect is missing `?session_id={CHECKOUT_SESSION_ID}` |
+| "could not find that payment at Stripe" | the key and the link are from different modes |
+| "does not match the item" | `priceCents` disagrees with the Stripe product's price |
+| "cannot be confirmed right now" | `STRIPE_SECRET_KEY` never reached the container |
 
 ---
 

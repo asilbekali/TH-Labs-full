@@ -8,15 +8,24 @@ import {
 import { ConfigService } from '@nestjs/config';
 import {
   BillingCycle,
+  CreditPack,
   CreditReason,
   Plan,
   PlanTier,
+  Prisma,
   PrismaClient,
+  Subscription,
   SubscriptionStatus,
 } from '@prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service';
-import { DodoService } from './dodo.service';
+import {
+  LemonSqueezyService,
+  LemonSqueezyUnavailableError,
+  type LsInvoice,
+  type LsOrder,
+  type LsSubscription,
+} from './lemonsqueezy.service';
 import { CanDubDto, CanDubResult } from './dto/can-dub.dto';
 import { CommitDubDto, CommitDubResult } from './dto/commit-dub.dto';
 import { PaymentRequiredException } from './payment-required.exception';
@@ -31,13 +40,6 @@ import {
   rateFor,
 } from './quality-cost';
 
-// Metadata we stamp on every checkout and read back off the webhook. Prefixed
-// so it can never collide with a key the dashboard or a discount campaign
-// adds, and kept here because the webhook handler must spell them identically.
-export const META_USER_ID = 'th_user_id';
-export const META_PLAN_ID = 'th_plan_id';
-export const META_PACK_ID = 'th_pack_id';
-
 // A Prisma transaction client — the subset of the client available inside
 // `$transaction(async (tx) => …)`.
 type Tx = Omit<
@@ -45,13 +47,39 @@ type Tx = Omit<
   '$connect' | '$disconnect' | '$on' | '$transaction' | '$use' | '$extends'
 >;
 
+/** What one claimed order or renewal paid out. */
+export interface GrantedPurchase {
+  orderId: string;
+  description: string;
+  creditsGranted: number;
+}
+
+// How long a subscription paid through Lemon Squeezy is kept on its tier past
+// the end of its period while LS has not yet billed the renewal. LS charges at
+// `renews_at` and retries a failed card for several days; dropping the user to
+// Free in that window, then back again an hour later, would be wrong in both
+// directions. The renewal sync marks it EXPIRED the moment LS says it is.
+const LS_RENEWAL_GRACE_MS = 3 * 24 * 60 * 60 * 1000;
+
+// Orders older than the account are never claimed by it. An email freed by a
+// deleted account and registered again must not inherit that account's
+// purchases. A few minutes of slack absorb clock skew between LS and the DB.
+const ORDER_CLOCK_SKEW_MS = 10 * 60 * 1000;
+
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    error instanceof Prisma.PrismaClientKnownRequestError &&
+    error.code === 'P2002'
+  );
+}
+
 @Injectable()
 export class PaymentService {
   private readonly logger = new Logger(PaymentService.name);
 
   constructor(
     private readonly prisma: PrismaService,
-    private readonly dodo: DodoService,
+    private readonly ls: LemonSqueezyService,
     private readonly config: ConfigService,
   ) {}
 
@@ -69,10 +97,19 @@ export class PaymentService {
     );
   }
 
-  // Where Dodo sends the customer once checkout finishes. It arrives with
-  // `?payment_id=…&status=…` appended; the page only observes, the webhook is
-  // what grants credits.
-  private get returnUrl(): string {
+  /**
+   * Where every Lemon Squeezy product should send the buyer after paying.
+   *
+   * Reported to the admin panel (`GET /v1/admin/billing/overview`) so it can be
+   * copied rather than remembered. Set it on each product in the LS dashboard
+   * under "Confirmation modal → Button link" (or the product's redirect URL).
+   *
+   * It carries no order id — LS does not add one — and it does not need to:
+   * the success page asks the API to look the account's orders up. If it is
+   * missing, nothing is lost either; the buyer just is not brought
+   * back, and the cron credits the order within a few minutes.
+   */
+  get successUrl(): string {
     return `${this.appUrl.replace(/\/$/, '')}/plans/success`;
   }
 
@@ -83,12 +120,11 @@ export class PaymentService {
       orderBy: [{ priceCents: 'asc' }],
     });
 
-    // Whether money can move at all, reported by the server rather than
-    // inferred in the browser from a build-time key. A paid plan is buyable
-    // only once its Dodo product is configured, and the UI needs to say which
-    // ones are not rather than offering a button that 400s on click.
+    // A paid plan is buyable only once it has BOTH a checkout link to open and
+    // the variant id a paid order is matched on. Either alone takes money that
+    // could not be credited.
     const paid = plans.filter((p) => p.tier !== PlanTier.FREE);
-    const unconfigured = paid.filter((p) => !p.dodoProductId && !p.dodoLinkUrl);
+    const unconfigured = paid.filter((p) => !this.isSellable(p));
 
     return {
       plans,
@@ -99,25 +135,46 @@ export class PaymentService {
       freeMinuteSeconds: this.freeMinuteSeconds,
       signupBonusCredits: SIGNUP_BONUS_CREDITS,
       checkout: {
-        provider: 'dodo' as const,
-        mode: this.dodo.environment === 'live_mode' ? ('live' as const) : ('test' as const),
-        /** True when at least one paid plan can actually be checked out. */
+        provider: 'lemonsqueezy' as const,
+        /**
+         * 'test' | 'live' read off the catalog's own LS variants, so a live
+         * site still selling test products is visible on the page.
+         * 'unknown' when LS could not be asked; 'unconfigured' with no key.
+         */
+        mode: await this.checkoutMode(paid),
+        /** True when at least one paid plan can be bought. */
         configured: paid.length > unconfigured.length,
-        /** `TIER/CYCLE` for every paid plan still missing a product. */
+        /** `TIER/CYCLE` for every paid plan missing its link or variant id. */
         missingProducts: unconfigured.map((p) => `${p.tier}/${p.cycle}`),
-        /** Hosted checkout sessions; false means static links only. */
-        apiConfigured: this.dodo.enabled,
-        /** False when DODO_WEBHOOK_SECRET is unset — no grant can ever land. */
-        webhookConfigured: this.dodo.webhookConfigured,
+        /**
+         * False when LEMONSQUEEZY_API_KEY is unset. A purchase then cannot be
+         * verified, so it cannot be credited — the UI disables Buy rather than
+         * taking money it has no way to honour.
+         */
+        canGrantCredits: this.ls.configured,
       },
     };
   }
 
+  private async checkoutMode(
+    plans: Plan[],
+  ): Promise<'test' | 'live' | 'unknown' | 'unconfigured'> {
+    if (!this.ls.configured) return 'unconfigured';
+    const variant = plans.find((p) => this.isSellable(p))?.lsVariantId;
+    if (!variant) return 'unknown';
+    const test = await this.ls.variantTestMode(variant);
+    return test === null ? 'unknown' : test ? 'test' : 'live';
+  }
+
+  private isSellable(row: { checkoutUrl: string | null; lsVariantId: string | null }) {
+    return !!row.checkoutUrl && !!row.lsVariantId;
+  }
+
   // ── One-time credit packs ──────────────────────────────────────────────
   // The catalog is the CreditPack table, managed from the admin panel. A pack
-  // with no Dodo product is still listed — the price is real information —
+  // that cannot be bought yet is still listed — the price is real information —
   // but is marked unavailable so the page can disable its button instead of
-  // failing at checkout.
+  // failing on click.
   async getCreditPacks() {
     const packs = await this.prisma.creditPack.findMany({
       where: { active: true },
@@ -131,24 +188,24 @@ export class PaymentService {
         priceCents: pack.priceCents,
         currency: pack.currency,
         ...(pack.popular ? { popular: true } : {}),
-        available: !!(pack.dodoProductId || pack.dodoLinkUrl),
+        available: this.isSellable(pack) && this.ls.configured,
       })),
       creditsPerMinute: CREDITS_PER_MINUTE,
       qualityMultiplier: QUALITY_MULTIPLIER,
     };
   }
 
-  // ── Checkout ───────────────────────────────────────────────────────────
-  // Dodo owns the whole payment form, so card data never reaches this origin.
-  // What we own is the identity: the metadata stamped here is the only thing
-  // that tells the webhook which of our users paid, and which plan they paid
-  // for.
+  // ── Checkout: a hand-made Lemon Squeezy share link ─────────────────────
   //
-  // With an API key we create a hosted checkout session, where that metadata
-  // travels server-side and cannot be edited. Without one we fall back to a
-  // static payment link carrying the same keys as query parameters — which the
-  // customer can see and change, so the webhook re-checks the user id against
-  // the paying email before it grants anything.
+  // No checkout is created here and no card data ever reaches this origin. An
+  // admin makes each product in the LS dashboard and pastes its share link
+  // into the admin panel; these endpoints hand that link to the browser with
+  // the account's email prefilled.
+  //
+  // The email is what ties the order back to this account (see claimOrders),
+  // so it is prefilled rather than left to the buyer. The user id also rides
+  // along as custom data: nothing reads it today, but it is exactly what a
+  // future webhook needs, and it costs nothing to send now.
   async getCheckoutUrl(userId: number, tier: PlanTier, cycle: BillingCycle) {
     if (tier === PlanTier.FREE) {
       throw new BadRequestException('The FREE tier cannot be checked out.');
@@ -160,29 +217,18 @@ export class PaymentService {
     if (!plan || !plan.active) {
       throw new BadRequestException('Unknown or inactive plan.');
     }
-    if (!plan.dodoProductId && !plan.dodoLinkUrl) {
+    if (!this.isSellable(plan)) {
       throw new BadRequestException(
-        `No Dodo Payments product configured for ${tier} ${cycle}. ` +
-          'Add its product link in the admin panel, or set ' +
-          `DODO_PRODUCT_${tier}_${cycle} and re-run the seed.`,
+        `${tier} ${cycle} has no Lemon Squeezy checkout link or variant id yet. ` +
+          'Set both in the admin panel (PATCH /v1/admin/billing/plans/:id).',
       );
     }
 
-    const user = await this.prisma.user.findUnique({ where: { id: userId } });
-    if (!user) throw new NotFoundException('User not found.');
-
-    const url = await this.checkoutUrlFor({
-      productId: plan.dodoProductId,
-      linkUrl: plan.dodoLinkUrl,
-      user,
-      metadata: {
-        [META_USER_ID]: String(userId),
-        [META_PLAN_ID]: plan.id,
-      },
-    });
-
     return {
-      url,
+      url: await this.checkoutLinkFor(userId, plan.checkoutUrl!, {
+        kind: 'plan',
+        item: `${plan.tier}_${plan.cycle}`,
+      }),
       tier: plan.tier,
       cycle: plan.cycle,
       priceCents: plan.priceCents,
@@ -190,113 +236,619 @@ export class PaymentService {
     };
   }
 
-  /** Checkout for a one-time credit pack — no subscription is created. */
+  /** The same, for a one-time credit pack. No subscription is created. */
   async getCreditCheckoutUrl(userId: number, packSlug: string) {
     const pack = await this.prisma.creditPack.findUnique({
       where: { slug: packSlug },
     });
     if (!pack || !pack.active) {
-      throw new BadRequestException(`Unknown or inactive credit pack '${packSlug}'.`);
-    }
-    if (!pack.dodoProductId && !pack.dodoLinkUrl) {
       throw new BadRequestException(
-        `No Dodo Payments product configured for ${pack.slug}. ` +
-          'Add its product link in the admin panel.',
+        `Unknown or inactive credit pack '${packSlug}'.`,
+      );
+    }
+    if (!this.isSellable(pack)) {
+      throw new BadRequestException(
+        `${pack.slug} has no Lemon Squeezy checkout link or variant id yet. ` +
+          'Set both in the admin panel.',
       );
     }
 
-    const user = await this.prisma.user.findUnique({ where: { id: userId } });
-    if (!user) throw new NotFoundException('User not found.');
-
-    const url = await this.checkoutUrlFor({
-      productId: pack.dodoProductId,
-      linkUrl: pack.dodoLinkUrl,
-      user,
-      metadata: {
-        [META_USER_ID]: String(userId),
-        [META_PACK_ID]: pack.slug,
-      },
-    });
-
     return {
-      url,
+      url: await this.checkoutLinkFor(userId, pack.checkoutUrl!, {
+        kind: 'pack',
+        item: pack.slug,
+      }),
       packId: pack.slug,
       credits: pack.credits,
       priceCents: pack.priceCents,
     };
   }
 
-  // The webhook is the ONLY thing that grants credits. With no signing secret
-  // every delivery is rejected, so a checkout that "succeeds" takes the money
-  // and hands back nothing — and the customer sees Dodo's own success page.
-  //
-  // So refuse to mint the URL at all. A 503 in front of the pay button is a
-  // bug report; a silent charge with no credits is a refund and a lost user.
-  // DODO_ALLOW_UNVERIFIED_CHECKOUT=true opts out for a dev box that only wants
-  // to exercise the redirect, and is ignored once the secret is set.
-  private assertCreditsCanBeGranted(): void {
-    if (this.dodo.webhookConfigured) return;
-
-    if (
-      this.config.get<string>('DODO_ALLOW_UNVERIFIED_CHECKOUT')?.trim() ===
-      'true'
-    ) {
-      this.logger.warn(
-        'Issuing a checkout URL with DODO_WEBHOOK_SECRET unset — this purchase ' +
-          'will NOT grant credits (DODO_ALLOW_UNVERIFIED_CHECKOUT=true).',
+  /**
+   * The share link, tagged for this account — and the moment the cron starts
+   * watching for this account's order.
+   *
+   * Refuses outright when LEMONSQUEEZY_API_KEY is unset: there would be no way
+   * to see the order, so the money would leave the customer's card and nothing
+   * would arrive. A 503 in front of the Buy button is a bug report; a silent
+   * charge with no credits is a refund and a lost user.
+   */
+  private async checkoutLinkFor(
+    userId: number,
+    link: string,
+    custom: { kind: 'plan' | 'pack'; item: string },
+  ): Promise<string> {
+    if (!this.ls.configured) {
+      this.logger.error(
+        'Refusing checkout: LEMONSQUEEZY_API_KEY is not set, so a completed ' +
+          'payment could not be verified and no credits could be granted.',
       );
-      return;
+      throw new ServiceUnavailableException(
+        'Payments are temporarily unavailable — the server cannot confirm a ' +
+          'purchase right now, so no charge has been made.',
+      );
     }
 
-    this.logger.error(
-      'Refusing checkout: DODO_WEBHOOK_SECRET is not set, so the webhook would ' +
-        'reject the payment event and no credits could be granted.',
-    );
-    throw new ServiceUnavailableException(
-      'Payments are temporarily unavailable. The server is not configured to ' +
-        'confirm purchases (DODO_WEBHOOK_SECRET is missing), so a payment could ' +
-        'not be credited. No charge has been made.',
-    );
+    let url: URL;
+    try {
+      url = new URL(link);
+    } catch {
+      // An admin pasted something that is not a URL. Caught here rather than
+      // handed to the browser, where it would be a silent dead link.
+      this.logger.error(`Plan/pack has an unparseable checkout link: ${link}`);
+      throw new ServiceUnavailableException(
+        'This item is misconfigured and cannot be bought right now.',
+      );
+    }
+
+    const user = await this.prisma.user.update({
+      where: { id: userId },
+      // Starts the 24-hour window in which the cron looks for this account's
+      // order, so a buyer who pays and closes the tab is still credited.
+      data: { lsCheckoutStartedAt: new Date() },
+      select: { email: true, name: true },
+    });
+
+    // The email is how the order is found again — see claimOrders. A buyer can
+    // still change it on the LS form; the success page says to keep it.
+    url.searchParams.set('checkout[email]', user.email);
+    if (user.name) url.searchParams.set('checkout[name]', user.name);
+    url.searchParams.set('checkout[custom][user_id]', String(userId));
+    url.searchParams.set('checkout[custom][kind]', custom.kind);
+    url.searchParams.set('checkout[custom][item]', custom.item);
+    return url.toString();
   }
 
-  private async checkoutUrlFor(opts: {
-    productId: string | null;
-    linkUrl: string | null;
-    user: { email: string; name: string };
-    metadata: Record<string, string>;
-  }): Promise<string> {
-    this.assertCreditsCanBeGranted();
+  // ── Claiming purchases ─────────────────────────────────────────────────
+  /**
+   * Turn this account's paid Lemon Squeezy orders into credits. The only path
+   * that grants credits for money.
+   *
+   * Called by /plans/success when the buyer comes back, and by the cron for
+   * anyone who opened a checkout in the last day. It asks LS for the orders
+   * placed with this account's email and acts only on what LS reports:
+   *
+   *   paid?     the order's `status`, from LS. Pending, failed, refunded or
+   *             fraudulent orders grant nothing.
+   *   what?     the order's VARIANT id, from LS, matched against
+   *             Plan/CreditPack.lsVariantId. The share link fixes it and the
+   *             buyer cannot change it, so there is no way to pay for 100
+   *             credits and be granted 2 000. A variant that matches nothing
+   *             grants nothing and is logged.
+   *   who?      the order's email, which must be this account's — LS only
+   *             returns orders filed under it. Emails are unique here, and an
+   *             order older than the account is ignored.
+   *
+   * Idempotent on the order id, enforced by the UNIQUE index on
+   * `Payment.lsOrderId` rather than by a check-then-write: the row and the
+   * grant are one transaction, so the success page, a reload and the cron
+   * racing each other all pay out exactly once.
+   */
+  async claimOrders(userId: number) {
+    if (!this.ls.configured) {
+      throw new ServiceUnavailableException(
+        'Purchases cannot be confirmed right now. Your payment is safe — ' +
+          'reload this page in a few minutes, or contact support.',
+      );
+    }
 
-    const customer = { email: opts.user.email, name: opts.user.name };
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, email: true, createdAt: true },
+    });
+    if (!user) throw new NotFoundException('User not found.');
 
-    if (this.dodo.enabled && opts.productId) {
+    let orders: LsOrder[];
+    try {
+      orders = await this.ls.listOrdersByEmail(user.email);
+    } catch (error) {
+      if (error instanceof LemonSqueezyUnavailableError) {
+        // Ours, not theirs, and temporary — so 503 and "try again", never a
+        // message implying the payment did not happen.
+        throw new ServiceUnavailableException(
+          'We could not reach Lemon Squeezy to confirm your payment. Your ' +
+            'money is safe — reload this page in a moment.',
+        );
+      }
+      throw error;
+    }
+
+    const notBefore = user.createdAt.getTime() - ORDER_CLOCK_SKEW_MS;
+    // Oldest first: if two plans were bought, the newer one ends up current.
+    const candidates = orders
+      .filter((o) => o.createdAt.getTime() >= notBefore)
+      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+
+    const known = new Set(
+      (
+        await this.prisma.payment.findMany({
+          where: { lsOrderId: { in: candidates.map((o) => o.id) } },
+          select: { lsOrderId: true },
+        })
+      ).map((p) => p.lsOrderId),
+    );
+
+    const granted: GrantedPurchase[] = [];
+    let pending = 0;
+    let unmatched = 0;
+
+    for (const order of candidates) {
+      if (known.has(order.id)) continue;
+      if (!order.paid) {
+        if (order.status === 'pending') pending++;
+        continue;
+      }
+
+      const item = await this.resolveVariant(order.variantId);
+      if (!item) {
+        unmatched++;
+        this.logger.error(
+          `Order ${order.id} (#${order.orderNumber}) for user ${userId} is PAID ` +
+            `but its variant ${order.variantId ?? 'none'} ` +
+            `("${order.productName ?? '?'} / ${order.variantName ?? '?'}") is not ` +
+            'attached to any plan or credit pack. Credits NOT granted. Set ' +
+            'lsVariantId on the right row in the admin panel; the next claim or ' +
+            'cron run will credit it.',
+        );
+        continue;
+      }
+
       try {
-        return await this.dodo.createCheckoutSession({
-          productId: opts.productId,
-          customer,
-          metadata: opts.metadata,
-          returnUrl: this.returnUrl,
-        });
-      } catch (err) {
-        // A misconfigured product id, a revoked key, Dodo being down: the
-        // static link still works for all three, so fall back rather than
-        // failing the purchase — but say so, because the metadata is weaker.
-        this.logger.warn(
-          `Checkout session failed (${err instanceof Error ? err.message : err}); ` +
-            'falling back to the static payment link',
+        granted.push(
+          item.kind === 'plan'
+            ? await this.grantPlanOrder(userId, item.plan, order)
+            : await this.grantPackOrder(userId, item.pack, order),
+        );
+      } catch (error) {
+        // Another claim of the same order (the cron, a second tab) won the
+        // race and has already credited it. Exactly the outcome wanted.
+        if (isUniqueViolation(error)) continue;
+        if (error instanceof LemonSqueezyUnavailableError) {
+          throw new ServiceUnavailableException(
+            'We could not reach Lemon Squeezy to finish confirming your ' +
+              'payment. Your money is safe — reload this page in a moment.',
+          );
+        }
+        throw error;
+      }
+    }
+
+    const { credits } = await this.getCreditSummary(userId);
+    const { subscription } = await this.getSubscription(userId);
+    // Purchases credited in the last hour — by this call OR by an earlier one,
+    // such as the cron finishing before the buyer got back to the site. Lets
+    // the success page say "done" instead of "nothing found" in that case.
+    const recent = await this.prisma.payment.findMany({
+      where: {
+        userId,
+        status: 'SUCCEEDED',
+        createdAt: { gte: new Date(Date.now() - 60 * 60 * 1000) },
+      },
+      orderBy: { createdAt: 'desc' },
+      select: { description: true, createdAt: true },
+    });
+
+    return {
+      claimed: granted.length > 0,
+      granted,
+      creditsGranted: granted.reduce((sum, g) => sum + g.creditsGranted, 0),
+      balance: credits,
+      /** LS has an order still processing — worth asking again shortly. */
+      pending: pending > 0,
+      /** Paid orders that match no catalog row. Support has to settle these. */
+      unmatched,
+      recent,
+      subscription,
+    };
+  }
+
+  /** Which catalog row an LS variant sells. Inactive rows still count — a paid order is a paid order. */
+  private async resolveVariant(
+    variantId: string | null,
+  ): Promise<
+    { kind: 'plan'; plan: Plan } | { kind: 'pack'; pack: CreditPack } | null
+  > {
+    if (!variantId) return null;
+    const [plan, pack] = await Promise.all([
+      this.prisma.plan.findUnique({ where: { lsVariantId: variantId } }),
+      this.prisma.creditPack.findUnique({ where: { lsVariantId: variantId } }),
+    ]);
+    if (plan) return { kind: 'plan', plan };
+    if (pack) return { kind: 'pack', pack };
+    return null;
+  }
+
+  /**
+   * Log — never refuse — when LS charged a different amount from the catalog.
+   *
+   * Not a refusal, because the amount proves nothing here: the item is the
+   * variant LS reports, which the buyer cannot alter, and LS converts
+   * the price into the buyer's currency — so the amount is never exact, and a
+   * discount code is a legitimate reason for it to be lower. Refusing would
+   * take money and grant nothing. A large gap is still worth a human's look.
+   */
+  private checkAmount(order: LsOrder, expectedCents: number, label: string) {
+    if (expectedCents <= 0 || order.totalUsd <= 0) return;
+    const drift = Math.abs(order.totalUsd - expectedCents) / expectedCents;
+    if (drift > 0.1) {
+      this.logger.warn(
+        `Order ${order.id}: ${label} is listed at ${expectedCents}c but LS ` +
+          `charged ${order.totalUsd}c USD (${order.total} ${order.currency}). ` +
+          'Credited anyway (the variant is authoritative). Check the product ' +
+          'price in Lemon Squeezy, or the discount used.',
+      );
+    }
+  }
+
+  /** A subscription plan: open a paid period, and grant its first allocation. */
+  private async grantPlanOrder(
+    userId: number,
+    plan: Plan,
+    order: LsOrder,
+  ): Promise<GrantedPurchase> {
+    this.checkAmount(order, plan.priceCents, `${plan.tier} ${plan.cycle}`);
+
+    // The LS subscription this order opened. Needed BEFORE granting: it is what
+    // the renewal sync follows, and a plan credited without it would never
+    // have its renewals credited. If LS cannot be asked, the order stays
+    // unclaimed and the next attempt picks it up.
+    const lsSub = await this.ls.getSubscriptionForOrder(order.id);
+    if (!lsSub) {
+      this.logger.warn(
+        `Order ${order.id} bought ${plan.tier} ${plan.cycle} but LS reports no ` +
+          'subscription for it — is that product set up as a one-time ' +
+          'payment? Crediting one period; renewals cannot be tracked.',
+      );
+    }
+
+    const periodStart = order.createdAt;
+    const periodEnd = this.periodEndFor(plan.cycle, periodStart, lsSub);
+    const description = `${plan.tier} ${plan.cycle} — ${plan.creditsGranted} credits`;
+
+    const result = await this.prisma.transaction(async (tx) => {
+      // One live subscription per user. Buying a different tier retires the old
+      // row rather than leaving two of them granting credits in parallel.
+      const existing = await tx.subscription.findFirst({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      const fields = {
+        planId: plan.id,
+        status: SubscriptionStatus.ACTIVE,
+        lsSubscriptionId: lsSub?.id ?? null,
+        currentPeriodStart: periodStart,
+        currentPeriodEnd: periodEnd,
+        cancelAtPeriodEnd: false,
+        lastGrantAt: new Date(),
+        // A fresh period; the grant below is its first allocation.
+        grantsIssued: 1,
+      };
+      const subscription = existing
+        ? await tx.subscription.update({ where: { id: existing.id }, data: fields })
+        : await tx.subscription.create({ data: { userId, ...fields } });
+
+      await tx.subscription.updateMany({
+        where: {
+          userId,
+          id: { not: subscription.id },
+          status: {
+            in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.PAST_DUE],
+          },
+        },
+        data: { status: SubscriptionStatus.CANCELED },
+      });
+
+      // The idempotency row. UNIQUE on lsOrderId, written in the same
+      // transaction as the grant, so a second claim of this order rolls the
+      // grant back with it.
+      await tx.payment.create({
+        data: {
+          userId,
+          subscriptionId: subscription.id,
+          amountCents: order.totalUsd || plan.priceCents,
+          currency: 'usd',
+          status: 'SUCCEEDED',
+          description,
+          lsOrderId: order.id,
+          lsOrderIdentifier: order.identifier,
+        },
+      });
+
+      const balance = await this.applyCredits(
+        tx,
+        userId,
+        plan.creditsGranted,
+        CreditReason.SUBSCRIPTION_GRANT,
+        subscription.id,
+        `${plan.tier} ${plan.cycle} grant (order #${order.orderNumber})`,
+      );
+
+      return {
+        subscription,
+        balance,
+        replacedLsSubscriptionId:
+          existing?.lsSubscriptionId &&
+          existing.lsSubscriptionId !== lsSub?.id &&
+          (existing.status === SubscriptionStatus.ACTIVE ||
+            existing.status === SubscriptionStatus.PAST_DUE)
+            ? existing.lsSubscriptionId
+            : null,
+      };
+    }, `grantPlanOrder(${order.id})`);
+
+    this.logger.log(
+      `Granted ${plan.creditsGranted} credits to user ${userId} ` +
+        `(${plan.tier} ${plan.cycle}, LS order ${order.id})`,
+    );
+
+    await this.rememberCustomer(userId, order.customerId);
+
+    // Switching plans: the old LS subscription would otherwise keep charging
+    // the card for a plan this account no longer has. Cancelled at LS, which
+    // lets it run to the end of what was already paid. Best effort — the new
+    // plan is credited either way, and a failure is logged for support.
+    if (result.replacedLsSubscriptionId) {
+      try {
+        await this.ls.cancelSubscription(result.replacedLsSubscriptionId);
+        this.logger.log(
+          `Cancelled replaced LS subscription ${result.replacedLsSubscriptionId} ` +
+            `for user ${userId}`,
+        );
+      } catch (error) {
+        this.logger.error(
+          `User ${userId} switched plans but LS subscription ` +
+            `${result.replacedLsSubscriptionId} could not be cancelled: ` +
+            `${error instanceof Error ? error.message : String(error)}. ` +
+            'Cancel it in the Lemon Squeezy dashboard or they will be billed twice.',
         );
       }
     }
 
-    const link = opts.linkUrl ?? opts.productId;
-    if (!link) {
-      throw new BadRequestException('No Dodo Payments product configured.');
+    return {
+      orderId: order.id,
+      description,
+      creditsGranted: plan.creditsGranted,
+    };
+  }
+
+  /** A one-time credit pack. No subscription, no period — credits land and it is done. */
+  private async grantPackOrder(
+    userId: number,
+    pack: CreditPack,
+    order: LsOrder,
+  ): Promise<GrantedPurchase> {
+    this.checkAmount(order, pack.priceCents, pack.slug);
+    const description = `${pack.credits} credits — one-time pack`;
+
+    await this.prisma.transaction(async (tx) => {
+      await tx.payment.create({
+        data: {
+          userId,
+          amountCents: order.totalUsd || pack.priceCents,
+          currency: 'usd',
+          status: 'SUCCEEDED',
+          description,
+          lsOrderId: order.id,
+          lsOrderIdentifier: order.identifier,
+        },
+      });
+      await this.applyCredits(
+        tx,
+        userId,
+        pack.credits,
+        CreditReason.PACK_PURCHASE,
+        order.id,
+        `${pack.slug} purchase (order #${order.orderNumber})`,
+      );
+    }, `grantPackOrder(${order.id})`);
+
+    this.logger.log(
+      `Granted ${pack.credits} credits to user ${userId} ` +
+        `(${pack.slug}, LS order ${order.id})`,
+    );
+    await this.rememberCustomer(userId, order.customerId);
+
+    return { orderId: order.id, description, creditsGranted: pack.credits };
+  }
+
+  /** Outside the grant transaction on purpose: it is bookkeeping, and must never fail a paid claim. */
+  private async rememberCustomer(userId: number, customerId: string | null) {
+    if (!customerId) return;
+    await this.prisma.user
+      .update({ where: { id: userId }, data: { lsCustomerId: customerId } })
+      .catch(() => undefined);
+  }
+
+  /**
+   * End of a paid period. LS's own `renews_at` when it has one — it is the
+   * moment LS will bill again, so the renewal sync and the period agree — and
+   * otherwise the calendar step from the purchase.
+   */
+  private periodEndFor(
+    cycle: BillingCycle,
+    from: Date,
+    lsSub: LsSubscription | null,
+  ): Date {
+    if (lsSub?.renewsAt && lsSub.renewsAt.getTime() > from.getTime()) {
+      return lsSub.renewsAt;
     }
-    return this.dodo.staticCheckoutUrl(link, {
-      customer,
-      metadata: opts.metadata,
-      returnUrl: this.returnUrl,
+    return this.cyclePeriodEnd(cycle, from);
+  }
+
+  // ── Renewals ───────────────────────────────────────────────────────────
+  /**
+   * Credit the renewals LS has charged on one subscription, and bring its
+   * status in line with LS's.
+   *
+   * A renewal is not an order — LS records it as a subscription invoice with
+   * `billing_reason: 'renewal'` — so claimOrders never sees it. Without this,
+   * a monthly customer would be charged every month and credited once. Run by
+   * the cron for every subscription at or near the end of its period.
+   *
+   * Idempotent on the invoice id (UNIQUE `Payment.lsInvoiceId`), the same way
+   * claims are on the order id.
+   */
+  async syncRenewals(
+    sub: Subscription & { plan: Plan },
+  ): Promise<GrantedPurchase[]> {
+    if (!sub.lsSubscriptionId || !this.ls.configured) return [];
+
+    const lsSub = await this.ls.getSubscription(sub.lsSubscriptionId);
+    const invoices = (await this.ls.listInvoices(sub.lsSubscriptionId))
+      .filter((i) => i.billingReason === 'renewal' && i.status === 'paid')
+      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+
+    const known = new Set(
+      (
+        await this.prisma.payment.findMany({
+          where: { lsInvoiceId: { in: invoices.map((i) => i.id) } },
+          select: { lsInvoiceId: true },
+        })
+      ).map((p) => p.lsInvoiceId),
+    );
+
+    // A plan change made in LS's customer portal moves the subscription to
+    // another variant; renewals are credited at whatever it is now.
+    const variantItem = await this.resolveVariant(lsSub.variantId);
+    const plan = variantItem?.kind === 'plan' ? variantItem.plan : sub.plan;
+
+    const granted: GrantedPurchase[] = [];
+    for (const invoice of invoices) {
+      if (known.has(invoice.id)) continue;
+      try {
+        granted.push(await this.grantRenewal(sub, plan, lsSub, invoice));
+      } catch (error) {
+        if (isUniqueViolation(error)) continue; // a concurrent sync won
+        throw error;
+      }
+    }
+
+    await this.applyLsStatus(sub.id, lsSub);
+    return granted;
+  }
+
+  private async grantRenewal(
+    sub: Subscription,
+    plan: Plan,
+    lsSub: LsSubscription,
+    invoice: LsInvoice,
+  ): Promise<GrantedPurchase> {
+    const periodStart = invoice.createdAt;
+    const periodEnd = this.periodEndFor(plan.cycle, periodStart, lsSub);
+    const description = `${plan.tier} ${plan.cycle} renewal — ${plan.creditsGranted} credits`;
+
+    await this.prisma.transaction(async (tx) => {
+      await tx.payment.create({
+        data: {
+          userId: sub.userId,
+          subscriptionId: sub.id,
+          amountCents: invoice.totalUsd || plan.priceCents,
+          currency: 'usd',
+          status: 'SUCCEEDED',
+          description,
+          lsInvoiceId: invoice.id,
+        },
+      });
+      await tx.subscription.update({
+        where: { id: sub.id },
+        data: {
+          planId: plan.id,
+          status: SubscriptionStatus.ACTIVE,
+          currentPeriodStart: periodStart,
+          currentPeriodEnd: periodEnd,
+          lastGrantAt: new Date(),
+          grantsIssued: 1,
+        },
+      });
+      await this.applyCredits(
+        tx,
+        sub.userId,
+        plan.creditsGranted,
+        CreditReason.SUBSCRIPTION_GRANT,
+        sub.id,
+        `${plan.tier} ${plan.cycle} renewal (LS invoice ${invoice.id})`,
+      );
+    }, `grantRenewal(${invoice.id})`);
+
+    this.logger.log(
+      `Renewal: granted ${plan.creditsGranted} credits to user ${sub.userId} ` +
+        `(${plan.tier} ${plan.cycle}, LS invoice ${invoice.id})`,
+    );
+    return { orderId: invoice.id, description, creditsGranted: plan.creditsGranted };
+  }
+
+  /** Mirror what LS says about a subscription that this side cannot otherwise learn. */
+  private async applyLsStatus(subscriptionId: string, lsSub: LsSubscription) {
+    const current = await this.prisma.subscription.findUnique({
+      where: { id: subscriptionId },
     });
+    if (!current || current.status === SubscriptionStatus.CANCELED) return;
+
+    const data: Prisma.SubscriptionUpdateInput = {};
+    if (lsSub.cancelled && !current.cancelAtPeriodEnd) {
+      data.cancelAtPeriodEnd = true;
+    }
+    if (lsSub.status === 'expired' && current.status !== SubscriptionStatus.EXPIRED) {
+      data.status = SubscriptionStatus.EXPIRED;
+    } else if (
+      (lsSub.status === 'past_due' || lsSub.status === 'unpaid') &&
+      current.status === SubscriptionStatus.ACTIVE
+    ) {
+      data.status = SubscriptionStatus.PAST_DUE;
+    }
+    if (Object.keys(data).length > 0) {
+      await this.prisma.subscription.update({
+        where: { id: subscriptionId },
+        data,
+      });
+    }
+  }
+
+  /**
+   * Whether a subscription's paid period is over.
+   *
+   * One rule for the expiry cron and for reads, so the UI and the database
+   * never disagree. A plan still billing at LS gets LS_RENEWAL_GRACE_MS past
+   * its period for the renewal to land; one that will not renew ends on time.
+   */
+  isLapsed(
+    sub: Pick<Subscription, 'currentPeriodEnd' | 'lsSubscriptionId' | 'cancelAtPeriodEnd'>,
+    now: Date = new Date(),
+  ): boolean {
+    const grace =
+      sub.lsSubscriptionId && !sub.cancelAtPeriodEnd ? LS_RENEWAL_GRACE_MS : 0;
+    return sub.currentPeriodEnd.getTime() + grace <= now.getTime();
+  }
+
+  /** The cached balance alone. */
+  private async getCreditSummary(userId: number): Promise<{ credits: number }> {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { credits: true },
+    });
+    if (!user) throw new NotFoundException('User not found.');
+    return { credits: user.credits };
   }
 
   // ── Credit ledger primitives ─────────────────────────────────────────────
@@ -340,8 +892,9 @@ export class PaymentService {
       throw new BadRequestException('Grant amount must be positive.');
     }
     if (tx) return this.applyCredits(tx, userId, amount, reason, refId, note);
-    return this.prisma.$transaction((t) =>
-      this.applyCredits(t, userId, amount, reason, refId, note),
+    return this.prisma.transaction(
+      (t) => this.applyCredits(t, userId, amount, reason, refId, note),
+      `grantCredits(${reason})`,
     );
   }
 
@@ -354,8 +907,9 @@ export class PaymentService {
     jobId: string,
     note?: string,
   ): Promise<number> {
-    if (amount <= 0) throw new BadRequestException('Spend amount must be positive.');
-    return this.prisma.$transaction(async (tx) => {
+    if (amount <= 0)
+      throw new BadRequestException('Spend amount must be positive.');
+    return this.prisma.transaction(async (tx) => {
       const decremented = await tx.user.updateMany({
         where: { id: userId, credits: { gte: amount } },
         data: { credits: { decrement: amount } },
@@ -383,7 +937,7 @@ export class PaymentService {
         },
       });
       return user!.credits;
-    });
+    }, `spendCredits(${jobId})`);
   }
 
   // ── The credit gate ─────────────────────────────────────────────────────
@@ -440,7 +994,10 @@ export class PaymentService {
     const duration = Math.max(0, Number(dto.durationSeconds) || 0);
     const cost = costForDub(duration, dto.quality);
 
-    return this.prisma.$transaction(async (tx) => {
+    // Retried on a transient database failure, which is safe precisely because
+    // of the idempotency check below: a retry finds its own ledger row and
+    // returns the first result rather than charging twice.
+    return this.prisma.transaction(async (tx) => {
       // Idempotency: a ledger row already tagged with this jobId means we've
       // committed it before.
       const existing = await tx.creditEntry.findFirst({
@@ -529,21 +1086,10 @@ export class PaymentService {
         balance: after!.credits,
         idempotent: false,
       };
-    });
+    }, `commitDub(${dto.jobId})`);
   }
 
   // ── Subscriptions ────────────────────────────────────────────────────────
-  async hasActiveSubscription(userId: number): Promise<boolean> {
-    const sub = await this.prisma.subscription.findFirst({
-      where: {
-        userId,
-        status: SubscriptionStatus.ACTIVE,
-        currentPeriodEnd: { gt: new Date() },
-      },
-    });
-    return sub !== null;
-  }
-
   async getSubscription(userId: number) {
     const subscription = await this.prisma.subscription.findFirst({
       where: { userId },
@@ -553,11 +1099,11 @@ export class PaymentService {
     if (!subscription) return { subscription: null };
 
     // The expiry cron only runs hourly, so a row can still be stamped ACTIVE
-    // for a period that ended minutes ago. Callers use this to decide which
-    // tier to show, so report the effective status rather than the stored one
-    // — the cron catches up and writes the same value shortly after.
+    // for a period that has ended. Callers use this to decide which tier to
+    // show, so report the effective status rather than the stored one — the
+    // cron catches up and writes the same value shortly after.
     const lapsed =
-      subscription.currentPeriodEnd <= new Date() &&
+      this.isLapsed(subscription) &&
       (subscription.status === SubscriptionStatus.ACTIVE ||
         subscription.status === SubscriptionStatus.PAST_DUE);
 
@@ -572,7 +1118,9 @@ export class PaymentService {
     const subscription = await this.prisma.subscription.findFirst({
       where: {
         userId,
-        status: { in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.PAST_DUE] },
+        status: {
+          in: [SubscriptionStatus.ACTIVE, SubscriptionStatus.PAST_DUE],
+        },
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -580,13 +1128,27 @@ export class PaymentService {
       throw new NotFoundException('No active subscription to cancel.');
     }
 
-    // Tell Dodo first. Flipping our own row while the provider keeps billing
-    // would be worse than refusing: the user would see "cancelled" and still
-    // be charged, with nothing in our logs to explain it.
-    if (subscription.dodoSubscriptionId && this.dodo.enabled) {
-      await this.dodo.cancelAtPeriodEnd(subscription.dodoSubscriptionId);
+    // Stop the charges at Lemon Squeezy FIRST. Marking the row cancelled here
+    // while LS kept billing the card is the one outcome worse than an error:
+    // the customer would be charged for a plan they were told had stopped.
+    if (subscription.lsSubscriptionId) {
+      try {
+        await this.ls.cancelSubscription(subscription.lsSubscriptionId);
+      } catch (error) {
+        this.logger.error(
+          `Cancel for user ${userId}: LS subscription ` +
+            `${subscription.lsSubscriptionId} could not be cancelled: ` +
+            (error instanceof Error ? error.message : String(error)),
+        );
+        throw new ServiceUnavailableException(
+          'We could not reach Lemon Squeezy to stop the renewal, so nothing ' +
+            'has changed yet. Please try again in a moment.',
+        );
+      }
     }
 
+    // The paid period still runs to its end with its unspent credits intact;
+    // cancelAtPeriodEnd stops the cron opening another allocation after it.
     const updated = await this.prisma.subscription.update({
       where: { id: subscription.id },
       data: { cancelAtPeriodEnd: true },
@@ -594,26 +1156,9 @@ export class PaymentService {
     return {
       subscription: updated,
       message:
-        'Subscription will not renew. Access and unspent credits remain until the period ends.',
+        'Your plan will not renew. Access and unspent credits remain until ' +
+        'the period ends.',
     };
-  }
-
-  // A link into Dodo's own portal, where the customer can see invoices,
-  // swap the card behind a subscription and cancel without us proxying any of
-  // it. The id is stamped on the user by the first payment webhook, so this
-  // only exists once they have actually paid for something.
-  async getCustomerPortalUrl(userId: number) {
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-      select: { dodoCustomerId: true },
-    });
-    if (!user) throw new NotFoundException('User not found.');
-    if (!user.dodoCustomerId) {
-      throw new BadRequestException(
-        'No billing account yet — the portal opens after your first payment.',
-      );
-    }
-    return { url: await this.dodo.customerPortalLink(user.dodoCustomerId) };
   }
 
   // ── History & ledger ─────────────────────────────────────────────────────
@@ -680,73 +1225,11 @@ export class PaymentService {
     };
   }
 
-  // ── Plan resolution (webhook helpers) ────────────────────────────────────
-  // Tier, cycle and amount are ALWAYS derived from the Dodo object, never
-  // trusted from the client.
-  //
-  // The product id is the reliable route: it is on every subscription payload
-  // and is exactly what we seeded onto the Plan row. The plan id carried in
-  // our own checkout metadata is just as good and survives a product being
-  // re-created in the dashboard, so it is tried first. Amount matching is the
-  // last resort, for a payment that reached us with neither.
-  async resolvePlanByProduct(productId: string | null | undefined) {
-    if (!productId) return null;
-    return this.prisma.plan.findUnique({ where: { dodoProductId: productId } });
-  }
-
-  async resolvePlan(opts: {
-    planId?: string | null;
-    productId?: string | null;
-    amountCents?: number | null;
-  }): Promise<Plan | null> {
-    if (opts.planId) {
-      const byId = await this.prisma.plan.findUnique({
-        where: { id: opts.planId },
-      });
-      if (byId) return byId;
-      this.logger.warn(
-        `Checkout metadata named plan ${opts.planId}, which no longer exists; ` +
-          'falling back to the product id',
-      );
-    }
-
-    const byProduct = await this.resolvePlanByProduct(opts.productId);
-    if (byProduct) return byProduct;
-
-    if (opts.amountCents != null) {
-      const paid = await this.prisma.plan.findMany({
-        where: { active: true, tier: { not: PlanTier.FREE } },
-      });
-      const matches = paid.filter((p) => p.priceCents === opts.amountCents);
-      if (matches.length === 1) return matches[0];
-
-      if (matches.length > 1) {
-        this.logger.warn(
-          `Ambiguous plan resolution: ${matches.length} plans priced at ${opts.amountCents}c ` +
-            `(${matches.map((p) => `${p.tier}/${p.cycle}`).join(', ')}). ` +
-            'Give these plans distinct prices, or seed dodoProductId.',
-        );
-      } else {
-        // The usual cause is a product id that was never seeded onto the Plan
-        // row. Print the catalog so the mismatch is obvious from the one log
-        // line, instead of "no credits appeared".
-        this.logger.error(
-          `Could not resolve a plan for product ${opts.productId ?? 'unknown'} ` +
-            `at ${opts.amountCents}c. Seeded products: ` +
-            paid
-              .map((p) => `${p.tier}/${p.cycle}=${p.dodoProductId ?? 'unset'}@${p.priceCents}c`)
-              .join(', ') +
-            '. Set the DODO_PRODUCT_* env vars and re-run the seed.',
-        );
-      }
-    }
-    return null;
-  }
 
   // When a monthly plan is bought on Aug 25 it must lapse on Sep 25, not on
   // Sep 24 — so monthly and yearly step by calendar units, not by a fixed
   // 30/365 days. Only the day-of-month is clamped: buying on Jan 31 gives a
-  // period ending Feb 28 (or 29), which is what Dodo does too.
+  // period ending Feb 28 (or 29), which is how Lemon Squeezy bills too.
   cyclePeriodEnd(cycle: BillingCycle, from: Date = new Date()): Date {
     const end = new Date(from);
     const months = cycle === 'YEARLY' ? 12 : 1;
@@ -764,13 +1247,13 @@ export class PaymentService {
     return end;
   }
 
-  // Expose primitives the webhook handler and cron compose with.
+  // Expose primitives the cron composes with.
   get db(): PrismaService {
     return this.prisma;
   }
 
   runInTransaction<T>(fn: (tx: Tx) => Promise<T>): Promise<T> {
-    return this.prisma.$transaction(fn);
+    return this.prisma.transaction(fn, 'runInTransaction');
   }
 }
 

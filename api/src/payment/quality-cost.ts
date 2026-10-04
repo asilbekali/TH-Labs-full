@@ -31,7 +31,8 @@ export const FREE_MINUTE_SECONDS = 60;
  * Written to the ledger as a SIGNUP_BONUS entry so the cached balance and the
  * ledger agree from the account's first moment (see UsersService.create).
  */
-export const SIGNUP_BONUS_CREDITS = CREDITS_PER_MINUTE * (60 / FREE_MINUTE_SECONDS);
+export const SIGNUP_BONUS_CREDITS =
+  CREDITS_PER_MINUTE * (60 / FREE_MINUTE_SECONDS);
 
 /** Credits per minute at a given quality. `fast` 10, `balanced` 20, `studio` 40. */
 export function rateFor(quality: string | undefined): number {

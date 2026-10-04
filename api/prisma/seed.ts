@@ -1,13 +1,41 @@
 import { PrismaClient, Role, PlanTier, BillingCycle } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
-import {
-  DodoEnvironmentName,
-  parseProductRef,
-} from '../src/payment/dodo-product-ref';
 import { CREDIT_PACK_SEED } from '../src/payment/credit-packs';
 
 const prisma = new PrismaClient();
+
+// ── Lemon Squeezy checkout links ───────────────────────────────────────────
+// The catalog is a TABLE an admin edits from the panel, and the panel wins.
+// The links and variant ids below are the starting values, so a fresh database
+// can sell the moment it boots. They are written only into an EMPTY column:
+// re-seeding never overwrites a link or variant an admin has since set.
+//
+// These are the store's TEST-MODE products. Going live means creating (or
+// copying) the products in live mode — they get new ids — and pasting the new
+// link and variant id into the admin panel.
+//
+// A link and its variant id travel together: a row with a link but no variant
+// takes money that cannot be matched back to anything, so the app refuses to
+// sell it (PaymentService.isSellable).
+const LS = 'https://th-labs.lemonsqueezy.com/checkout/buy';
+
+// api/.env can override any starting link / variant id:
+//   LEMONSQUEEZY_LINK_<KEY>=https://…   LEMONSQUEEZY_VARIANT_<KEY>=2203365
+// where <KEY> is PRO_MONTHLY, PRO_YEARLY, STUDIO_MONTHLY, STUDIO_YEARLY,
+// PACK_100, PACK_500 or PACK_2000. Like the defaults, these only fill an EMPTY
+// column — once an admin sets a value in the panel, the panel wins.
+function fromEnv(
+  key: string,
+  fallback: { checkoutUrl?: string; lsVariantId?: string },
+): { checkoutUrl?: string; lsVariantId?: string } {
+  const link = process.env[`LEMONSQUEEZY_LINK_${key}`]?.trim();
+  const variant = process.env[`LEMONSQUEEZY_VARIANT_${key}`]?.trim();
+  return {
+    checkoutUrl: link || fallback.checkoutUrl,
+    lsVariantId: variant || fallback.lsVariantId,
+  };
+}
 
 // ── Plan catalog (source of truth: step-05 §2 matrix) ──────────────────────
 // FREE has no real billing cycle; we store it as MONTHLY so [tier, cycle] stays
@@ -20,9 +48,9 @@ const prisma = new PrismaClient();
 //   Monthly PRO     1 200 × 1  =  1 200      Monthly STUDIO  4 800 × 1  =  4 800
 //   Yearly  PRO     1 200 × 12 = 14 400      Yearly  STUDIO  4 800 × 12 = 57 600
 //
-// `priceCents` should match the Dodo product's price. It is no longer what
-// resolves a webhook to a plan — the product id does that — but it is the
-// number the pricing page shows, so drift here is a lie to the customer.
+// `priceCents` is the USD price the pricing page shows. Keep it equal to the
+// Lemon Squeezy price: what a purchase grants is decided by the order's
+// variant, not its amount, but a large difference is logged on every claim.
 type PlanSeed = {
   tier: PlanTier;
   cycle: BillingCycle;
@@ -30,7 +58,8 @@ type PlanSeed = {
   creditsGranted: number;
   grantDays: number;
   grantsPerPeriod: number;
-  productEnv?: string; // env var holding the Dodo product id or payment link
+  checkoutUrl?: string;
+  lsVariantId?: string;
 };
 
 const PLAN_SEED: PlanSeed[] = [
@@ -41,42 +70,38 @@ const PLAN_SEED: PlanSeed[] = [
   // pricing page and the wallet cannot disagree about what "free" means.
   { tier: 'FREE', cycle: 'MONTHLY', priceCents: 0, creditsGranted: 20, grantDays: 30, grantsPerPeriod: 1 },
 
-  { tier: 'PRO', cycle: 'MONTHLY', priceCents: 1950, creditsGranted: 1200, grantDays: 30, grantsPerPeriod: 1, productEnv: 'DODO_PRODUCT_PRO_MONTHLY' },
-  { tier: 'PRO', cycle: 'YEARLY', priceCents: 19900, creditsGranted: 1200, grantDays: 30, grantsPerPeriod: 12, productEnv: 'DODO_PRODUCT_PRO_YEARLY' },
+  { tier: 'PRO', cycle: 'MONTHLY', priceCents: 1950, creditsGranted: 1200, grantDays: 30, grantsPerPeriod: 1, checkoutUrl: `${LS}/343dabe2-695e-493b-a42b-29a64cceb8f7`, lsVariantId: '2203365' },
+  { tier: 'PRO', cycle: 'YEARLY', priceCents: 19900, creditsGranted: 1200, grantDays: 30, grantsPerPeriod: 12, checkoutUrl: `${LS}/ecbd10b3-080c-4403-9b4d-3401217b4faf`, lsVariantId: '2203407' },
 
-  { tier: 'STUDIO', cycle: 'MONTHLY', priceCents: 4950, creditsGranted: 4800, grantDays: 30, grantsPerPeriod: 1, productEnv: 'DODO_PRODUCT_STUDIO_MONTHLY' },
-  { tier: 'STUDIO', cycle: 'YEARLY', priceCents: 49900, creditsGranted: 4800, grantDays: 30, grantsPerPeriod: 12, productEnv: 'DODO_PRODUCT_STUDIO_YEARLY' },
+  { tier: 'STUDIO', cycle: 'MONTHLY', priceCents: 4950, creditsGranted: 4800, grantDays: 30, grantsPerPeriod: 1, checkoutUrl: `${LS}/88b81b29-7d54-42e6-a9dd-a65a1811ed50`, lsVariantId: '2203401' },
+  { tier: 'STUDIO', cycle: 'YEARLY', priceCents: 49900, creditsGranted: 4800, grantDays: 30, grantsPerPeriod: 12, checkoutUrl: `${LS}/89da850d-e1ac-4b56-90f5-2c548dcfa301`, lsVariantId: '2203414' },
 ];
 
-function dodoEnv(): DodoEnvironmentName {
-  return process.env.DODO_PAYMENTS_ENVIRONMENT?.trim() === 'live_mode'
-    ? 'live_mode'
-    : 'test_mode';
+/** Fill a link/variant only where the column is still empty — the panel wins. */
+async function fillEmpty(
+  table: 'plan' | 'creditPack',
+  id: string,
+  current: { checkoutUrl: string | null; lsVariantId: string | null },
+  seed: { checkoutUrl?: string; lsVariantId?: string },
+) {
+  const data = {
+    ...(!current.checkoutUrl && seed.checkoutUrl ? { checkoutUrl: seed.checkoutUrl } : {}),
+    ...(!current.lsVariantId && seed.lsVariantId ? { lsVariantId: seed.lsVariantId } : {}),
+  };
+  if (Object.keys(data).length === 0) return;
+  if (table === 'plan') await prisma.plan.update({ where: { id }, data });
+  else await prisma.creditPack.update({ where: { id }, data });
 }
 
 async function seedPlans() {
-  const environment = dodoEnv();
-  const missing: string[] = [];
-
   for (const p of PLAN_SEED) {
-    // Each env var takes a product id or the whole payment link — whichever
-    // was copied out of the dashboard — and parseProductRef derives the other.
-    const ref = p.productEnv
-      ? parseProductRef(process.env[p.productEnv], environment)
-      : null;
-    if (p.productEnv && !ref) missing.push(p.productEnv);
-
-    await prisma.plan.upsert({
+    const row = await prisma.plan.upsert({
       where: { tier_cycle: { tier: p.tier, cycle: p.cycle } },
       update: {
         priceCents: p.priceCents,
         creditsGranted: p.creditsGranted,
         grantDays: p.grantDays,
         grantsPerPeriod: p.grantsPerPeriod,
-        // An unset env var must not wipe a product that is already in the
-        // database — seeding is re-run on every deploy and a null here
-        // silently breaks checkout for that plan.
-        ...(ref ? { dodoProductId: ref.productId, dodoLinkUrl: ref.linkUrl } : {}),
         active: true,
       },
       create: {
@@ -86,20 +111,26 @@ async function seedPlans() {
         creditsGranted: p.creditsGranted,
         grantDays: p.grantDays,
         grantsPerPeriod: p.grantsPerPeriod,
-        dodoProductId: ref?.productId ?? null,
-        dodoLinkUrl: ref?.linkUrl ?? null,
         active: true,
       },
     });
+    await fillEmpty('plan', row.id, row, fromEnv(`${p.tier}_${p.cycle}`, p));
   }
-  console.log(`Seeded ${PLAN_SEED.length} plan rows (Dodo ${environment})`);
-  if (missing.length > 0) {
+  console.log(`Seeded ${PLAN_SEED.length} plan rows`);
+
+  const unsellable = await prisma.plan.findMany({
+    where: {
+      tier: { not: 'FREE' },
+      OR: [{ checkoutUrl: null }, { lsVariantId: null }],
+    },
+  });
+  if (unsellable.length > 0) {
     console.warn(
-      `WARNING: no Dodo product for ${missing.join(', ')} — ` +
-        'GET /v1/payments/checkout will 400 for those plans.',
+      `WARNING: ${unsellable.map((p) => `${p.tier}/${p.cycle}`).join(', ')} ` +
+        'lack a Lemon Squeezy link or variant id and cannot be bought. Set ' +
+        'both in the admin panel.',
     );
   }
-
 }
 
 // ── Credit packs ───────────────────────────────────────────────────────────
@@ -107,20 +138,21 @@ async function seedPlans() {
 // CREATES the starting rows. An existing pack is left completely alone —
 // re-seeding after a deploy must not undo a price someone set this morning.
 //
-// The DODO_PRODUCT_PACK_* env vars remain as a first-boot convenience: they
-// fill in the product on creation so a fresh environment can sell immediately,
-// and are ignored from then on.
+// The one exception is an EMPTY link or variant id, which is filled from the
+// seed — that is how the Lemon Squeezy products reach a database that already
+// had these packs.
 async function seedCreditPacks() {
-  const environment = dodoEnv();
   let created = 0;
 
   for (const [i, pack] of CREDIT_PACK_SEED.entries()) {
     const existing = await prisma.creditPack.findUnique({
       where: { slug: pack.slug },
     });
-    if (existing) continue;
+    if (existing) {
+      await fillEmpty('creditPack', existing.id, existing, fromEnv(pack.slug.toUpperCase(), pack));
+      continue;
+    }
 
-    const ref = parseProductRef(process.env[pack.productEnv], environment);
     await prisma.creditPack.create({
       data: {
         slug: pack.slug,
@@ -130,29 +162,29 @@ async function seedCreditPacks() {
         popular: pack.popular ?? false,
         sortOrder: i,
         active: true,
-        dodoProductId: ref?.productId ?? null,
-        dodoLinkUrl: ref?.linkUrl ?? null,
+        checkoutUrl: fromEnv(pack.slug.toUpperCase(), pack).checkoutUrl ?? null,
+        lsVariantId: fromEnv(pack.slug.toUpperCase(), pack).lsVariantId ?? null,
       },
     });
     created++;
   }
 
   const unconfigured = await prisma.creditPack.findMany({
-    where: { active: true, dodoProductId: null, dodoLinkUrl: null },
+    where: { active: true, OR: [{ checkoutUrl: null }, { lsVariantId: null }] },
   });
   console.log(
     `Credit packs: ${created} created, ${CREDIT_PACK_SEED.length - created} left as-is`,
   );
   if (unconfigured.length > 0) {
     console.warn(
-      `WARNING: no Dodo product on ${unconfigured.map((p) => p.slug).join(', ')} — ` +
-        'those packs cannot be bought. Add their product links in the admin panel.',
+      `WARNING: no Lemon Squeezy link or variant id on ${unconfigured.map((p) => p.slug).join(', ')} — ` +
+        'those packs cannot be bought. Set them in the admin panel.',
     );
   }
 }
 
 // Seeding must be safe to re-run. It is not only invoked by hand: any change to
-// a Dodo product means re-seeding the Plan rows, and that used to take the
+// a payment link means re-seeding the Plan rows, and that used to take the
 // superadmin's password with it -- rewriting it to the literal below, which is
 // published in this repository. A deploy step that quietly resets a production
 // credential is a trap, so the password is now only ever written when someone

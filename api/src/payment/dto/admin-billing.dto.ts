@@ -12,27 +12,58 @@ import {
 
 // Bodies for the admin billing panel.
 //
-// Every "product" field takes EITHER a Dodo product id (`pdt_…`) OR the whole
-// payment link copied out of the dashboard — whichever the admin happens to
-// have on their clipboard. The service derives the other half. Sending an
-// empty string clears it, which is how a plan is taken off sale without
-// deactivating it outright.
+// This is the whole of "wiring up a product": make it in the Lemon Squeezy
+// dashboard, copy its share link and its variant id, and paste both here with
+// the credits and the price. Nothing is deployed and no code changes.
+//
+// `checkoutUrl` must be a `https://<store>.lemonsqueezy.com/checkout/buy/…`
+// URL — validated rather than taken on trust, because a wrong value here is a
+// Buy button that sends a paying customer somewhere unintended. An empty
+// string clears it, which takes an item off sale without deactivating it.
+//
+// `lsVariantId` is what a paid order is matched on, and it is required for an
+// item to be sold at all: an order whose variant matches nothing cannot be
+// credited. It is the number in the LS dashboard under Products → the product
+// → Variants (or the `variant_id` on any test order).
 
 const PRICE_MAX = 100_000_00; // $100k, in cents — a typo guard, not a policy
 const CREDITS_MAX = 10_000_000;
 
+// Lemon Squeezy's hosted checkout. Narrow on purpose — see above.
+const CHECKOUT_URL =
+  /^(https:\/\/[a-z0-9-]+\.lemonsqueezy\.com\/(checkout\/)?buy\/[A-Za-z0-9-]+(\?[\w\-=&.%[\]]*)?)?$/;
+const CHECKOUT_URL_MESSAGE =
+  'checkoutUrl must be a https://<store>.lemonsqueezy.com/checkout/buy/… URL, or empty to clear it';
+
+const VARIANT_ID = /^(\d{1,15})?$/;
+const VARIANT_ID_MESSAGE =
+  'lsVariantId must be a Lemon Squeezy variant id (digits), or empty to clear it';
+
 export class UpdatePlanDto {
   @ApiPropertyOptional({
     description:
-      'Dodo product id (pdt_…) or its payment link. Empty string clears it.',
-    example: 'https://checkout.dodopayments.com/buy/pdt_abc123',
+      'Lemon Squeezy checkout link for this plan. Empty string clears it (takes it off sale).',
+    example:
+      'https://th-labs.lemonsqueezy.com/checkout/buy/158094fd-d3ba-4dfd-8e9d-f9d713036ea4',
   })
   @IsOptional()
   @IsString()
-  dodoProduct?: string;
+  @Matches(CHECKOUT_URL, { message: CHECKOUT_URL_MESSAGE })
+  checkoutUrl?: string;
 
   @ApiPropertyOptional({
-    description: 'Price in cents, matching the Dodo product',
+    description:
+      'Lemon Squeezy variant id this link sells. Paid orders are matched on it.',
+    example: '2203365',
+  })
+  @IsOptional()
+  @IsString()
+  @Matches(VARIANT_ID, { message: VARIANT_ID_MESSAGE })
+  lsVariantId?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Price in USD cents, as shown on the pricing page. Keep it equal to the Lemon Squeezy price; a large difference is logged on each purchase.',
   })
   @IsOptional()
   @IsInt()
@@ -75,7 +106,7 @@ export class UpdatePlanDto {
 export class CreateCreditPackDto {
   @ApiProperty({
     description:
-      'Stable public id. Travels in checkout metadata, so it cannot be renamed later.',
+      'Stable public id. Travels in the checkout custom data and the history, so it cannot be renamed later.',
     example: 'pack_240',
   })
   @IsString()
@@ -119,11 +150,24 @@ export class CreateCreditPackDto {
   sortOrder?: number;
 
   @ApiPropertyOptional({
-    description: 'Dodo product id (pdt_…) or its payment link',
+    description: 'Lemon Squeezy checkout link for this pack',
+    example:
+      'https://th-labs.lemonsqueezy.com/checkout/buy/158094fd-d3ba-4dfd-8e9d-f9d713036ea4',
   })
   @IsOptional()
   @IsString()
-  dodoProduct?: string;
+  @Matches(CHECKOUT_URL, { message: CHECKOUT_URL_MESSAGE })
+  checkoutUrl?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Lemon Squeezy variant id this link sells. Paid orders are matched on it.',
+    example: '2203420',
+  })
+  @IsOptional()
+  @IsString()
+  @Matches(VARIANT_ID, { message: VARIANT_ID_MESSAGE })
+  lsVariantId?: string;
 
   @ApiPropertyOptional({ default: true })
   @IsOptional()
@@ -132,7 +176,7 @@ export class CreateCreditPackDto {
 }
 
 // Everything but the slug, which is immutable once a pack exists: it is the id
-// the webhook reads back off a checkout that may already be in flight.
+// a claim reads back off a checkout that may already be in flight.
 export class UpdateCreditPackDto {
   @ApiPropertyOptional()
   @IsOptional()
@@ -168,11 +212,24 @@ export class UpdateCreditPackDto {
 
   @ApiPropertyOptional({
     description:
-      'Dodo product id (pdt_…) or its payment link. Empty string clears it.',
+      'Lemon Squeezy checkout link for this pack. Empty string clears it (takes it off sale).',
+    example:
+      'https://th-labs.lemonsqueezy.com/checkout/buy/158094fd-d3ba-4dfd-8e9d-f9d713036ea4',
   })
   @IsOptional()
   @IsString()
-  dodoProduct?: string;
+  @Matches(CHECKOUT_URL, { message: CHECKOUT_URL_MESSAGE })
+  checkoutUrl?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'Lemon Squeezy variant id this link sells. Paid orders are matched on it.',
+    example: '2203420',
+  })
+  @IsOptional()
+  @IsString()
+  @Matches(VARIANT_ID, { message: VARIANT_ID_MESSAGE })
+  lsVariantId?: string;
 
   @ApiPropertyOptional()
   @IsOptional()

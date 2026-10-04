@@ -105,9 +105,15 @@ model User {
   /// that no ledger row accounted for, which is exactly the drift
   /// /payments/credits/reconcile exists to report.
   credits        Int     @default(0)
-  /// Dodo Payments customer id (`cus_…`), stamped the first time a payment of
-  /// theirs is processed. Lets us open the Dodo customer portal for them.
-  dodoCustomerId String? @unique
+  /// Lemon Squeezy customer id, learned from the first order this account
+  /// claims. LS creates the customer itself at checkout, so this is recorded
+  /// rather than requested. Not unique: one LS customer is one email, and an
+  /// email can only belong to one account here anyway.
+  lsCustomerId        String?
+  /// When this account last opened a Lemon Squeezy checkout. There is no
+  /// webhook, so a buyer who pays and closes the tab is found by polling: the
+  /// cron asks LS about every account with a checkout opened in the last day.
+  lsCheckoutStartedAt DateTime?
 
   subscriptions Subscription[]
   payments      Payment[]
@@ -185,18 +191,20 @@ model Plan {
   /// advertised total is `creditsGranted * grantsPerPeriod`.
   creditsGranted  Int
   grantDays       Int // 30
-  /// How many allocations one paid period is worth. 1 for monthly; 12
-  /// for yearly, which Dodo bills once but which drips a month at a time.
-  /// The cron stops at this count so a year's credits can't all land early.
+  /// How many allocations one paid period is worth. 1 for monthly; 12 for
+  /// yearly, which is charged once but drips a month at a time. The cron stops
+  /// at this count so a year's credits can't all land early.
   grantsPerPeriod Int          @default(1)
-  /// The Dodo Payments product this plan is sold as (`pdt_…`). This is how a
-  /// webhook is resolved back to a plan, so it must match the product the
-  /// checkout was opened for.
-  dodoProductId   String?      @unique
-  /// Optional static payment link for the same product. Only used when no API
-  /// key is configured — with one, checkout sessions are created server-side.
-  dodoLinkUrl     String?
-  active          Boolean      @default(true)
+  /// The Lemon Squeezy share link the Buy button opens
+  /// (`https://<store>.lemonsqueezy.com/checkout/buy/<uuid>`). Pasted in from
+  /// the admin panel; empty means this plan cannot be bought yet, which the
+  /// pricing page reports rather than hiding.
+  checkoutUrl String?
+  /// The Lemon Squeezy VARIANT that link sells. This is what a paid order is
+  /// matched back to, and it is AUTHORITATIVE: LS reports it on the order, the
+  /// buyer cannot change it. Without it a paid order cannot be credited.
+  lsVariantId String?      @unique
+  active      Boolean      @default(true)
 
   subscriptions Subscription[]
 
@@ -207,14 +215,14 @@ model Plan {
 ///
 /// These used to be a hardcoded list in the API with product ids read from
 /// environment variables, which meant selling a new pack was a deploy. They
-/// live here instead so an ADMIN can create one, price it, and paste in the
-/// Dodo product link from the panel, and the site picks it up on the next
-/// request.
+/// live here instead so an ADMIN can create one, set its credits and price and
+/// paste in the Lemon Squeezy checkout link from the panel, and the site picks it up on
+/// the next request.
 model CreditPack {
   id     String @id @default(cuid())
-  /// Stable public id (`pack_240`). This is what travels in the checkout
-  /// metadata and what the webhook reads back, so renaming one orphans any
-  /// checkout already in flight — change the label, not the slug.
+  /// Stable public id (`pack_240`). It travels to Lemon Squeezy in the
+  /// checkout's custom data, so renaming one is confusing in the LS dashboard
+  /// and the history — change the label, not the slug.
   slug   String @unique
   credits    Int
   priceCents Int
@@ -227,10 +235,10 @@ model CreditPack {
   /// so the payment history of everyone who bought one still resolves.
   active    Boolean @default(true)
 
-  /// The Dodo product this pack is sold as, and its checkout link. Either can
-  /// be set from the admin panel; the other is derived.
-  dodoProductId String? @unique
-  dodoLinkUrl   String?
+  /// The Lemon Squeezy share link the Buy button opens, and the variant it
+  /// sells. Same contract as Plan: a paid order is matched on the variant.
+  checkoutUrl String?
+  lsVariantId String? @unique
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -244,14 +252,16 @@ model Subscription {
   planId String
   status SubscriptionStatus @default(ACTIVE)
 
-  dodoSubscriptionId   String?   @unique
+  /// Lemon Squeezy's subscription id. What the renewal poll asks LS about:
+  /// each paid renewal invoice on it opens a new period and grants credits.
+  lsSubscriptionId     String?   @unique
   currentPeriodStart   DateTime
   currentPeriodEnd     DateTime
   cancelAtPeriodEnd    Boolean   @default(false)
   lastGrantAt          DateTime?
-  /// Allocations already handed out for the CURRENT period. Reset to 1 by the
-  /// checkout and renewal handlers (both grant immediately); incremented by the
-  /// recurring cron, which stops once it reaches plan.grantsPerPeriod.
+  /// Allocations already handed out for the CURRENT period. Set to 1 by the
+  /// claim (which grants immediately); incremented by the recurring cron, which
+  /// stops once it reaches plan.grantsPerPeriod.
   grantsIssued         Int       @default(0)
 
   user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -274,9 +284,16 @@ model Payment {
   status      PaymentStatus @default(PENDING)
   description String
 
-  dodoPaymentId         String? @unique
-  dodoCheckoutSessionId String?
-  dodoInvoiceId         String? @unique
+  /// The Lemon Squeezy order a purchase was credited from. UNIQUE, and that
+  /// constraint is the idempotency guarantee: the row is written in the same
+  /// transaction as the grant, so however many times an order is seen — the
+  /// success page, a reload, the cron — it pays out once.
+  lsOrderId         String? @unique
+  /// The order's public UUID, so a row can be found in the LS dashboard.
+  lsOrderIdentifier String? @unique
+  /// The subscription invoice a RENEWAL was credited from. Same guarantee as
+  /// lsOrderId, for the charges LS makes after the first one.
+  lsInvoiceId       String? @unique
 
   user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   subscription Subscription? @relation(fields: [subscriptionId], references: [id])
@@ -445,12 +462,9 @@ model AuditLog {
   @@index([targetType, targetId, createdAt])
 }
 
-// Webhook idempotency guard — one row per delivered event id. For Dodo
-// Payments that id is the `webhook-id` header (Standard Webhooks), which is
-// stable across the provider's retries of the same event.
-model WebhookEvent {
-  id          String   @id @default(cuid())
-  eventId     String   @unique
-  type        String
-  processedAt DateTime @default(now())
-}
+// WebhookEvent is deliberately gone. It existed to deduplicate provider
+// webhook deliveries, and this API no longer has a webhook endpoint: a purchase
+// is confirmed by asking the Lemon Squeezy API for the account's paid orders
+// (PaymentService.claimOrders), and deduplicated by the unique
+// `Payment.lsOrderId` / `Payment.lsInvoiceId` above. One fewer table, and no public route
+// that moves credits.

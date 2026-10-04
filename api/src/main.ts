@@ -59,11 +59,12 @@ function maskDbUrl(raw: string): string {
 }
 
 async function bootstrap() {
-  // rawBody: true keeps the untouched request buffer on `req.rawBody`, which the
-  // Dodo Payments webhook needs — the Standard Webhooks signature covers the
-  // exact bytes, and verification silently fails on a body that the JSON parser
-  // has already re-serialized.
-  const app = await NestFactory.create(AppModule, { rawBody: true });
+  // rawBody is no longer needed: it existed for the payment webhook's
+  // signature, which covered the exact request bytes and failed on a body the
+  // JSON parser had re-serialized. There is no webhook endpoint at the moment —
+  // a purchase is confirmed by reading the order back from Lemon Squeezy — so
+  // nothing here reads req.rawBody. A future LS webhook will need it again.
+  const app = await NestFactory.create(AppModule);
 
   const PORT = Number(process.env.PORT) || 3001;
   const HOST = process.env.HOST || 'localhost';

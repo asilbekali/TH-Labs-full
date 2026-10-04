@@ -139,9 +139,9 @@ const RULES: ActionRule[] = [
   },
   {
     method: 'POST',
-    pattern: '/payments/webhook',
-    action: 'billing.webhook',
-    summary: 'Dodo Payments webhook',
+    pattern: '/payments/claim',
+    action: 'billing.claim',
+    summary: 'Claimed a Lemon Squeezy payment',
   },
   {
     method: 'POST',
