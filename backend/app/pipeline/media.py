@@ -190,6 +190,23 @@ def trim_audio(src: Path, out_path: Path, seconds: float) -> bool:
         return False
 
 
+def cut_audio(src: Path, out_path: Path, start: float, end: float) -> bool:
+    """Extract [start, end) as a mono 24 kHz clip (voice-cloning reference)."""
+    ffmpeg = _bin("ffmpeg")
+    if not ffmpeg or not src.exists() or end <= start:
+        return False
+    try:
+        subprocess.run(
+            [ffmpeg, "-y", "-ss", f"{max(start, 0.0):.3f}", "-i", str(src),
+             "-t", f"{end - start:.3f}", "-ac", "1", "-ar", "24000",
+             str(out_path)],
+            capture_output=True, timeout=60,
+        )
+        return out_path.exists()
+    except Exception:
+        return False
+
+
 def tts_fit(src_audio: Path, out_wav: Path, slot_seconds: float,
             sr: int = 24000) -> bool:
     """Decode a synthesized clip to mono `sr` WAV, speeding it up (pitch-

@@ -18,6 +18,7 @@ from pathlib import Path
 from ..config import get_settings
 from ..schemas import Segment
 from . import media
+from .tts import dub_text
 
 SAMPLE_RATE = 24_000
 CONCURRENCY = 6          # parallel edge-tts connections
@@ -51,7 +52,7 @@ def _merge_chunks(segments: list[Segment],
     chunks: list[tuple[float, float, str]] = []
     cur: list | None = None       # [start, end, text]
     for seg in segments:
-        txt = (seg.target_text or seg.source_text or "").strip()
+        txt = dub_text(seg)    # translation only — never the source sentence
         if not txt:
             continue
         if cur is None:

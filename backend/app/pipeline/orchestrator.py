@@ -17,7 +17,7 @@ from typing import Awaitable, Callable
 from ..config import get_settings
 from ..schemas import (DubOptions, Job, JobResult, Segment, StageState,
                        StageStatus)
-from . import media, metrics
+from . import bleed, media, metrics
 from .lipsync import Wav2LipSync
 from .nmt import NLLBTranslator
 from .separation import DemucsSeparator
@@ -216,6 +216,7 @@ class Orchestrator:
         tts_engine = "simulation"
         voice_cloned = False
         measured_similarity: float | None = None
+        tts_stats: dict | None = None
         async with _stage(job, "tts", emit) as st:
             done = False
             want_clone = options.voice_clone and not force_simulate
@@ -224,13 +225,21 @@ class Orchestrator:
                 try:
                     ref_audio, ref_text = await asyncio.to_thread(
                         _build_speaker_ref, job.id, segments)
+                    tts_src = job.result.detected_source_lang or options.source_lang
+                    lid = (self.stt.language_probs if self.stt.available()
+                           else None)
                     ok = await self._heartbeat(job, "tts", emit,
                         lambda: self.tts.synthesize(segments, ref_audio, ref_text,
                                                     True, dubbed_audio, duration,
-                                                    options.target_lang))
+                                                    options.target_lang,
+                                                    source_lang=tts_src,
+                                                    language_probs=lid))
+                    tts_stats = getattr(self.tts, "last_stats", None)
+                    log.info("[%s] tts language check: %s (ref=%s)", job.id,
+                             tts_stats, "yes" if ref_audio else "none")
                     if ok:
                         tts_engine, voice_cloned, used_real, done = \
-                            "OmniVoice", True, True, True
+                            "OmniVoice", bool(ref_audio), True, True
                 except Exception as exc:
                     st.message = f"OmniVoice unavailable ({str(exc)[:45]})"
             # 2) edge-tts — real neural speech (generic per-language voice)
@@ -276,6 +285,7 @@ class Orchestrator:
                 await asyncio.to_thread(self.tts.simulate, duration or 25.0,
                                         dubbed_audio, options.voice_clone)
             st.detail = {"engine": tts_engine, "voice_clone": voice_cloned,
+                         "language_check": tts_stats,
                          "engine_mode": "real" if tts_engine != "simulation"
                          else "simulation"}
 
@@ -313,8 +323,42 @@ class Orchestrator:
                 log.info("[%s] separation done: background_stem=%s device=%s",
                          job.id, background if background else "NONE (voice-only)",
                          sep_device)
+
+                # Gate the original speech out of the bed and verify it is
+                # gone — see pipeline/bleed.py for why the mixer's ducking on
+                # the dub is not enough on its own.
+                bleed_report: dict | None = None
+                if background is not None:
+                    bleed_lang = job.result.detected_source_lang or "auto"
+
+                    def _words(clip: Path) -> list[str]:
+                        segs, _, _ = self.stt.transcribe(
+                            clip, bleed_lang, QUALITY_WHISPER.get(options.quality, "small"))
+                        return [seg.source_text for seg in segs]
+
+                    try:
+                        background, bleed_report = await self._heartbeat(
+                            job, "separation", emit,
+                            lambda: bleed.suppress_original_speech(
+                                background, background.parent / "vocals.wav",
+                                [(seg.start, seg.end) for seg in job.result.segments],
+                                sep_dir / "bleed", self.stt._vad,
+                                _words if self.stt.available() else None, s))
+                    except Exception as exc:
+                        # The gate is what keeps the source language out; an
+                        # ungated bed is exactly the bug this exists to fix,
+                        # so failing it means voice-only, not "mix it anyway".
+                        log.warning("[%s] bleed suppression failed (%s) — "
+                                    "voice only", job.id, exc)
+                        background, bleed_report = None, {"level": "error",
+                                                          "error": str(exc)[:120]}
+                    log.info("[%s] bleed: %s", job.id, bleed_report)
+                    if background is None:
+                        st.message = ("Original voice could not be removed "
+                                      "cleanly — dubbed voice only")
                 st.detail = {"kept_background": bool(background),
                              "device": sep_device,
+                             "bleed": bleed_report,
                              "engine_mode": "real" if background else "simulation"}
         else:
             _skip(job, "separation")
@@ -483,9 +527,28 @@ def _build_speaker_ref(job_id: str, segments: list[Segment]):
         return None, None
     secs = s.omnivoice_ref_seconds
     ref_clip = s.uploads_dir / f"{job_id}_ref.wav"
-    if not media.trim_audio(src_wav, ref_clip, secs):
-        ref_clip = src_wav          # fall back to the full source audio
-    ref_text = " ".join(x.source_text for x in segments if x.start < secs).strip()
-    if not ref_text and segments:
-        ref_text = segments[0].source_text
-    return ref_clip, ref_text
+
+    # The reference transcript must be EXACTLY what the reference audio says.
+    # OmniVoice reads ref_text as the transcript of ref_audio and generates the
+    # target after it; words in ref_text that are not in the clip get spoken
+    # into the OUTPUT — in the source speaker's voice and the source language,
+    # which is what "the original voice is still in the dub" turned out to be.
+    # The old version cut the audio at a flat 12 s but took the text of every
+    # segment STARTING before 12 s (so a line running to 20 s contributed words
+    # the clip never contains), and fell back to the first line's text over
+    # however much music or silence preceded it. So the clip is now cut on
+    # whole-segment boundaries and the text is those segments, no more.
+    picked: list[Segment] = []
+    for x in segments:
+        if not x.source_text.strip():
+            continue
+        if picked and x.end - picked[0].start > secs:
+            break
+        picked.append(x)
+    if not picked:
+        return None, None
+    start = max(0.0, picked[0].start - 0.05)
+    end = picked[-1].end + 0.05
+    if not media.cut_audio(src_wav, ref_clip, start, end):
+        return None, None           # no reference beats a mismatched one
+    return ref_clip, " ".join(x.source_text.strip() for x in picked)

@@ -113,6 +113,25 @@ class Settings(BaseSettings):
     background_min_lead_db: float = 8.0
     voice_gain: float = 1.25             # dubbed voice level
 
+    # ── Original-voice bleed suppression (pipeline/bleed.py) ──────────────
+    # No separator removes speech completely, and the residue sits exactly
+    # where the ORIGINAL speaker talked — not where the dub talks (the dub is
+    # usually shorter). So the kept background is gated over the original
+    # speech windows: the speech band (bleed_band_*_hz) is cut hard there,
+    # the rest of the spectrum only lightly, so bass and drums carry through.
+    bleed_gate_band_db: float = -30.0    # speech band inside speech windows
+    bleed_gate_full_db: float = -6.0     # whole bed inside speech windows
+    bleed_band_low_hz: float = 250.0
+    bleed_band_high_hz: float = 4500.0
+    bleed_gate_pad_s: float = 0.15       # widen each window on both sides
+    bleed_gate_fade_s: float = 0.08      # ramp in/out so the cut never clicks
+    # After gating, the bed is checked for surviving speech (VAD, confirmed by
+    # Whisper in the source language). More than this many transcribed words
+    # escalates to a full-band cut; still failing → the background is dropped
+    # and the dub goes out voice-only. 0 disables the check.
+    bleed_max_words: int = 3
+    bleed_strict_db: float = -40.0       # escalation: full band, all windows
+
     # ── NMT · NLLB-200 ────────────────────────────────────────────────────
     nmt_model: str = "facebook/nllb-200-distilled-600M"
 
