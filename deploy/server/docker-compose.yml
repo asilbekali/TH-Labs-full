@@ -79,6 +79,11 @@ services:
       # ids live in the catalog (admin panel / seed), not in the environment.
       LEMONSQUEEZY_API_KEY: ${LEMONSQUEEZY_API_KEY:?set LEMONSQUEEZY_API_KEY in .env — without it a purchase cannot be credited}
       LEMONSQUEEZY_STORE_ID: ${LEMONSQUEEZY_STORE_ID:-}
+      # The dubbing pipeline's origin (the Modal web URL). GET /v1/health probes
+      # <this>/api/health and reports `pipeline: up|down`; unset reports
+      # `not_configured`, which the Studio shows as "unreachable". The probe hits
+      # the L4 container, so an open Studio tab (health every 60s) keeps it warm.
+      DUB_API_URL: ${DUB_API_URL:-}
       # Always allowed through CORS on top of the built-in list, and what
       # decides the refresh cookie's Secure/SameSite pair (api/src/auth).
       APP_URL: ${APP_URL:-}

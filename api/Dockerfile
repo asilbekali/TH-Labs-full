@@ -56,6 +56,11 @@ COPY --from=build --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/dist ./dist
 COPY --chown=node:node package.json yarn.lock ./
 COPY --chown=node:node prisma ./prisma
+# prisma/seed.ts imports the credit-pack catalog from src/payment, and ts-node
+# needs tsconfig.json to compile it as CommonJS. Without these two the seed
+# dies with TS2307 / ERR_MODULE_NOT_FOUND inside the running container.
+COPY --chown=node:node tsconfig.json ./
+COPY --chown=node:node src ./src
 COPY --chown=node:node docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 
 # This repo is developed on Windows. A CRLF line ending on the shebang makes
