@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -33,6 +33,21 @@ class DubOptions(BaseModel):
     source_lang: str = Field("auto", description="ISO code or 'auto' to detect")
     target_lang: str = Field(..., description="Target language ISO code")
     voice_clone: bool = Field(True, description="Preserve original speaker voice")
+    # How the dubbed voice should sound. Three genuinely different outcomes,
+    # because voice identity and accent cannot both be preserved across
+    # languages — a cloned speaker carries their own articulation into the
+    # target language, which is the cloning succeeding rather than failing.
+    #
+    #   "speaker"  the original speaker's voice, and therefore their accent
+    #   "native"   a natural speaker of the target language, generic voice
+    #   "both"     the speaker's timbre on top of native speech: edge-tts
+    #              provides the accent and prosody, OpenVoice transfers only
+    #              the tone colour. Closest to "their voice, spoken properly",
+    #              at the cost of a less exact likeness than "speaker".
+    #
+    # `voice_clone` is kept for older clients: unset voice_mode falls back to
+    # "speaker" when it is true and "native" when it is false.
+    voice_mode: Optional[Literal["speaker", "native", "both"]] = None
     lip_sync: bool = Field(False, description="Optional Wav2Lip lip synchronisation")
     keep_background: bool = Field(
         True, description="Keep original music/FX; remove only the original speech")

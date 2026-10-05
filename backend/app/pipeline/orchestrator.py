@@ -17,14 +17,16 @@ from typing import Awaitable, Callable
 from ..config import get_settings
 from ..schemas import (DubOptions, Job, JobResult, Segment, StageState,
                        StageStatus)
-from . import media, metrics
+from . import media, metrics, refine
 from .lipsync import Wav2LipSync
 from .nmt import NLLBTranslator
 from .separation import DemucsSeparator
 from .stt import WhisperSTT
+from .stt_gigaam import GigaAMSTT
+from . import stt_gigaam
 from .sync import Synchronizer
 from .tts import OmniVoiceTTS
-from .tts_edge import EdgeTTS
+from .tts_edge import EdgeTTS, TTSOutcome
 from .voice_clone import OpenVoiceCloner
 
 EmitFn = Callable[..., Awaitable[None]]
@@ -40,6 +42,7 @@ log = logging.getLogger(__name__)
 class Orchestrator:
     def __init__(self) -> None:
         self.stt = WhisperSTT()
+        self.giga = GigaAMSTT()   # Turkic + Russian ASR (see stt_gigaam)
         self.nmt = NLLBTranslator()
         self.tts = OmniVoiceTTS()          # voice cloning (when it can load)
         self.edge = EdgeTTS()              # real neural speech (generic voice)
@@ -54,9 +57,14 @@ class Orchestrator:
     # ── introspection for /health ─────────────────────────────────────────
     def stage_info(self) -> list[dict]:
         return [
-            dict(key=self.stt.key, label=self.stt.label, engine=self.stt.engine,
+            dict(key=self.stt.key, label=self.stt.label,
+                 engine=(f"Whisper + {self.giga.engine}"
+                         if self.giga.available() else self.stt.engine),
                  mode=self.stt.mode(),
-                 detail=("Whisper medium · silero-VAD gated"
+                 detail=(f"GigaAM for {get_settings().gigaam_languages} · "
+                         "Whisper elsewhere · silero-VAD gated"
+                         if self.giga.available()
+                         else "Whisper medium · silero-VAD gated"
                          if self.stt._vad.available()
                          else "Whisper medium · segment timestamps")),
             dict(key=self.nmt.key, label=self.nmt.label, engine=self.nmt.engine,
@@ -79,15 +87,62 @@ class Orchestrator:
                  detail="Optional · enabled per job"),
             dict(key=self.sync.key, label=self.sync.label, engine=self.sync.engine,
                  mode=self.sync.mode(),
-                 detail="Time-align + mux to container"),
+                 detail=("Time-align + mux to container"
+                         if self.sync.available()
+                         else "Unavailable — ffmpeg is required to write a dub")),
         ]
 
     def is_simulated(self, options: DubOptions) -> bool:
-        real = (self.stt.mode() == "real" and self.nmt.mode() == "real"
-                and self._tts_available())
-        if options.lip_sync:
-            real = real and self.lip.mode() == "real"
-        return not real
+        # Lip sync deliberately excluded. It is an optional extra on top of a
+        # dub, and when it is unavailable the stage now says so itself — while
+        # marking the whole job "simulation" implied the transcript, the
+        # translation and the voice were fake too, when all three were real.
+        return not (self.stt.mode() == "real" and self.nmt.mode() == "real"
+                    and self._tts_available())
+
+    async def _speaker_ref(self, job: Job, segments: list[Segment],
+                           custom: Path | None, want_text: bool):
+        """The voice to clone: an uploaded clip if given, else the source
+        speaker.
+
+        For an uploaded clip the transcript is produced by transcribing the
+        TRIMMED reference rather than anything supplied alongside it. That is
+        deliberate — OmniVoice speaks any reference text it is given that the
+        reference audio does not cover, in the source language, at the head of
+        every segment. Transcribing exactly what was trimmed makes the two
+        agree by construction, so that failure cannot come back through this
+        path.
+
+        `want_text` is False for the tone-colour converter, which needs only
+        audio; skipping transcription there saves an ASR pass per job.
+        """
+        if custom is None or not Path(custom).exists():
+            return await asyncio.to_thread(_build_speaker_ref, job.id, segments)
+
+        s = get_settings()
+        clip = s.uploads_dir / f"{job.id}_ref.wav"
+        ok = await asyncio.to_thread(media.trim_audio, Path(custom), clip,
+                                     s.omnivoice_ref_seconds)
+        if not ok:
+            log.warning("[%s] supplied reference could not be trimmed — "
+                        "falling back to the source speaker", job.id)
+            return await asyncio.to_thread(_build_speaker_ref, job.id, segments)
+        if not want_text:
+            log.info("[%s] voice reference: supplied clip, %.1fs", job.id,
+                     s.omnivoice_ref_seconds)
+            return clip, None
+        text = None
+        try:
+            heard, _lang, _d = await asyncio.to_thread(
+                self.stt.transcribe, clip, "auto", "base")
+            text = " ".join(x.source_text for x in heard).strip() or None
+        except Exception as exc:
+            log.warning("[%s] could not transcribe the supplied reference "
+                        "(%s) — letting the model transcribe it itself",
+                        job.id, type(exc).__name__)
+        log.info("[%s] voice reference: supplied clip, %s chars of matching "
+                 "transcript", job.id, len(text or ""))
+        return clip, text
 
     async def _heartbeat(self, job: Job, key: str, emit: EmitFn, fn,
                          interval: float = 4.0, ceiling: float = 0.92):
@@ -107,7 +162,21 @@ class Orchestrator:
 
     # ── main run ──────────────────────────────────────────────────────────
     async def run(self, job: Job, input_video: Path, scenario: str,
-                  emit: EmitFn, force_simulate: bool = False) -> None:
+                  emit: EmitFn, force_simulate: bool = False,
+                  preset_segments: list[Segment] | None = None,
+                  reference_audio: Path | None = None) -> None:
+        """Dub `input_video` into `job.options.target_lang`.
+
+        `preset_segments` re-voices an existing transcript instead of producing
+        one: the user corrected a translation and wants to hear it. Transcribing
+        and translating again would only throw their edit away, so both stages
+        are short-circuited and everything downstream — TTS, separation, mix,
+        mux — runs exactly as it does for a first pass.
+
+        `reference_audio` is a voice to dub in, supplied by the user instead of
+        taken from the video. It replaces the speaker reference for whichever
+        cloning mode is selected.
+        """
         s = get_settings()
         options = job.options
         duration = await asyncio.to_thread(media.probe_duration, input_video)
@@ -134,19 +203,62 @@ class Orchestrator:
         # 1 ── ASR ---------------------------------------------------------
         async with _stage(job, "asr", emit) as st:
             vad_detail: dict = {}
-            if real_asr:
+            if preset_segments is not None:
+                # Copies, so an edit to this job cannot reach back into the
+                # transcript the original job is still holding.
+                segments = [x.model_copy(deep=True) for x in preset_segments]
+                detected = job.result.detected_source_lang or (
+                    options.source_lang if options.source_lang != "auto" else "en")
+                engine_mode = "reused"
+                st.message = "Reused from the first run"
+            elif real_asr:
                 # Real ASR: never fabricate a transcript. If Whisper (VAD-gated)
                 # finds no speech or errors, report that honestly — do NOT fall
                 # back to the canned demo scenario.
                 used_real = True
                 try:
                     wav = s.uploads_dir / f"{job.id}.wav"
-                    await asyncio.to_thread(media.extract_audio, input_video, wav)
-                    wmodel = QUALITY_WHISPER.get(options.quality, "small")
-                    segments, detected, vad_detail = await self._heartbeat(
-                        job, "asr", emit,
-                        lambda: self.stt.transcribe(wav, options.source_lang, wmodel))
-                    vad_detail = {**vad_detail, "model": wmodel}
+                    if not await asyncio.to_thread(media.extract_audio,
+                                                   input_video, wav):
+                        # Distinct from a silent video: there is nothing to
+                        # transcribe, so reporting "no speech detected" would be
+                        # a guess. ffmpeg's own reason is in the log.
+                        raise RuntimeError("could not extract audio from the video")
+                    # Engine selection. Whisper transcribes Turkic speech
+                    # badly enough to be unusable — measured at 80% WER on
+                    # Uzbek, written in a neighbouring alphabet — so those
+                    # languages go to GigaAM instead. English stays on Whisper,
+                    # which is better there. A source set to "auto" has to be
+                    # resolved first, since the choice depends on the answer.
+                    hint = options.source_lang
+                    if hint != "auto":
+                        # The user said what it is; that beats a guess.
+                        use_giga = (self.giga.available()
+                                    and stt_gigaam.supports(hint))
+                    elif self.giga.available():
+                        hint = await asyncio.to_thread(
+                            self.stt.detect_language, wav) or "auto"
+                        use_giga = stt_gigaam.supports_detected(hint)
+                        log.info("[%s] asr: detected %s -> %s", job.id, hint,
+                                 "GigaAM" if use_giga else "Whisper")
+                    else:
+                        use_giga = False
+                    if use_giga:
+                        asr_engine = f"GigaAM {s.gigaam_revision}"
+                        regions = await asyncio.to_thread(
+                            self.stt.speech_regions, wav)
+                        segments, detected, vad_detail = await self._heartbeat(
+                            job, "asr", emit,
+                            lambda: self.giga.transcribe(wav, hint, regions))
+                    else:
+                        asr_engine = "Whisper"
+                        wmodel = QUALITY_WHISPER.get(options.quality, "small")
+                        segments, detected, vad_detail = await self._heartbeat(
+                            job, "asr", emit,
+                            lambda: self.stt.transcribe(wav, options.source_lang,
+                                                        wmodel))
+                        vad_detail = {**vad_detail, "model": wmodel}
+                    vad_detail = {**vad_detail, "engine": asr_engine}
                     if not segments:
                         st.message = "No speech detected in the audio."
                 except Exception as exc:
@@ -189,7 +301,12 @@ class Orchestrator:
         # 2 ── NMT ---------------------------------------------------------
         async with _stage(job, "nmt", emit) as st:
             fell_back = False
-            if real_nmt:
+            if preset_segments is not None:
+                # The text came from the user. Re-translating it would discard
+                # the correction, and the repair pass below would second-guess
+                # a person — so neither runs.
+                st.message = "Using your edited translation"
+            elif real_nmt:
                 try:
                     segments = await self._heartbeat(
                         job, "nmt", emit,
@@ -203,27 +320,76 @@ class Orchestrator:
             else:
                 await _beat(0.7)
                 segments = self.nmt.simulate(segments, options.target_lang, scenario)
+            # Second pass over anything that came out visibly wrong. Reports as
+            # part of translation because that is what it is; the stage detail
+            # says how many lines were revised, not how.
+            revised = 0
+            if (segments and not force_simulate and preset_segments is None
+                    and refine.available()):
+                try:
+                    revised, suspects = await self._heartbeat(
+                        job, "nmt", emit,
+                        lambda: refine.refine(segments, src_lang,
+                                              options.target_lang))
+                    for i, why in list(suspects.items())[:8]:
+                        log.info("[%s]   nmt suspect %s: %s", job.id, i, why)
+                except Exception as exc:
+                    log.warning("[%s] translation repair skipped (%s)",
+                                job.id, exc)
             job.result.segments = segments
             st.detail = {"length_ratio": self.nmt.length_ratio(segments),
                          "engine_mode": "simulation" if (not real_nmt or fell_back) else "real",
-                         "target_lang": options.target_lang}
+                         "target_lang": options.target_lang,
+                         "revised": revised}
+            if revised:
+                st.message = f"{revised} line{'s' if revised > 1 else ''} revised"
+            log.info("[%s] nmt: length_ratio=%s revised=%s", job.id,
+                     self.nmt.length_ratio(segments), revised)
             await _tick(job, "nmt", emit, segments_preview(segments))
 
         # 3 ── TTS ---------------------------------------------------------
-        # Engine chain: OmniVoice (clones the speaker) → edge-tts (real neural
-        # voice) → tone (placeholder). Whichever produces audio wins.
+        # Which engine runs is decided by what the user asked the dub to sound
+        # like, because the three answers need different engines:
+        #
+        #   "speaker"  OmniVoice, conditioned on a clip of the original. It
+        #              reproduces the voice — including how its owner
+        #              articulates — so a speaker dubbed out of their own
+        #              language carries their accent into the target one. That
+        #              is the cloning working, not failing: timbre and accent
+        #              are the same signal and no dial separates them.
+        #   "native"   edge-tts alone. A natural speaker of the target
+        #              language, and none of the original's identity.
+        #   "both"     edge-tts for the speech, then OpenVoice to transfer only
+        #              the tone colour onto it. The accent and prosody come
+        #              from the native voice, the timbre from the original, so
+        #              this is the one that sounds like the speaker saying it
+        #              properly. The likeness is looser than "speaker" —
+        #              a converter matches timbre, it does not resynthesize
+        #              the person.
+        #
+        # Each falls back down the chain when its engine is unavailable rather
+        # than failing the job, and the placeholder tone is the last resort.
         dubbed_audio = s.outputs_dir / f"{job.id}_audio.wav"
         tts_engine = "simulation"
         voice_cloned = False
         measured_similarity: float | None = None
+        voiced: TTSOutcome | None = None
         async with _stage(job, "tts", emit) as st:
             done = False
-            want_clone = options.voice_clone and not force_simulate
-            # 1) OmniVoice — voice cloning
-            if want_clone and self.tts.mode() == "real":
+            # voice_mode is authoritative; voice_clone is what older clients
+            # send, and maps onto the two modes that existed before.
+            mode = options.voice_mode or (
+                "speaker" if options.voice_clone else "native")
+            if force_simulate:
+                mode = "native"
+            want_clone = mode in ("speaker", "both")
+            log.info("[%s] tts: voice_mode=%s (voice_clone=%s)", job.id, mode,
+                     options.voice_clone)
+            # 1) OmniVoice — the speaker's own voice, accent included
+            if mode == "speaker" and self.tts.mode() == "real":
                 try:
-                    ref_audio, ref_text = await asyncio.to_thread(
-                        _build_speaker_ref, job.id, segments)
+                    ref_audio, ref_text = await self._speaker_ref(
+                        job, segments, reference_audio, want_text=True)
                     ok = await self._heartbeat(job, "tts", emit,
                         lambda: self.tts.synthesize(segments, ref_audio, ref_text,
                                                     True, dubbed_audio, duration,
@@ -238,19 +404,23 @@ class Orchestrator:
                     and self.edge.available()
                     and self.edge.supports(options.target_lang)):
                 try:
-                    ok = await self._heartbeat(job, "tts", emit,
+                    voiced = await self._heartbeat(job, "tts", emit,
                         lambda: self.edge.synthesize(segments, options.target_lang,
                                                      dubbed_audio, duration))
-                    if ok:
+                    # `ok` is false only when nothing at all was voiced. A dub
+                    # missing some lines is kept and reported; it used to be
+                    # discarded for the placeholder tone below.
+                    if voiced.ok:
                         tts_engine, used_real, done = "edge-tts", True, True
                         # 2b) OpenVoice — clone the source speaker's timbre onto
                         # the generic edge-tts voice (real voice cloning here).
                         # Skipped in Fast mode (CPU cloning is slow on long audio).
-                        if (want_clone and options.quality != "fast"
+                        if (mode == "both" and options.quality != "fast"
                                 and self.cloner.available()):
                             try:
-                                ref_audio, _ = await asyncio.to_thread(
-                                    _build_speaker_ref, job.id, segments)
+                                ref_audio, _ = await self._speaker_ref(
+                                    job, segments, reference_audio,
+                                    want_text=False)
                                 if ref_audio and Path(ref_audio).exists():
                                     cloned = s.outputs_dir / f"{job.id}_cloned.wav"
                                     sim = await self._heartbeat(job, "tts", emit,
@@ -264,10 +434,32 @@ class Orchestrator:
                                         st.message = f"cloned to source speaker · {sim}% match"
                             except Exception as exc:
                                 st.message = f"clone skipped ({str(exc)[:40]})"
-                        elif want_clone:
-                            st.message = ("neural voice (cloning off in Fast mode)"
+                        elif mode == "both":
+                            st.message = ("native voice (speaker match off in "
+                                          "Fast mode)"
                                           if options.quality == "fast"
-                                          else "neural voice (cloning unavailable)")
+                                          else "native voice (speaker match "
+                                               "unavailable)")
+                        elif mode == "speaker":
+                            # Wanted the speaker's own voice and could not have
+                            # it; say so rather than quietly shipping a
+                            # stranger's.
+                            st.message = "native voice (speaker cloning unavailable)"
+                        # Missing lines outrank whatever the clone had to say:
+                        # it is the one thing here the viewer will actually
+                        # notice in the finished video.
+                        if voiced.voiced < voiced.total:
+                            gap = (f"{voiced.total - voiced.voiced} of "
+                                   f"{voiced.total} lines could not be "
+                                   f"synthesized — the rest was dubbed")
+                            st.message = (f"{gap}; {st.message}"
+                                          if st.message not in ("", "Working…")
+                                          else gap)
+                        log.info(
+                            "[%s] tts: voiced %s/%s chunks (network lost %s, "
+                            "fit lost %s)", job.id, voiced.voiced, voiced.total,
+                            voiced.lost_network, voiced.lost_fit,
+                        )
                 except Exception as exc:
                     st.message = f"edge-tts error ({str(exc)[:45]})"
             # 3) placeholder tone
@@ -275,9 +467,12 @@ class Orchestrator:
                 await _beat(0.7)
                 await asyncio.to_thread(self.tts.simulate, duration or 25.0,
                                         dubbed_audio, options.voice_clone)
-            st.detail = {"engine": tts_engine, "voice_clone": voice_cloned,
+            st.detail = {"engine": tts_engine, "voice_mode": mode,
+                         "voice_clone": voice_cloned,
                          "engine_mode": "real" if tts_engine != "simulation"
-                         else "simulation"}
+                         else "simulation",
+                         **({"voiced": voiced.voiced, "lines": voiced.total}
+                            if voiced is not None else {})}
 
         job.simulated = not used_real
 
@@ -301,45 +496,90 @@ class Orchestrator:
             async with _stage(job, "separation", emit) as st:
                 orig_hq = s.uploads_dir / f"{job.id}_orig.wav"
                 sep_dir = s.outputs_dir / f"{job.id}_sep"
-                await asyncio.to_thread(media.extract_audio_hq, input_video, orig_hq)
                 sep_device = self.sep.resolve_device()
-                try:
-                    background = await self._heartbeat(
-                        job, "separation", emit,
-                        lambda: self.sep.separate_background(orig_hq, sep_dir,
-                                                             sep_device))
-                except Exception as exc:
-                    st.message = f"separation failed ({str(exc)[:50]}) — voice only"
+                if not await asyncio.to_thread(media.extract_audio_hq,
+                                               input_video, orig_hq):
+                    # Without this, Demucs was handed a path that does not
+                    # exist and failed for a reason that read like a model
+                    # problem.
+                    st.message = "could not extract audio to separate — voice only"
+                    log.warning("[%s] separation: audio extraction failed — "
+                                "voice only", job.id)
+                else:
+                    if sep_device == "cuda":
+                        # Demucs runs in its own process and cannot share the
+                        # GPU with the models this one is holding — on a 6 GB
+                        # box that is an OOM. Freeing them is what the CUDA
+                        # path always documented and never did. ASR and NMT are
+                        # finished by now, so this costs the next job a reload,
+                        # which _rewarm_models covers off the request path.
+                        log.info("[%s] separation: freeing STT+NMT for a CUDA "
+                                 "Demucs run", job.id)
+                        await asyncio.to_thread(self.stt.unload)
+                        await asyncio.to_thread(self.nmt.unload)
+                    try:
+                        background = await self._heartbeat(
+                            job, "separation", emit,
+                            lambda: self.sep.separate_background(orig_hq, sep_dir,
+                                                                 sep_device))
+                    except Exception as exc:
+                        st.message = f"separation failed ({str(exc)[:50]}) — voice only"
+                    finally:
+                        if sep_device == "cuda":
+                            _rewarm_models(self)
                 log.info("[%s] separation done: background_stem=%s device=%s",
                          job.id, background if background else "NONE (voice-only)",
                          sep_device)
+                # "real" describes whether Demucs ran, not whether its output
+                # was kept. Dropping a stem that carries the source dialogue is
+                # a real separation doing its job — reporting it as
+                # "simulation" told the UI the stage had been faked, which the
+                # speech-correlated guard now makes the common case on
+                # speech-only sources. kept_background carries the verdict.
                 st.detail = {"kept_background": bool(background),
                              "device": sep_device,
-                             "engine_mode": "real" if background else "simulation"}
+                             "engine_mode": "real"}
         else:
             _skip(job, "separation")
             await emit(job)
 
         # 5 ── Lip Sync (optional) ----------------------------------------
         working_video = input_video
-        if options.lip_sync:
+        if options.lip_sync and self.lip.mode() != "real":
+            # Asked for, not available. This used to pause for a second and
+            # copy the video through, then report `enabled: True` — so the
+            # stage showed as done, the toggle appeared to work, and the output
+            # was byte-identical to leaving it off. Say plainly that it did not
+            # run; a dub is still delivered, just without reshaped mouths.
+            st = _find_stage(job, "lipsync")
+            st.status = StageStatus.skipped
+            st.progress = 1.0
+            st.message = "Not available on this deployment — dubbed without it"
+            st.detail = {"enabled": False, "reason": "engine not configured"}
+            log.warning("[%s] lipsync requested but Wav2Lip is not configured "
+                        "— skipping", job.id)
+            await emit(job)
+        elif options.lip_sync:
             lip_out = s.outputs_dir / f"{job.id}_lip.mp4"
             async with _stage(job, "lipsync", emit) as st:
-                if self.lip.mode() == "real":
-                    ok = await asyncio.to_thread(
-                        self.lip.run, input_video, dubbed_audio, lip_out)
-                else:
-                    await _beat(1.0)
-                    ok = await asyncio.to_thread(
-                        self.lip.simulate, input_video, lip_out)
+                ok = await asyncio.to_thread(
+                    self.lip.run, input_video, dubbed_audio, lip_out)
                 if ok:
                     working_video = lip_out
-                st.detail = {"enabled": True}
+                else:
+                    st.message = "Lip sync failed — dubbed without it"
+                st.detail = {"enabled": bool(ok)}
         else:
             _skip(job, "lipsync")
             await emit(job)
 
         # 6 ── Sync & Mux --------------------------------------------------
+        # Fill in what is already known before the mux, so a job that fails here
+        # still shows its source and its transcript. `output_url` stays unset
+        # until there is genuinely a dubbed file to point it at.
+        job.result.duration = duration
+        job.result.source_url = _source_url(input_video)
+
         out_video = s.outputs_dir / f"{job.id}.mp4"
         async with _stage(job, "sync", emit) as st:
             await _beat(0.5)
@@ -358,18 +598,20 @@ class Orchestrator:
                 job.id, "present" if background is not None else "none", mixed,
                 final_audio.name, s.voice_gain, s.background_gain,
             )
+            st.detail = {"muxed": False, "background_kept": mixed}
+            # Raises MuxFailed if the dub cannot be written. That propagates:
+            # the stage is marked failed with the reason, the job fails, and
+            # `output_url` below is never reached. There is deliberately nothing
+            # to catch it with — the fallback this replaced returned the source
+            # video, original soundtrack and all, as the finished dub.
             await asyncio.to_thread(self.sync.run, working_video,
                                     final_audio, out_video)
-            log.info("[%s] mux: out=%s exists=%s", job.id, out_video.name,
-                     out_video.exists())
-            st.detail = {"muxed": out_video.exists(),
-                         "background_kept": mixed}
+            log.info("[%s] mux: out=%s", job.id, out_video.name)
+            st.detail = {**st.detail, "muxed": True}
 
         # ── finalise ------------------------------------------------------
         elapsed = time.perf_counter() - started
-        job.result.duration = duration
         job.result.output_url = f"/media/outputs/{out_video.name}"
-        job.result.source_url = _source_url(input_video)
         length_ratio = self.nmt.length_ratio(segments)
         job.result.metrics = metrics.simulated_metrics(
             job.id, options, elapsed, duration, length_ratio,
@@ -457,7 +699,12 @@ def _source_url(input_video: Path) -> str:
 
 def _rewarm_models(orch) -> None:
     """Reload STT + NMT to the GPU in a background thread after a CUDA Demucs
-    run freed them, so the next job doesn't pay the cold-load cost inline."""
+    run freed them, so the next job doesn't pay the cold-load cost inline.
+
+    Called from the separation stage when it ran on CUDA. Failures are
+    swallowed on purpose: this is a warm-up, and `_load()` will simply do the
+    work inline on the next job if it did not happen here.
+    """
     import threading
 
     def warm() -> None:
@@ -472,20 +719,54 @@ def _rewarm_models(orch) -> None:
 
 
 def _build_speaker_ref(job_id: str, segments: list[Segment]):
-    """Trim the extracted source audio to a short reference clip and gather the
-    matching source transcript, for OmniVoice zero-shot cloning.
+    """Cut a reference clip from the source audio and gather the transcript that
+    matches it EXACTLY, for OmniVoice zero-shot cloning.
+
+    The pairing has to be exact, because OmniVoice does two things with it.
+    `models/omnivoice.py::_combine_text` prepends ref_text to the target text and
+    generates the two together conditioned on ref_audio; and
+    `utils/duration.py::estimate_duration` derives the speaker's rate from
+    `ref_weight / ref_duration`. Text with no audio behind it therefore gets
+    *spoken* — in the source language, at the head of what the model returns —
+    and inflates the assumed speaking rate at the same time. When the caller
+    also passes an explicit `duration`, that spurious speech shares the target's
+    fixed token budget, so the real dubbed line is squeezed into what is left.
+
+    This used to take the first `omnivoice_ref_seconds` of audio together with
+    the text of every segment *starting* before that cutoff, so a segment
+    straddling the boundary contributed all of its text and only part of its
+    audio. Measured on a 44 s clip: 12.0 s of audio described by 20.0 s of text.
+    The uncovered 8 s was heard repeating in English throughout the dub, and
+    every duration estimate ran ~20/12 too fast.
+
+    Whole segments only, then — a partial one cannot have its text trimmed to
+    match, since segment timings are all the alignment we have.
 
     Returns (ref_audio_path | None, ref_text | None).
     """
     s = get_settings()
     src_wav = s.uploads_dir / f"{job_id}.wav"
-    if not src_wav.exists():
+    if not src_wav.exists() or not segments:
         return None, None
-    secs = s.omnivoice_ref_seconds
+    limit = s.omnivoice_ref_seconds
+
+    usable = [x for x in segments if x.end <= limit]
+    if not usable:
+        # The opening line alone is longer than the window. Use it whole rather
+        # than cutting it: an over-long reference costs generation time, a
+        # mismatched one costs correctness.
+        usable = segments[:1]
+
+    start, end = usable[0].start, usable[-1].end
     ref_clip = s.uploads_dir / f"{job_id}_ref.wav"
-    if not media.trim_audio(src_wav, ref_clip, secs):
-        ref_clip = src_wav          # fall back to the full source audio
-    ref_text = " ".join(x.source_text for x in segments if x.start < secs).strip()
-    if not ref_text and segments:
-        ref_text = segments[0].source_text
-    return ref_clip, ref_text
+    if not media.trim_audio(src_wav, ref_clip, end - start, start=start):
+        # No reference at all is better than a mismatched one: OmniVoice falls
+        # back to its own voice, which is merely un-cloned rather than wrong.
+        log.warning("[%s] could not cut a speaker reference — synthesizing "
+                    "without voice cloning", job_id)
+        return None, None
+    ref_text = " ".join(x.source_text for x in usable).strip()
+    log.info("[%s] speaker reference: %.2f-%.2fs (%.2fs) over %s segment(s), "
+             "%s chars of matching transcript",
+             job_id, start, end, end - start, len(usable), len(ref_text))
+    return ref_clip, (ref_text or None)

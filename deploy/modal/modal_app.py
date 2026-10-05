@@ -62,6 +62,29 @@ ACCOUNT_API_URL = f"{LANDING_URL}/v1"
 # matching how docker-compose.yml refuses to start without JWT_SECRET.
 jwt_secret = modal.Secret.from_name("th-labs-jwt")
 
+# Key for the translation repair pass (backend/app/pipeline/refine.py), holding
+# one entry: TH_LABS_REFINE_API_KEY. Create it once with:
+#
+#     modal secret create th-labs-refine TH_LABS_REFINE_API_KEY=<the key>
+#
+# Unlike the JWT secret this one is OPTIONAL, and a missing one must not fail
+# the deploy: without a key `refine.available()` is False, the pass never runs,
+# and the pipeline behaves exactly as it did before it existed. So the lookup is
+# resolved here, locally, at deploy time — `from_name` alone is lazy and would
+# not surface the absence until a container tried to start.
+def _optional_secret(name: str) -> list:
+    try:
+        secret = modal.Secret.from_name(name)
+        secret.hydrate()
+        return [secret]
+    except Exception:
+        print(f"note: Modal secret {name!r} not found — deploying without it. "
+              f"Translation repair stays inactive until it is created.")
+        return []
+
+
+refine_secret = _optional_secret("th-labs-refine")
+
 # Media volume mount point. Deliberately OUTSIDE the copied repo: Modal refuses
 # to mount a Volume on a non-empty path, and the repo's own backend/data/ ships
 # .gitkeep files, so mounting there crash-loops the container with
@@ -138,6 +161,59 @@ def _download_models() -> None:
     step("demucs htdemucs", _demucs)
 
 
+# Where the OpenVoice converter lands in the image. Settings.openvoice_converter_dir
+# is pointed here by TH_LABS_OPENVOICE_CONVERTER_DIR below, rather than the
+# repo-relative default, because backend/models is excluded from the image.
+OPENVOICE_DIR = "/opt/openvoice/converter"
+
+
+def _download_openvoice() -> None:
+    """Fetch the OpenVoice v2 tone-colour converter (~131 MB).
+
+    Only the converter is needed. OpenVoice's own base speakers are not used:
+    edge-tts already provides a native voice per language, and this model's job
+    is purely to move timbre onto it.
+    """
+    import shutil
+    from pathlib import Path
+
+    from huggingface_hub import snapshot_download
+
+    try:
+        got = snapshot_download("myshell-ai/OpenVoiceV2",
+                                allow_patterns=["converter/*"])
+        dst = Path(OPENVOICE_DIR)
+        dst.mkdir(parents=True, exist_ok=True)
+        for name in ("checkpoint.pth", "config.json"):
+            shutil.copyfile(Path(got) / "converter" / name, dst / name)
+        print(f"  ok    OpenVoice v2 converter -> {dst}")
+    except Exception as exc:
+        print(f"  SKIP  OpenVoice converter -> {type(exc).__name__}: {exc}")
+
+
+def _download_gigaam() -> None:
+    """Prefetch the GigaAM Multilingual checkpoints (ru/en/kk/ky/uz).
+
+    Whisper transcribes Uzbek at roughly 80% WER — measured here on clean
+    synthesized Uzbek with a known transcript, identically for `small` and
+    `large-v3`, so it is a coverage problem rather than a capacity one. GigaAM
+    Multilingual publishes 7-13% on the same language and is MIT licensed, which
+    is why it is worth carrying in the image.
+
+    Weights only: the model's own code needs a torch/transformers context to
+    load, and this step only has to put the files on disk. Non-fatal, like every
+    other prefetch — a miss here costs a slow first request, not a broken image.
+    """
+    from huggingface_hub import snapshot_download
+
+    for revision in ("ctc", "large_ctc"):
+        try:
+            snapshot_download("ai-sage/GigaAM-Multilingual", revision=revision)
+            print(f"  ok    GigaAM Multilingual [{revision}]")
+        except Exception as exc:
+            print(f"  SKIP  GigaAM [{revision}] -> {type(exc).__name__}: {exc}")
+
+
 image = (
     modal.Image.debian_slim(python_version="3.12")
     .apt_install("ffmpeg", "git", "curl", "ca-certificates")
@@ -203,6 +279,48 @@ image = (
     # re-downloading all 6 GB to change a single environment variable.
     # _download_models needs only the pip packages above, so it is safe here.
     .run_function(_download_models)
+    # GigaAM (ai-sage/GigaAM-Multilingual) loads through transformers with
+    # trust_remote_code; its remote code wants hydra/omegaconf. Deliberately
+    # BELOW _download_models: Modal rebuilds every layer under the one that
+    # changed, and adding a pip step above it would re-fetch ~6 GB of weights.
+    # `pyannote` is what its loader asks for by name; the distribution that
+    # provides that namespace is pyannote.audio, so the error's own suggested
+    # `pip install pyannote` does not fix it.
+    .pip_install("hydra-core", "omegaconf", "pyannote.audio")
+    # OpenVoice v2's tone-colour converter, which is what makes the "both"
+    # voice mode possible: edge-tts speaks the target language natively and
+    # this transfers only the original speaker's timbre onto it, so the accent
+    # comes from the native voice and the identity from the speaker. Not on
+    # PyPI, hence the git URL (git is apt-installed above). Kept below the
+    # weights layer for the usual reason.
+    # --no-deps deliberately. Its setup pins numpy==1.22.0, librosa==0.9.1 and
+    # faster-whisper==0.9.0, none of which build on Python 3.12 and all of which
+    # would break the torch already installed here. What the converter actually
+    # imports is torch, numpy, soundfile, librosa and its own modules — every
+    # one already present. `wavmark`, its remaining import, is only reached when
+    # watermarking is on, and voice_clone.py turns that off.
+    # api.py imports openvoice.text at module level even though tone-colour
+    # conversion never uses it, so the text-cleaner chain has to be present.
+    # These are the ones actually on that import path; the package's other
+    # dependencies (faster-whisper, gradio, whisper-timestamped, langid) belong
+    # to se_extractor and the demo app, which this pipeline does not touch —
+    # confirmed by ToneColorConverter importing fine on a machine where those
+    # are absent.
+    .pip_install("inflect", "Unidecode", "eng-to-ipa", "cn2an", "jieba",
+                 "pypinyin")
+    .run_commands(
+        "python -m pip install --no-deps "
+        "git+https://github.com/myshell-ai/OpenVoice.git",
+        # Fail at build time, not on the first job that asks for this voice.
+        "python -c 'from openvoice.api import ToneColorConverter'",
+    )
+    .run_function(_download_openvoice)
+    # GigaAM weights, baked in for the same reason as everything in
+    # _download_models: a cold start should not spend minutes downloading. It is
+    # a SEPARATE build step, below that function rather than inside it, because
+    # Modal rebuilds every layer under the one that changed — folding it in
+    # would re-fetch the ~6 GB above it every time this list is touched.
+    .run_function(_download_gigaam)
     .env({
         "PYTHONPATH": f"{REMOTE}/backend",     # so `app.main:app` imports
         "PYTHONUNBUFFERED": "1",
@@ -212,7 +330,16 @@ image = (
         "TH_LABS_WHISPER_DEVICE": "cuda",
         "TH_LABS_OMNIVOICE_DEVICE": "cuda:0",  # voice cloning on GPU
         "TH_LABS_SEPARATION_DEVICE": "cuda",   # Demucs on GPU (24 GB fits it)
-        "TH_LABS_CLONE_DEVICE": "cuda",        # OpenVoice fallback, if present
+        "TH_LABS_CLONE_DEVICE": "cuda",        # OpenVoice tone-colour converter
+        # backend/models is excluded from the image, so point the converter at
+        # where _download_openvoice put it.
+        "TH_LABS_OPENVOICE_CONVERTER_DIR": OPENVOICE_DIR,
+
+        # Translation repair provider. The endpoint and model name are ordinary
+        # configuration and belong here; the KEY is not, and arrives separately
+        # through the Modal Secret above.
+        "TH_LABS_REFINE_BASE_URL": "https://api.deepseek.com/v1",
+        "TH_LABS_REFINE_MODEL": "deepseek-chat",
 
         # Where a signed-out visitor is sent to sign in.
         "TH_LABS_LANDING_URL": LANDING_URL,
@@ -279,7 +406,7 @@ image = (
     volumes={DATA_DIR: media},
     # Supplies TH_LABS_JWT_SECRET at runtime; without it every authenticated
     # route returns 503 rather than running the pipeline for anonymous callers.
-    secrets=[jwt_secret],
+    secrets=[jwt_secret, *refine_secret],
     # Whisper + NLLB + OmniVoice + Demucs keep several GB resident on the CPU
     # side, and a dub also holds decoded audio and ffmpeg intermediates. Ask
     # for explicit headroom so a long upload can't squeeze the container into
@@ -346,3 +473,607 @@ def preflight() -> dict:
     for k, v in out.items():
         print(f"{k}: {v}")
     return out
+
+
+@app.function(image=image, gpu="L4", timeout=1800, memory=16384)
+def smoke() -> dict:
+    """Run one real dub end to end, inside the deployed image.
+
+        modal run deploy/modal/modal_app.py::smoke
+
+    `preflight` checks that the environment is sane; this checks that the
+    *pipeline* is. It builds a clip with real English speech (edge-tts, so no
+    asset is needed), then drives the orchestrator exactly as a job would:
+    Whisper -> NLLB -> OmniVoice -> Demucs -> mix -> mux, with separation on
+    CUDA and background preservation on, which is the configuration this image
+    actually ships.
+
+    Everything it reports is something that has silently gone wrong before: a
+    dub replaced by a placeholder tone, a background stem carrying the source
+    language, a mux that handed back the original soundtrack. Stage detail and
+    the muxed stream count are printed rather than asserted, because what counts
+    as healthy depends on the clip.
+    """
+    import asyncio
+    import json
+    import logging
+    import subprocess
+    import time
+    from pathlib import Path
+
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s | %(message)s")
+
+    from app.config import get_settings
+    from app.jobs import _STAGE_DEFS, _initial_status
+    from app.pipeline import media
+    from app.pipeline.orchestrator import Orchestrator
+    from app.schemas import DubOptions, Job, JobResult, StageState
+
+    s = get_settings()
+    work = Path("/tmp/smoke")
+    work.mkdir(parents=True, exist_ok=True)
+
+    # 1) a clip with real speech for Whisper to transcribe
+    import edge_tts
+    say = ("Good morning everyone. Today we will explore how neural networks "
+           "learn from data. A neural network is built from layers of connected "
+           "units called neurons. Each connection carries a weight that the "
+           "model adjusts while it trains.")
+    mp3 = work / "speech.mp3"
+    asyncio.run(edge_tts.Communicate(say, "en-US-AriaNeural").save(str(mp3)))
+    src_video = work / "source.mp4"
+    dur = media.probe_duration(mp3) or 20.0
+    subprocess.run(
+        ["ffmpeg", "-y", "-v", "error",
+         "-f", "lavfi", "-i", f"testsrc=size=640x360:rate=25:duration={dur:.2f}",
+         "-i", str(mp3), "-c:v", "libx264", "-pix_fmt", "yuv420p",
+         "-c:a", "aac", "-shortest", str(src_video)],
+        check=True,
+    )
+    print(f"smoke: built a {dur:.1f}s clip with real speech")
+
+    # 2) drive the pipeline as a job would
+    opts = DubOptions(source_lang="en", target_lang="ru", voice_clone=True,
+                      lip_sync=False, keep_background=True, quality="balanced")
+    job = Job(id="smoke0000001", owner_id=0, options=opts,
+              filename="source.mp4", simulated=True,
+              stages=[StageState(key=k, label=l, status=_initial_status(k, opts))
+                      for k, l in _STAGE_DEFS],
+              result=JobResult(), created_at=time.time(), updated_at=time.time())
+
+    ref_path = None
+    if reference:
+        ref_path = work / f"reference{reference_suffix}"
+        ref_path.write_bytes(reference)
+        print(f"dub: using a supplied voice reference ({len(reference)/1e6:.1f} MB)")
+
+    async def emit(_j, final=False):
+        return None
+
+    started = time.perf_counter()
+    error = None
+    try:
+        asyncio.run(Orchestrator().run(job, src_video, "lecture", emit,
+                                       force_simulate=False,
+                                       reference_audio=ref_path))
+    except Exception as exc:
+        error = f"{type(exc).__name__}: {exc}"
+    elapsed = time.perf_counter() - started
+
+    out_video = s.outputs_dir / f"{job.id}.mp4"
+    result = {
+        "elapsed_seconds": round(elapsed, 1),
+        "error": error,
+        "simulated": job.simulated,
+        "detected_lang": job.result.detected_source_lang,
+        "segments": len(job.result.segments),
+        "output_written": out_video.exists(),
+        "output_audio_streams": media.count_audio_streams(out_video),
+        "output_url": job.result.output_url,
+        "stages": [
+            {"key": st.key, "status": st.status.value,
+             "message": st.message, "detail": st.detail}
+            for st in job.stages
+        ],
+        "transcript": [
+            {"start": sg.start, "end": sg.end,
+             "src": sg.source_text[:70], "tgt": (sg.target_text or "")[:70]}
+            for sg in job.result.segments[:4]
+        ],
+    }
+    print(json.dumps(result, indent=2, ensure_ascii=False))
+    return result
+
+
+@app.function(image=image, gpu="L4", timeout=1800, memory=16384)
+def dub_bytes(video: bytes, target_lang: str = "uz", suffix: str = ".mp4",
+              source_lang: str = "auto", voice_clone: bool = True,
+              voice_mode: str = "", reference: bytes | None = None,
+              reference_suffix: str = ".wav") -> dict:
+    """Dub a caller-supplied clip and hand back the result for inspection.
+
+        modal run deploy/modal/modal_app.py::dub --path clip.mp4 --target uz
+
+    `smoke` proves the pipeline runs on a clip it makes itself; this reproduces
+    a *reported* problem on the video that caused it, against the same image
+    that serves users. It returns the dubbed audio as well as the stage detail,
+    so the caller can transcribe what was actually produced — the only way to
+    check a claim like "the dub is still speaking the source language".
+    """
+    import asyncio
+    import logging
+    import time
+    from pathlib import Path
+
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s | %(message)s")
+
+    from app.config import get_settings
+    from app.jobs import _STAGE_DEFS, _initial_status
+    from app.pipeline import media
+    from app.pipeline.orchestrator import Orchestrator, _build_speaker_ref
+    from app.schemas import DubOptions, Job, JobResult, StageState
+
+    s = get_settings()
+    work = Path("/tmp/dub")
+    work.mkdir(parents=True, exist_ok=True)
+    src_video = work / f"input{suffix}"
+    src_video.write_bytes(video)
+
+    opts = DubOptions(source_lang=source_lang, target_lang=target_lang,
+                      voice_clone=voice_clone, voice_mode=voice_mode or None,
+                      lip_sync=False,
+                      keep_background=True, quality="balanced")
+    job = Job(id="dubcheck0001", owner_id=0, options=opts,
+              filename=src_video.name, simulated=True,
+              stages=[StageState(key=k, label=l, status=_initial_status(k, opts))
+                      for k, l in _STAGE_DEFS],
+              result=JobResult(), created_at=time.time(), updated_at=time.time())
+
+    ref_path = None
+    if reference:
+        ref_path = work / f"reference{reference_suffix}"
+        ref_path.write_bytes(reference)
+        print(f"dub: using a supplied voice reference ({len(reference)/1e6:.1f} MB)")
+
+    async def emit(_j, final=False):
+        return None
+
+    started = time.perf_counter()
+    error = None
+    try:
+        asyncio.run(Orchestrator().run(job, src_video, "lecture", emit,
+                                       force_simulate=False,
+                                       reference_audio=ref_path))
+    except Exception as exc:
+        import traceback
+        traceback.print_exc()
+        error = f"{type(exc).__name__}: {exc}"
+    elapsed = time.perf_counter() - started
+
+    # What the speaker reference actually ended up being — the pairing that
+    # OmniVoice's output quality hangs on.
+    ref_info = {}
+    try:
+        ref_path, ref_text = _build_speaker_ref(job.id, job.result.segments)
+        if ref_path:
+            ref_info = {"audio_seconds": media.probe_duration(ref_path),
+                        "text": ref_text, "text_chars": len(ref_text or "")}
+    except Exception as exc:
+        ref_info = {"error": str(exc)}
+
+    out_video = s.outputs_dir / f"{job.id}.mp4"
+    dub_wav = work / "dub.wav"
+    have_audio = out_video.exists() and media.extract_audio(out_video, dub_wav)
+
+    return {
+        "elapsed_seconds": round(elapsed, 1),
+        "error": error,
+        "simulated": job.simulated,
+        "detected_lang": job.result.detected_source_lang,
+        "output_audio_streams": media.count_audio_streams(out_video),
+        "speaker_reference": ref_info,
+        "stages": [{"key": st.key, "status": st.status.value,
+                    "message": st.message,
+                    "detail": {k: v for k, v in st.detail.items() if k != "preview"}}
+                   for st in job.stages],
+        "segments": [{"start": sg.start, "end": sg.end,
+                      "src": sg.source_text, "tgt": sg.target_text}
+                     for sg in job.result.segments],
+        "dub_wav": dub_wav.read_bytes() if have_audio else None,
+    }
+
+
+@app.local_entrypoint()
+def dub(path: str, target: str = "uz", out: str = "dub_result",
+        source: str = "auto", clone: bool = True, mode: str = "",
+        reference: str = ""):
+    """Send a local clip through dub_bytes and save what comes back."""
+    import json
+    from pathlib import Path
+
+    data = Path(path).read_bytes()
+    print(f"uploading {len(data) / 1e6:.1f} MB -> {target}")
+    ref_bytes = Path(reference).read_bytes() if reference else None
+    ref_suffix = Path(reference).suffix if reference else ".wav"
+    res = dub_bytes.remote(data, target, Path(path).suffix or ".mp4", source,
+                           clone, mode, ref_bytes, ref_suffix)
+    wav = res.pop("dub_wav", None)
+    Path(f"{out}.json").write_text(json.dumps(res, indent=2, ensure_ascii=False),
+                                   encoding="utf-8")
+    if wav:
+        Path(f"{out}.wav").write_bytes(wav)
+        print(f"wrote {out}.wav ({len(wav) / 1e6:.1f} MB)")
+    print(f"wrote {out}.json")
+
+
+@app.function(image=image, secrets=[*refine_secret], timeout=180)
+def refine_check() -> dict:
+    """Confirm the translation-repair provider actually answers.
+
+        modal run deploy/modal/modal_app.py::refine_check
+
+    preflight checks the models; this checks the one dependency that lives
+    outside this image. It feeds the repair pass three deliberately broken
+    translations — one copied through untranslated, one truncated, one looping —
+    and reports what came back. No GPU: it is a network call and some string
+    handling.
+
+    Reports whether a key is present, never what it is.
+    """
+    import logging
+
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s | %(message)s")
+
+    from app.config import get_settings
+    from app.pipeline import refine
+    from app.schemas import Segment
+
+    s = get_settings()
+    broken = [
+        ("untranslated", "We use make when we create something.",
+         "We use make when we create something."),
+        ("truncated", "Now they can be tricky and there are some exceptions, "
+                      "but here are four things to remember.", "Endi."),
+        ("looping", "This music really makes me want to sing.",
+         "Bu musiqa juda juda juda juda yaxshi."),
+    ]
+    segments = [Segment(id=i, start=float(i), end=float(i) + 3.0,
+                        source_text=src_text, target_text=tgt)
+                for i, (_, src_text, tgt) in enumerate(broken)]
+
+    out: dict = {
+        "key_present": bool(s.refine_api_key),
+        "base_url": s.refine_base_url,
+        "model": s.refine_model,
+        "available": refine.available(),
+    }
+    if not out["available"]:
+        out["result"] = ("inactive — no key in the environment. Create the "
+                         "Modal secret th-labs-refine and redeploy.")
+        print(out)
+        return out
+
+    fixed, suspects = refine.refine(segments, "en", "uz")
+    out["flagged"] = {broken[i][0]: why for i, why in suspects.items()}
+    out["repaired"] = fixed
+    out["lines"] = [{"kind": broken[i][0], "source": segments[i].source_text,
+                     "before": broken[i][2], "after": segments[i].target_text}
+                    for i in range(len(broken))]
+    out["provider_answered"] = fixed > 0
+    for k, v in out.items():
+        print(f"{k}: {v}")
+    return out
+
+
+@app.function(image=image, gpu="L4", timeout=2700, memory=16384)
+def asr_ab(audio: bytes, truth: str = "", lang: str = "uz") -> dict:
+    """Compare ASR engines on one clip with a known transcript.
+
+        modal run deploy/modal/modal_app.py::asrab --path clip.wav --truth "..."
+
+    Whisper's published Uzbek numbers are catastrophic (>100% WER on the GigaAM
+    Multilingual card, i.e. more errors than words), which would explain a
+    Uzbek->English dub coming back as Turkish-looking gibberish. This measures
+    it here rather than taking a model card's word for it, on audio whose
+    transcript we already know, so the WERs are real and not an ASR scoring an
+    ASR.
+    """
+    import logging
+    import re
+    import time
+    from pathlib import Path
+
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s | %(message)s")
+    work = Path("/tmp/asrab")
+    work.mkdir(parents=True, exist_ok=True)
+    clip = work / "clip.wav"
+    clip.write_bytes(audio)
+
+    def norm(t: str) -> str:
+        t = t.lower().replace("’", "'").replace("‘", "'").replace("`", "'")
+        return re.sub(r"\s+", " ", re.sub(r"[^\w\s']", " ", t, flags=re.U)).strip()
+
+    def wer(ref: str, hyp: str) -> float:
+        r, h = norm(ref).split(), norm(hyp).split()
+        if not r:
+            return 1.0
+        prev = list(range(len(h) + 1))
+        for i, rw in enumerate(r, 1):
+            cur = [i]
+            for j, hw in enumerate(h, 1):
+                cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (rw != hw)))
+            prev = cur
+        return prev[-1] / len(r)
+
+    results = {}
+
+    def as_text(value) -> str:
+        """Whatever an engine hands back, as a string.
+
+        whisper returns a dict, GigaAM a TranscriptionResult object; a list of
+        utterances is also plausible for a longform decoder. Coerce here rather
+        than special-casing each engine at its call site.
+        """
+        if isinstance(value, str):
+            return value
+        for attr in ("text", "transcription", "hypothesis"):
+            got = getattr(value, attr, None)
+            if isinstance(got, str):
+                return got
+            if isinstance(got, (list, tuple)):
+                return " ".join(str(x) for x in got)
+        if isinstance(value, (list, tuple)):
+            return " ".join(as_text(v) for v in value)
+        print(f"    (unfamiliar result type {type(value).__name__}: "
+              f"{[a for a in dir(value) if not a.startswith('_')][:12]})")
+        return str(value)
+
+    def run(name, fn):
+        t0 = time.perf_counter()
+        try:
+            text = as_text(fn())
+        except Exception as exc:
+            results[name] = {"error": f"{type(exc).__name__}: {str(exc)[:160]}"}
+            print(f"{name}: FAILED {results[name]['error']}")
+            return
+        # With no reference transcript there is nothing to score against, and
+        # scoring one ASR against another only measures agreement. Report the
+        # text and let a speaker of the language judge it.
+        results[name] = {"wer": round(wer(truth, text), 3) if truth else None,
+                         "seconds": round(time.perf_counter() - t0, 1),
+                         "text": text.strip()}
+        print(f"{name}: WER={results[name]['wer']} ({results[name]['seconds']}s)")
+        print(f"    {results[name]['text'][:300]}")
+
+    import whisper
+    for size in ("small", "large-v3"):
+        run(f"whisper-{size}", lambda s=size: whisper.load_model(
+            s, device="cuda").transcribe(str(clip), language=lang,
+                                         fp16=True)["text"])
+
+    from transformers import AutoModel
+    for rev in ("ctc", "large_ctc"):
+        def go(r=rev):
+            m = AutoModel.from_pretrained("ai-sage/GigaAM-Multilingual",
+                                          revision=r, trust_remote_code=True)
+            m = m.to("cuda").eval()
+            try:
+                return m.transcribe(str(clip))
+            except ValueError as exc:
+                # GigaAM caps single-pass decoding at ~30s; anything longer has
+                # to go through its own segmenter. Report the shape of what
+                # comes back, because whether it carries timestamps decides how
+                # the pipeline would use it: with them it can produce segments
+                # directly, without them it needs the silero VAD regions the ASR
+                # stage already computes.
+                if "longform" not in str(exc):
+                    raise
+                print(f"    ({r}: too long for one pass, using transcribe_longform)")
+                got = m.transcribe_longform(str(clip))
+                head = got[0] if isinstance(got, (list, tuple)) and got else got
+                print(f"    longform returns {type(got).__name__} of "
+                      f"{type(head).__name__}; item keys/attrs: "
+                      f"{list(head.keys()) if isinstance(head, dict) else [a for a in dir(head) if not a.startswith('_')][:12]}")
+                if isinstance(head, dict):
+                    print(f"    first item: { {k: (str(v)[:60]) for k, v in head.items()} }")
+                if isinstance(got, (list, tuple)):
+                    parts = []
+                    for it in got:
+                        if isinstance(it, dict):
+                            parts.append(str(it.get("transcription")
+                                              or it.get("text") or ""))
+                        else:
+                            parts.append(as_text(it))
+                    return " ".join(p for p in parts if p)
+                return got
+        run(f"gigaam-{rev}", go)
+
+    out = {"truth": truth, "results": results}
+    print("")
+    print("ranking (lower WER is better):")
+    for name, r in sorted(results.items(),
+                          key=lambda kv: (kv[1].get("wer") is None,
+                                          kv[1].get("wer") or 9)):
+        print(f"  {name:16s} {r.get('wer', 'FAILED')}")
+    return out
+
+
+@app.local_entrypoint()
+def asrab(path: str, truth: str = "", lang: str = "uz", out: str = "asrab"):
+    """Send a local clip with its known transcript through asr_ab."""
+    import json
+    from pathlib import Path
+
+    res = asr_ab.remote(Path(path).read_bytes(), truth, lang)
+    Path(f"{out}.json").write_text(json.dumps(res, indent=2, ensure_ascii=False),
+                                   encoding="utf-8")
+    print(f"wrote {out}.json")
+
+
+# ── Lip sync, in an image of its own ───────────────────────────────────────
+# LatentSync cannot share the pipeline's environment: it pins torch 2.5.1 and
+# transformers 4.48, while this app runs torch 2.13 and needs transformers >=5.3
+# for OmniVoice. Modal gives each function its own image, which turns that
+# conflict into a non-issue — and has the useful side effect that lip sync runs
+# on its own container, so a slow diffusion job does not block the single serial
+# worker that everything else queues behind.
+#
+# Licence note: the CODE is Apache-2.0 but the WEIGHTS are OpenRAIL++, which
+# permits commercial use and attaches use-based restrictions that have to be
+# passed on downstream. That is the same family as MuseTalk's licence, and
+# unlike Wav2Lip, whose weights forbid commercial use outright.
+LATENTSYNC_DIR = "/opt/latentsync"
+LATENTSYNC_REPO = "ByteDance/LatentSync-1.6"   # 512px; 1.5 is the 8 GB option
+
+
+def _download_latentsync() -> None:
+    """Fetch LatentSync's checkpoints into the layout its scripts expect."""
+    from huggingface_hub import snapshot_download
+
+    try:
+        snapshot_download(LATENTSYNC_REPO,
+                          local_dir=f"{LATENTSYNC_DIR}/checkpoints")
+        print(f"  ok    {LATENTSYNC_REPO} -> {LATENTSYNC_DIR}/checkpoints")
+    except Exception as exc:
+        print(f"  SKIP  LatentSync weights -> {type(exc).__name__}: {exc}")
+
+
+lipsync_image = (
+    modal.Image.debian_slim(python_version="3.11")
+    # libgl/libglib are opencv's; build-essential is for the packages that have
+    # no wheel for this interpreter.
+    .apt_install("ffmpeg", "git", "libgl1", "libglib2.0-0", "build-essential")
+    .run_commands(
+        f"git clone --depth 1 https://github.com/bytedance/LatentSync.git {LATENTSYNC_DIR}",
+        f"cd {LATENTSYNC_DIR} && python -m pip install -r requirements.txt",
+    )
+    .run_function(_download_latentsync)
+)
+
+
+@app.function(image=lipsync_image, gpu="L4", timeout=3600, memory=16384)
+def lipsync_check(video: bytes, audio: bytes, steps: int = 20,
+                  guidance: float = 1.5) -> dict:
+    """Reshape a speaker's mouth to match dubbed audio, and hand back the video.
+
+        modal run deploy/modal/modal_app.py::lipsync --video clip.mp4 --audio dub.wav
+
+    Deliberately standalone rather than wired into the pipeline: the question
+    it answers is whether the result looks good enough on real content to be
+    worth the GPU time, and that is a judgement to make before committing to it.
+    Reports how long it took per second of video, since that is the other half
+    of the decision.
+    """
+    import subprocess
+    import time
+    from pathlib import Path
+
+    work = Path("/tmp/lipsync")
+    work.mkdir(parents=True, exist_ok=True)
+    vid, aud = work / "in.mp4", work / "in.wav"
+    out = work / "out.mp4"
+    vid.write_bytes(video)
+    aud.write_bytes(audio)
+
+    def probe(path: Path) -> float:
+        r = subprocess.run(["ffprobe", "-v", "error", "-show_entries",
+                            "format=duration", "-of",
+                            "default=nw=1:nk=1", str(path)],
+                           capture_output=True, text=True)
+        try:
+            return float(r.stdout.strip())
+        except ValueError:
+            return 0.0
+
+    seconds = probe(vid)
+    cmd = [
+        "python", "-m", "scripts.inference",
+        "--unet_config_path", "configs/unet/stage2_512.yaml",
+        "--inference_ckpt_path", "checkpoints/latentsync_unet.pt",
+        "--inference_steps", str(steps),
+        "--guidance_scale", str(guidance),
+        "--enable_deepcache",
+        "--video_path", str(vid),
+        "--audio_path", str(aud),
+        "--video_out_path", str(out),
+    ]
+    print(f"lipsync: {seconds:.1f}s of video, {steps} steps, guidance {guidance}")
+    t0 = time.perf_counter()
+    proc = subprocess.run(cmd, cwd=LATENTSYNC_DIR, capture_output=True,
+                          text=True, timeout=3300)
+    elapsed = time.perf_counter() - t0
+
+    if proc.returncode != 0:
+        tail = (proc.stderr or proc.stdout or "").strip().splitlines()[-25:]
+        print("lipsync FAILED, last lines of its output:")
+        for line in tail:
+            print("   ", line)
+        return {"ok": False, "seconds": round(elapsed, 1),
+                "error": " | ".join(tail[-6:])}
+
+    result = {
+        "ok": out.exists(),
+        "video_seconds": round(seconds, 1),
+        "elapsed_seconds": round(elapsed, 1),
+        "realtime_factor": round(elapsed / seconds, 2) if seconds else None,
+        "steps": steps,
+        "guidance": guidance,
+        "video": out.read_bytes() if out.exists() else None,
+    }
+    print(f"lipsync: done in {elapsed:.1f}s "
+          f"({result['realtime_factor']}x realtime)")
+    return result
+
+
+# Modal's per-second GPU prices, for turning a measured runtime into a cost.
+# L4 is the cheapest per second and the slowest, which is not the same as being
+# the cheapest per job: diffusion here is compute-bound, so a faster card can
+# finish far enough ahead to cost less overall. Worth measuring rather than
+# assuming, in either direction.
+GPU_PRICE_PER_SECOND = {
+    "T4": 0.000164, "L4": 0.000222, "A10": 0.000306, "L40S": 0.000542,
+    "A100-40GB": 0.000583, "A100-80GB": 0.000694, "H100": 0.001097,
+    "H200": 0.001261, "B200": 0.001736,
+}
+
+
+@app.local_entrypoint()
+def lipsync(video: str, audio: str, out: str = "lipsync_out", steps: int = 20,
+            gpus: str = "L4"):
+    """Run the lip-sync check, optionally across several GPUs to compare.
+
+        modal run ...::lipsync --video v.mp4 --audio a.wav --gpus L4,L40S,H100
+
+    Reports runtime AND cost per minute of video for each, because those two
+    do not move together: the cheapest card per second is the slowest, and the
+    dearest can be the cheaper way to finish the same job.
+    """
+    import json
+    from pathlib import Path
+
+    vid, aud = Path(video).read_bytes(), Path(audio).read_bytes()
+    rows = []
+    for gpu in [g.strip() for g in gpus.split(",") if g.strip()]:
+        fn = lipsync_check if gpu == "L4" else lipsync_check.with_options(gpu=gpu)
+        print(f"--- {gpu} ---")
+        res = fn.remote(vid, aud, steps)
+        data = res.pop("video", None)
+        if data:
+            Path(f"{out}_{gpu}.mp4").write_bytes(data)
+            print(f"wrote {out}_{gpu}.mp4 ({len(data)/1e6:.1f} MB)")
+        secs = res.get("elapsed_seconds")
+        vsecs = res.get("video_seconds") or 0
+        price = GPU_PRICE_PER_SECOND.get(gpu)
+        if secs and vsecs and price:
+            res["cost_per_video_minute"] = round(secs / vsecs * 60 * price, 3)
+        res["gpu"] = gpu
+        rows.append(res)
+        print(json.dumps(res, indent=2))
+
+    if len(rows) > 1:
+        print("")
+        print(f"{'gpu':10s} {'runtime':>9s} {'x realtime':>11s} {'$/video-min':>12s}")
+        for r in rows:
+            print(f"{r['gpu']:10s} {r.get('elapsed_seconds', 0):8.0f}s "
+                  f"{r.get('realtime_factor', 0):10.1f}x "
+                  f"{r.get('cost_per_video_minute', 0):12.3f}")
