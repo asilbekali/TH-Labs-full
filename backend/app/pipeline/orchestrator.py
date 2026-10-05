@@ -17,7 +17,7 @@ from typing import Awaitable, Callable
 from ..config import get_settings
 from ..schemas import (DubOptions, Job, JobResult, Segment, StageState,
                        StageStatus)
-from . import media, metrics, refine
+from . import bleed, media, metrics, refine
 from .lipsync import Wav2LipSync
 from .nmt import NLLBTranslator
 from .separation import DemucsSeparator
@@ -374,6 +374,7 @@ class Orchestrator:
         voice_cloned = False
         measured_similarity: float | None = None
         voiced: TTSOutcome | None = None
+        tts_stats: dict | None = None
         async with _stage(job, "tts", emit) as st:
             done = False
             # voice_mode is authoritative; voice_clone is what older clients
@@ -390,13 +391,21 @@ class Orchestrator:
                 try:
                     ref_audio, ref_text = await self._speaker_ref(
                         job, segments, reference_audio, want_text=True)
+                    tts_src = job.result.detected_source_lang or options.source_lang
+                    lid = (self.stt.language_probs if self.stt.available()
+                           else None)
                     ok = await self._heartbeat(job, "tts", emit,
                         lambda: self.tts.synthesize(segments, ref_audio, ref_text,
                                                     True, dubbed_audio, duration,
-                                                    options.target_lang))
+                                                    options.target_lang,
+                                                    source_lang=tts_src,
+                                                    language_probs=lid))
+                    tts_stats = getattr(self.tts, "last_stats", None)
+                    log.info("[%s] tts language check: %s (ref=%s)", job.id,
+                             tts_stats, "yes" if ref_audio else "none")
                     if ok:
                         tts_engine, voice_cloned, used_real, done = \
-                            "OmniVoice", True, True, True
+                            "OmniVoice", bool(ref_audio), True, True
                 except Exception as exc:
                     st.message = f"OmniVoice unavailable ({str(exc)[:45]})"
             # 2) edge-tts — real neural speech (generic per-language voice)
@@ -469,6 +478,7 @@ class Orchestrator:
                                         dubbed_audio, options.voice_clone)
             st.detail = {"engine": tts_engine, "voice_mode": mode,
                          "voice_clone": voice_cloned,
+                         "language_check": tts_stats,
                          "engine_mode": "real" if tts_engine != "simulation"
                          else "simulation",
                          **({"voiced": voiced.voiced, "lines": voiced.total}
@@ -530,14 +540,44 @@ class Orchestrator:
                 log.info("[%s] separation done: background_stem=%s device=%s",
                          job.id, background if background else "NONE (voice-only)",
                          sep_device)
-                # "real" describes whether Demucs ran, not whether its output
-                # was kept. Dropping a stem that carries the source dialogue is
-                # a real separation doing its job — reporting it as
-                # "simulation" told the UI the stage had been faked, which the
-                # speech-correlated guard now makes the common case on
-                # speech-only sources. kept_background carries the verdict.
+
+                # Gate the original speech out of the bed and verify it is
+                # gone — see pipeline/bleed.py for why the mixer's ducking on
+                # the dub is not enough on its own.
+                bleed_report: dict | None = None
+                if background is not None:
+                    bleed_lang = job.result.detected_source_lang or "auto"
+
+                    def _words(clip: Path) -> list[str]:
+                        segs, _, _ = self.stt.transcribe(
+                            clip, bleed_lang, QUALITY_WHISPER.get(options.quality, "small"))
+                        return [seg.source_text for seg in segs]
+
+                    try:
+                        background, bleed_report = await self._heartbeat(
+                            job, "separation", emit,
+                            lambda: bleed.suppress_original_speech(
+                                background, background.parent / "vocals.wav",
+                                [(seg.start, seg.end) for seg in job.result.segments],
+                                sep_dir / "bleed", self.stt._vad,
+                                _words if self.stt.available() else None, s))
+                    except Exception as exc:
+                        # The gate is what keeps the source language out; an
+                        # ungated bed is exactly the bug this exists to fix,
+                        # so failing it means voice-only, not "mix it anyway".
+                        log.warning("[%s] bleed suppression failed (%s) — "
+                                    "voice only", job.id, exc)
+                        background, bleed_report = None, {"level": "error",
+                                                          "error": str(exc)[:120]}
+                    log.info("[%s] bleed: %s", job.id, bleed_report)
+                    if background is None:
+                        st.message = ("Original voice could not be removed "
+                                      "cleanly — dubbed voice only")
                 st.detail = {"kept_background": bool(background),
                              "device": sep_device,
+                             "bleed": bleed_report,
+                             # "real" describes whether Demucs ran, not whether
+                             # its output was kept; kept_background carries that.
                              "engine_mode": "real"}
         else:
             _skip(job, "separation")
