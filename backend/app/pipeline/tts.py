@@ -110,6 +110,42 @@ def speaks_source(probs: dict[str, float] | None, source: str | None,
     return p_src > 0.5 and p_src > p_tgt
 
 
+# Window for checking a generated line. Reference leakage puts a few source
+# words at the HEAD of a line and the target after them, so one verdict over
+# the whole clip is outvoted by the target and passes — measured: every line
+# passed whole-clip checks while 4.2 s of a 29 s dub was still English.
+CHECK_WINDOW_SECONDS = 2.5
+CHECK_HOP_SECONDS = 1.25
+# Windows quieter than this fraction of the clip's RMS are skipped: Whisper's
+# language ID calls near-silence "en", which would regenerate good lines.
+CHECK_MIN_RELATIVE_RMS = 0.3
+
+
+def source_heard(clip, sample_rate: int, language_probs, source: str | None,
+                 target: str | None) -> bool:
+    """True if ANY speech window of `clip` is heard in the source language."""
+    import numpy as np
+
+    x = np.asarray(clip, dtype=np.float32).reshape(-1)
+    win = int(CHECK_WINDOW_SECONDS * sample_rate)
+    hop = int(CHECK_HOP_SECONDS * sample_rate)
+    if x.shape[0] <= win:
+        starts = [0]
+    else:
+        starts = list(range(0, x.shape[0] - win + 1, hop))
+        if starts[-1] != x.shape[0] - win:
+            starts.append(x.shape[0] - win)
+    rms = lambda a: float(np.sqrt(np.mean(np.square(a)))) if a.size else 0.0
+    floor = CHECK_MIN_RELATIVE_RMS * rms(x)
+    for st in starts:
+        w = x[st:st + win]
+        if rms(w) < floor:
+            continue
+        if speaks_source(language_probs(w, sample_rate), source, target):
+            return True
+    return False
+
+
 def resolve_language(code: str | None) -> str | None:
     """Map an app language code to an OmniVoice identifier.
 
@@ -260,10 +296,11 @@ class OmniVoiceTTS:
                     break
                 stats["checked"] += 1
                 try:
-                    probs = language_probs(cand, SAMPLE_RATE)
+                    heard = source_heard(cand, SAMPLE_RATE, language_probs,
+                                         source_lang, target_lang)
                 except Exception:
-                    probs = None          # a broken check must not block the dub
-                if not speaks_source(probs, source_lang, target_lang):
+                    heard = False         # a broken check must not block the dub
+                if not heard:
                     clip = cand
                     if n:
                         stats["regenerated"] += 1
