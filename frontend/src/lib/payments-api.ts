@@ -66,6 +66,67 @@ export interface PlansResponse {
   signupBonusCredits?: number
   /** Absent on an API deployed before the payments rework. */
   checkout?: CheckoutInfo
+  /** What each tier may use in the Studio. Absent on an older API. */
+  features?: Record<PlanTier, PlanFeatures>
+  /** Customer-facing tier names — STUDIO is sold as "Studio Max". */
+  tierNames?: Record<PlanTier, string>
+}
+
+/** Fallback for an API that does not send `tierNames` yet. */
+export const PLAN_TIER_NAMES: Record<PlanTier, string> = {
+  FREE: 'Free',
+  PRO: 'Pro',
+  STUDIO: 'Studio Max',
+}
+
+const TIER_ORDER: PlanTier[] = ['FREE', 'PRO', 'STUDIO']
+
+/** The cheapest tier whose features pass `ok` — what to tell the user to upgrade to. */
+export function cheapestTierWith(
+  allTiers: Record<PlanTier, PlanFeatures> | undefined,
+  ok: (f: PlanFeatures) => boolean,
+): PlanTier {
+  if (!allTiers) return 'PRO'
+  return TIER_ORDER.find((t) => allTiers[t] && ok(allTiers[t])) ?? 'STUDIO'
+}
+
+export function languageAllowed(features: PlanFeatures | undefined, code: string): boolean {
+  if (!features || features.targetLanguages === 'all') return true
+  return features.targetLanguages.includes(code)
+}
+
+/**
+ * What a plan unlocks in the Studio. Mirrors api/src/payment/plan-features.ts,
+ * which is the authority: can-dub and commit-dub refuse a locked option with
+ * 402 `PLAN_UPGRADE_REQUIRED` whatever this bundle believes.
+ */
+export interface PlanFeatures {
+  qualities: string[]
+  /** Target languages this plan may dub into, or 'all'. */
+  targetLanguages: string[] | 'all'
+  /** Voice modes this plan may pick: 'both' | 'speaker' | 'native'. */
+  voiceModes: string[]
+  referenceVoice: boolean
+  keepBackground: boolean
+  lipSync: boolean
+}
+
+/** The Studio options a plan can lock, as sent to can-dub / commit-dub. */
+export interface DubFeatures {
+  targetLang?: string
+  voiceMode?: string
+  voiceClone?: boolean
+  referenceVoice?: boolean
+  keepBackground?: boolean
+  lipSync?: boolean
+}
+
+export interface EntitlementsResponse {
+  tier: PlanTier
+  tierName?: string
+  features: PlanFeatures
+  allTiers: Record<PlanTier, PlanFeatures>
+  tierNames?: Record<PlanTier, string>
 }
 
 export interface CheckoutResponse {
@@ -347,6 +408,45 @@ export function claimPurchases(): Promise<ClaimResponse> {
   )
 }
 
+// ── Coming back from checkout ───────────────────────────────────────────────
+// A buyer does not always land on /plans/success: they press Back, close the
+// LS tab, or come back to a tab that was already open. So the moment a checkout
+// is opened is remembered here, and while it is recent the app claims on its
+// own whenever it is looked at again (see usePendingCheckoutClaim).
+const CHECKOUT_KEY = 'th:checkout-started'
+const CHECKOUT_WATCH_MS = 30 * 60_000
+
+export function markCheckoutStarted(): void {
+  try {
+    localStorage.setItem(CHECKOUT_KEY, String(Date.now()))
+  } catch {
+    /* private mode — the success page and the server still credit it */
+  }
+}
+
+export function clearCheckoutStarted(): void {
+  try {
+    localStorage.removeItem(CHECKOUT_KEY)
+  } catch {
+    /* nothing to clear */
+  }
+}
+
+/** When the pending checkout was opened, or null when there is none (or it is older than half an hour). */
+export function checkoutStartedAt(): number | null {
+  try {
+    const at = Number(localStorage.getItem(CHECKOUT_KEY))
+    if (!at) return null
+    if (Date.now() - at > CHECKOUT_WATCH_MS) {
+      localStorage.removeItem(CHECKOUT_KEY)
+      return null
+    }
+    return at
+  } catch {
+    return null
+  }
+}
+
 // ── Credits & history ───────────────────────────────────────────────────────
 export function getCredits(page = 1, limit = 20): Promise<CreditsResponse> {
   return authJson<CreditsResponse>(
@@ -364,14 +464,28 @@ export function getHistory(page = 1, limit = 20): Promise<HistoryResponse> {
   )
 }
 
+// ── Plan features ───────────────────────────────────────────────────────────
+/** GET /v1/payments/entitlements — this account's tier and what it unlocks. */
+export function getEntitlements(): Promise<EntitlementsResponse> {
+  return authJson<EntitlementsResponse>(
+    '/payments/entitlements',
+    {},
+    'Could not load your plan',
+  )
+}
+
 // ── The free-dub / credit gate ──────────────────────────────────────────────
-export function canDub(durationSeconds: number, quality: string): Promise<CanDubResult> {
+export function canDub(
+  durationSeconds: number,
+  quality: string,
+  features: DubFeatures = {},
+): Promise<CanDubResult> {
   return authJson<CanDubResult>(
     '/payments/can-dub',
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ durationSeconds, quality }),
+      body: JSON.stringify({ durationSeconds, quality, ...features }),
     },
     'Could not verify your credits',
   )
@@ -381,13 +495,14 @@ export async function commitDub(
   jobId: string,
   durationSeconds: number,
   quality: string,
+  features: DubFeatures = {},
 ): Promise<CommitDubResult> {
   const res = await authJson<CommitDubResult>(
     '/payments/commit-dub',
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ jobId, durationSeconds, quality }),
+      body: JSON.stringify({ jobId, durationSeconds, quality, ...features }),
     },
     'Could not charge the dub',
   )

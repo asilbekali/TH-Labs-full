@@ -7,12 +7,18 @@ export default function LanguageSelect({
   onChange,
   allowAuto = false,
   label,
+  isLocked,
+  lockedNote,
 }: {
   languages: Language[]
   value: string
   onChange: (code: string) => void
   allowAuto?: boolean
   label: string
+  /** A language the user's plan cannot pick. Listed (greyed, with a lock) after the open ones. */
+  isLocked?: (code: string) => boolean
+  /** One line above the locked part of the list, e.g. "Pro — every language". */
+  lockedNote?: string
 }) {
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState('')
@@ -53,6 +59,8 @@ export default function LanguageSelect({
         l.code.includes(s),
     )
   }, [q, languages])
+  const available = isLocked ? filtered.filter((l) => !isLocked(l.code)) : filtered
+  const locked = isLocked ? filtered.filter((l) => isLocked(l.code)) : []
 
   return (
     <div ref={ref} className="relative">
@@ -110,7 +118,7 @@ export default function LanguageSelect({
                 }}
               />
             )}
-            {filtered.map((l) => (
+            {available.map((l) => (
               <Row
                 key={l.code}
                 flag={l.flag}
@@ -122,6 +130,22 @@ export default function LanguageSelect({
                   setOpen(false)
                   setQ('')
                 }}
+              />
+            ))}
+            {locked.length > 0 && (
+              <div className="mt-1 border-t border-subtle px-3 pb-1 pt-2.5 font-mono text-[10px] uppercase tracking-[0.12em] text-muted">
+                {lockedNote ?? 'Upgrade to unlock'}
+              </div>
+            )}
+            {locked.map((l) => (
+              <Row
+                key={l.code}
+                flag={l.flag}
+                name={l.name}
+                native={l.native}
+                active={false}
+                locked
+                onClick={() => {}}
               />
             ))}
             {filtered.length === 0 && (
@@ -140,24 +164,39 @@ function Row({
   native,
   active,
   onClick,
+  locked = false,
 }: {
   flag: string
   name: string
   native: string
   active: boolean
   onClick: () => void
+  locked?: boolean
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
+      disabled={locked}
       className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm transition-colors ${
-        active ? 'bg-brand/12 text-primary' : 'text-secondary hover:bg-sunken'
+        locked
+          ? 'cursor-not-allowed text-muted opacity-55'
+          : active
+            ? 'bg-brand/12 text-primary'
+            : 'text-secondary hover:bg-sunken'
       }`}
     >
       <span className="text-base">{flag}</span>
       <span className="font-medium">{name}</span>
-      <span className="ml-auto text-xs text-muted">{native}</span>
+      <span className="ml-auto flex items-center gap-1.5 text-xs text-muted">
+        {native}
+        {locked && (
+          <svg viewBox="0 0 24 24" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-label="Locked">
+            <rect x="5" y="11" width="14" height="10" rx="2" />
+            <path d="M8 11V7a4 4 0 0 1 8 0v4" />
+          </svg>
+        )}
+      </span>
     </button>
   )
 }

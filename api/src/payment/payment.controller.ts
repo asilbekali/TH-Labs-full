@@ -2,22 +2,31 @@ import {
   Body,
   Controller,
   Get,
+  Headers,
   HttpCode,
   HttpStatus,
   Post,
   Query,
+  Req,
+  ServiceUnavailableException,
+  UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
+import type { RawBodyRequest } from '@nestjs/common';
+import type { Request } from 'express';
 import {
   ApiBearerAuth,
+  ApiHeader,
   ApiOkResponse,
   ApiOperation,
   ApiQuery,
   ApiServiceUnavailableResponse,
   ApiTags,
+  ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
 
 import { PaymentService } from './payment.service';
+import { LemonSqueezyService } from './lemonsqueezy.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import type { AuthenticatedUser } from '../common/decorators/current-user.decorator';
@@ -30,7 +39,10 @@ import { PaginationQueryDto } from './dto/pagination-query.dto';
 @ApiTags('payments')
 @Controller('payments')
 export class PaymentController {
-  constructor(private readonly payments: PaymentService) {}
+  constructor(
+    private readonly payments: PaymentService,
+    private readonly ls: LemonSqueezyService,
+  ) {}
 
   // ── Public ────────────────────────────────────────────────────────────
   @Get('plans')
@@ -49,12 +61,38 @@ export class PaymentController {
     return this.payments.getCreditPacks();
   }
 
-  // There is deliberately NO webhook route here (yet).
+  // The Lemon Squeezy webhook: credits a purchase the instant LS marks it paid.
   //
-  // A purchase is confirmed by asking Lemon Squeezy for this account's paid
-  // orders — see `claim` below and lemonsqueezy.service.ts. A webhook can be
-  // added later on top without changing anything here: it would grant through
-  // the same UNIQUE order id, so the two paths can never both pay out.
+  // Point LS at `https://<api-host>/v1/payments/webhook` (Settings → Webhooks)
+  // with the events order_created, subscription_created,
+  // subscription_payment_success, subscription_updated, subscription_cancelled
+  // and subscription_expired, and put its signing secret in
+  // LEMONSQUEEZY_WEBHOOK_SECRET. The event only names the account; the credits
+  // come from reading the order back from LS — see PaymentService.handleWebhook.
+  @Post('webhook')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Lemon Squeezy webhook — signed with X-Signature (LS only)',
+  })
+  @ApiHeader({ name: 'X-Signature', required: true })
+  @ApiUnauthorizedResponse({ description: 'Missing or wrong signature.' })
+  @ApiServiceUnavailableResponse({
+    description: 'Webhook not configured, or LS unreachable — LS retries.',
+  })
+  webhook(
+    @Req() req: RawBodyRequest<Request>,
+    @Headers('x-signature') signature: string | undefined,
+  ) {
+    if (!this.ls.webhookConfigured) {
+      throw new ServiceUnavailableException(
+        'LEMONSQUEEZY_WEBHOOK_SECRET is not set on the API.',
+      );
+    }
+    if (!req.rawBody || !this.ls.verifyWebhookSignature(req.rawBody, signature)) {
+      throw new UnauthorizedException('Invalid webhook signature.');
+    }
+    return this.payments.handleWebhook(req.body);
+  }
 
   // ── Authenticated ─────────────────────────────────────────────────────
   @Get('checkout')
@@ -169,6 +207,22 @@ export class PaymentController {
   })
   reconcile(@CurrentUser() user: AuthenticatedUser) {
     return this.payments.reconcile(user.id);
+  }
+
+  @Get('entitlements')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({
+    summary: "This account's plan tier and the Studio features it unlocks (auth)",
+  })
+  @ApiOkResponse({
+    description:
+      '{ tier, features: { qualities[], voiceClone, referenceVoice, ' +
+      'keepBackground, lipSync }, allTiers }. can-dub and commit-dub enforce ' +
+      'the same table and answer 402 `PLAN_UPGRADE_REQUIRED` for a locked feature.',
+  })
+  entitlements(@CurrentUser() user: AuthenticatedUser) {
+    return this.payments.getEntitlements(user.id);
   }
 
   @Post('can-dub')

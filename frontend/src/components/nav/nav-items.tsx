@@ -35,6 +35,12 @@ const ICON = {
       <path d="M19.4 13.5a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1.08-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1.08 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
     </>
   ),
+  tts: (
+    <>
+      <path d="M4 6h10M4 10h7M4 14h5" />
+      <path d="M15 13v4M18 10v10M21 13v4" />
+    </>
+  ),
   developers: <path d="M8.5 8.5 5 12l3.5 3.5M15.5 8.5 19 12l-3.5 3.5M13.5 6.5l-3 11" />,
 } as const
 
@@ -52,6 +58,7 @@ const ICON = {
 export const NAV_MAIN: NavItem[] = [
   { to: '/', label: 'Home', icon: ICON.home },
   { to: '/studio', label: 'Studio', icon: ICON.studio },
+  { to: '/tts', label: 'Text to speech', icon: ICON.tts, soon: true },
   { to: '/works', label: 'My works', icon: ICON.works },
 ]
 
@@ -78,7 +85,7 @@ export const NAV_ALL: NavItem[] = [...NAV_MAIN, ...NAV_BOTTOM]
 export const NAV: NavItem[] = [
   NAV_MAIN[0],
   NAV_MAIN[1],
-  NAV_MAIN[2],
+  NAV_MAIN[3],
   NAV_BOTTOM[2],
   NAV_BOTTOM[3],
 ]
@@ -88,6 +95,7 @@ export const PAGE_TITLES: Record<string, string> = {
   '/': 'Home',
   '/studio': 'Studio',
   '/works': 'My works',
+  '/tts': 'Text to speech',
   '/plans': 'Plans & billing',
   '/plans/success': 'Payment',
   '/plans/cancel': 'Payment',

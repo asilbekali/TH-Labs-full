@@ -1,5 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsIn, IsNumber, IsString, Max, Min, MinLength } from 'class-validator';
+import { IsString, MinLength } from 'class-validator';
+import { CanDubDto } from './can-dub.dto';
 
 // Committing a dub is the point where credits are actually charged. Idempotent
 // on `jobId` so a retried request never double-charges — see
@@ -11,9 +12,9 @@ import { IsIn, IsNumber, IsString, Max, Min, MinLength } from 'class-validator';
 //
 // As in CanDubDto, this is a real number: it was `@IsInt()`, and ffprobe never
 // reports whole seconds. See the note there for how that produced a 402.
-const MAX_DURATION_SECONDS = 24 * 60 * 60;
-
-export class CommitDubDto {
+// Extends CanDubDto for `quality` and the plan-locked options, so the charge
+// enforces the same plan rules as the preflight.
+export class CommitDubDto extends CanDubDto {
   @ApiProperty({
     example: 'job_abc123',
     description: 'Client-generated job id; the idempotency key',
@@ -22,19 +23,8 @@ export class CommitDubDto {
   @MinLength(1)
   jobId!: string;
 
-  @ApiProperty({
-    example: 60.0,
-    description:
-      'Seconds actually dubbed — after any trim (fractional allowed)',
-  })
-  @IsNumber({ allowNaN: false, allowInfinity: false })
-  @Min(0)
-  @Max(MAX_DURATION_SECONDS)
-  durationSeconds!: number;
-
-  @ApiProperty({ example: 'balanced', enum: ['fast', 'balanced', 'studio'] })
-  @IsIn(['fast', 'balanced', 'studio'])
-  quality!: string;
+  // durationSeconds and quality come from CanDubDto (same validation). Here
+  // durationSeconds is the length ACTUALLY DUBBED, after any trim.
 }
 
 export interface CommitDubResult {

@@ -5,6 +5,7 @@ import LogoLoader from '../components/brand/LogoLoader'
 import MagneticButton from '../components/MagneticButton'
 import {
   claimPurchases,
+  clearCheckoutStarted,
   CREDITS_CHANGED_EVENT,
   type ClaimResponse,
 } from '../lib/payments-api'
@@ -17,12 +18,13 @@ import {
 // (`POST /v1/payments/claim`), and the API asks LS. The answer is the whole
 // truth here.
 //
-// LS can take a few seconds to mark a fresh order paid, so the page keeps
-// asking for up to a minute before saying it has not found anything yet. Even
-// then nothing is lost: the server checks on its own every few minutes for a
-// day after a checkout is opened, and credits the order without this page.
-const POLL_EVERY_MS = 3000
-const POLL_FOR_MS = 60_000
+// LS can take anywhere from seconds to 5–10 minutes to mark a fresh order
+// paid, so the page keeps asking for ten minutes before saying it has not
+// found anything yet — and says up front that it may take that long. Even
+// then nothing is lost: the webhook and the server's own checks credit the
+// order without this page, and the buyer gets a receipt email when they do.
+const POLL_EVERY_MS = 5000
+const POLL_FOR_MS = 10 * 60_000
 
 type State = 'claiming' | 'granted' | 'already' | 'waiting' | 'failed'
 
@@ -50,6 +52,7 @@ export default function PlansSuccess() {
         lastError = null
         setResult(res)
         if (res.claimed) {
+          clearCheckoutStarted()
           setState('granted')
           // The wallet pill, the Plans page and My Works all read the balance.
           window.dispatchEvent(new Event(CREDITS_CHANGED_EVENT))
@@ -58,6 +61,7 @@ export default function PlansSuccess() {
         // Credited already — by an earlier visit, or by the server's own
         // check before the buyer got back here. Still a success.
         if (res.recent.length > 0 && !res.pending) {
+          clearCheckoutStarted()
           setState('already')
           window.dispatchEvent(new Event(CREDITS_CHANGED_EVENT))
           return
@@ -109,7 +113,13 @@ export default function PlansSuccess() {
                 Confirming your payment…
               </h1>
               <p className="mt-2 text-sm text-secondary">
-                We are checking with Lemon Squeezy. This can take a few seconds.
+                We are checking with Lemon Squeezy. Confirming a payment can take
+                them 5–10 minutes, so your plan and credits may not show up right
+                away.
+              </p>
+              <p className="mt-3 text-xs text-muted">
+                You can leave this page — they are added to your account
+                automatically, and we email you a receipt when they are.
               </p>
             </>
           )}
@@ -190,10 +200,10 @@ export default function PlansSuccess() {
                 Still waiting for Lemon Squeezy
               </h1>
               <p className="mt-2 text-sm text-secondary">
-                We have not seen a paid order for your account yet. If you just
-                paid, it is usually a moment away — and you do not need to stay
-                here: we keep checking, and the credits are added to your
-                account automatically within a few minutes.
+                Lemon Squeezy has not confirmed a paid order for your account
+                yet. That can take 5–10 minutes. You do not need to stay here:
+                we keep checking, your plan and credits are added automatically
+                as soon as it is confirmed, and we email you a receipt.
               </p>
               <p className="mt-3 text-xs text-muted">
                 Orders are matched by email. If you changed the email on the

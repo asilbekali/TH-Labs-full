@@ -10,6 +10,7 @@ export default function OptionToggle({
   icon,
   accent = 'brand',
   disabled = false,
+  badge,
 }: {
   checked: boolean
   onChange: (v: boolean) => void
@@ -25,6 +26,8 @@ export default function OptionToggle({
    * cannot.
    */
   disabled?: boolean
+  /** Shown beside the title — e.g. the plan lock chip. */
+  badge?: ReactNode
 }) {
   // A monotonically-increasing key so each toggle re-mounts (and replays) the
   // brand-tinted ripple that blooms from the knob.
@@ -70,7 +73,10 @@ export default function OptionToggle({
       )}
       <span className="flex-1">
         <span className="flex items-center justify-between gap-3">
-          <span className="text-sm font-semibold text-primary">{title}</span>
+          <span className="flex items-center gap-2 text-sm font-semibold text-primary">
+            {title}
+            {badge}
+          </span>
           {/* Track — 44×24. Off: sunken fill + inset strong border so it reads as
               clearly off. On: solid brand (or magenta). Knob animates via transform. */}
           <span

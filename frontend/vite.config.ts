@@ -18,7 +18,9 @@ import tailwindcss from '@tailwindcss/vite'
 // each call land on /docs/payments/plans, which is a 404 with no CORS headers.
 
 const DUB_HOST = '46.224.138.121'
-const ACCOUNT_API = 'https://th-labs.uz'
+// Where `vite dev` sends /v1. The deployed API by default; to develop against a
+// NestJS on this machine: ACCOUNT_API_PROXY=http://localhost:3001 npm run dev
+const ACCOUNT_API = process.env.ACCOUNT_API_PROXY || 'https://th-labs.uz'
 
 // Dev-only rewrite of the refresh cookie.
 //

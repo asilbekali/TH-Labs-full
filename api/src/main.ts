@@ -59,12 +59,10 @@ function maskDbUrl(raw: string): string {
 }
 
 async function bootstrap() {
-  // rawBody is no longer needed: it existed for the payment webhook's
-  // signature, which covered the exact request bytes and failed on a body the
-  // JSON parser had re-serialized. There is no webhook endpoint at the moment —
-  // a purchase is confirmed by reading the order back from Lemon Squeezy — so
-  // nothing here reads req.rawBody. A future LS webhook will need it again.
-  const app = await NestFactory.create(AppModule);
+  // rawBody: the Lemon Squeezy webhook's signature covers the exact request
+  // bytes, which a re-serialized JSON body would not match. Nest keeps the
+  // buffer on req.rawBody alongside the parsed body.
+  const app = await NestFactory.create(AppModule, { rawBody: true });
 
   const PORT = Number(process.env.PORT) || 3001;
   const HOST = process.env.HOST || 'localhost';

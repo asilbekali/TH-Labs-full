@@ -12,7 +12,7 @@ import type { ReactNode } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useAuth } from './auth'
 import { qk } from './query'
-import { useCredits, usePlans, useSubscription } from './queries'
+import { useCredits, usePendingCheckoutClaim, usePlans, useSubscription } from './queries'
 import type { PlanTier } from './payments-api'
 
 export type PlanId = 'free' | 'pro' | 'studio'
@@ -27,7 +27,7 @@ export interface Plan {
 // Display names for the three tiers. Prices, credit grants and features are
 // NOT duplicated here — the Plans page reads all of that from
 // GET /v1/payments/plans, which is the only source that can be wrong-by-drift.
-const PLAN_NAMES: Record<PlanId, string> = { free: 'Free', pro: 'Pro', studio: 'Studio' }
+const PLAN_NAMES: Record<PlanId, string> = { free: 'Free', pro: 'Pro', studio: 'Studio Max' }
 
 // Fallback credits-per-MINUTE per quality — a display hint for the Studio's
 // estimate line before can-dub answers. The server table (GET /payments/plans →
@@ -96,6 +96,9 @@ export function WalletProvider({ children }: { children: ReactNode }) {
   // Only consulted for the Free tier's grant — a paid subscription carries its
   // own plan row, so the catalog is not on the critical path for those users.
   const plans = usePlans()
+  // A purchase is credited the moment the buyer is back in the app — not only
+  // when they happen to land on /plans/success.
+  usePendingCheckoutClaim(signedIn)
 
   // Drop the previous account's billing data the moment the session ends.
   //

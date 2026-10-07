@@ -10,6 +10,7 @@ import Account from './pages/Account'
 import MyWorks from './pages/MyWorks'
 import Developers from './pages/Developers'
 import Docs from './pages/Docs'
+import TextToSpeech from './pages/TextToSpeech'
 import { usePaymentsInvalidation } from './lib/queries'
 
 export default function App() {
@@ -35,6 +36,7 @@ export default function App() {
           <Route path="/plans/success" element={<PlansSuccess />} />
           <Route path="/plans/cancel" element={<PlansCancel />} />
           <Route path="/works" element={<MyWorks />} />
+          <Route path="/tts" element={<TextToSpeech />} />
           <Route path="/account" element={<Account />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

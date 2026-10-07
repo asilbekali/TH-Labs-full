@@ -57,11 +57,22 @@ export default function VoicePicker({
   onMode,
   reference,
   onReference,
+  isModeLocked,
+  lockTier = 'Pro',
+  referenceLockedReason = null,
+  referenceLockTier = 'Pro',
 }: {
   mode: VoiceMode
   onMode: (mode: VoiceMode) => void
   reference: File | null
   onReference: (file: File | null) => void
+  /** A voice mode the user's plan does not include — shown, locked. */
+  isModeLocked?: (mode: VoiceMode) => boolean
+  /** Plan that unlocks the locked modes, for the badge. */
+  lockTier?: string
+  /** Why a reference clip cannot be used on this plan, or null when it can. */
+  referenceLockedReason?: string | null
+  referenceLockTier?: string
 }) {
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -75,16 +86,20 @@ export default function VoicePicker({
       <div className="grid gap-2">
         {VOICE_MODES.map((m) => {
           const active = mode === m.id
+          const locked = isModeLocked?.(m.id) ?? false
           return (
             <button
               key={m.id}
               type="button"
               onClick={() => onMode(m.id)}
+              disabled={locked}
               aria-pressed={active}
               className={`focusable rounded-lg border px-4 py-3 text-left transition-colors ${
-                active
-                  ? 'border-brand bg-brand/10'
-                  : 'border-subtle hover:border-[rgb(var(--c-border))]'
+                locked
+                  ? 'cursor-not-allowed border-subtle opacity-50'
+                  : active
+                    ? 'border-brand bg-brand/10'
+                    : 'border-subtle hover:border-[rgb(var(--c-border))]'
               }`}
             >
               <div className="flex items-center gap-2">
@@ -92,6 +107,7 @@ export default function VoicePicker({
                   className={`h-2 w-2 shrink-0 rounded-full ${active ? 'bg-brand' : 'bg-muted'}`}
                 />
                 <span className="text-sm font-medium text-primary">{m.title}</span>
+                {locked && <PlanLockBadge tier={lockTier} />}
               </div>
               <p className="mt-1 pl-4 text-xs leading-relaxed text-muted">{m.blurb}</p>
             </button>
@@ -103,14 +119,19 @@ export default function VoicePicker({
         <div className="rounded-lg border border-subtle px-4 py-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div>
-              <p className="text-sm font-medium text-primary">Use a different voice</p>
+              <p className="flex items-center gap-2 text-sm font-medium text-primary">
+                Use a different voice
+                {referenceLockedReason && <PlanLockBadge tier={referenceLockTier} />}
+              </p>
               <p className="mt-0.5 text-xs text-muted">
-                {reference
-                  ? reference.name
-                  : 'Optional — a clip of any voice to dub in, instead of the speaker in the video.'}
+                {referenceLockedReason
+                  ? referenceLockedReason
+                  : reference
+                    ? reference.name
+                    : 'Optional — a clip of any voice to dub in, instead of the speaker in the video.'}
               </p>
             </div>
-            <div className="flex items-center gap-2">
+            <div className={`flex items-center gap-2 ${referenceLockedReason ? 'hidden' : ''}`}>
               {reference && (
                 <button
                   type="button"
@@ -148,5 +169,18 @@ export default function VoicePicker({
         </div>
       )}
     </div>
+  )
+}
+
+/** The small "Pro" chip on an option the current plan does not include. */
+export function PlanLockBadge({ tier = 'Pro' }: { tier?: string }) {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full border border-subtle bg-sunken px-2 py-0.5 font-mono text-[10px] font-medium uppercase tracking-[0.08em] text-muted">
+      <svg viewBox="0 0 24 24" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+        <rect x="5" y="11" width="14" height="10" rx="2" />
+        <path d="M8 11V7a4 4 0 0 1 8 0v4" />
+      </svg>
+      {tier}
+    </span>
   )
 }

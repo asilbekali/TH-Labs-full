@@ -7,9 +7,10 @@ import { PrismaService } from '../prisma/prisma.service';
 
 // The jobs that stand in for a webhook, plus the subscription lifecycle.
 //
-// `claimPendingCheckouts` finds the buyer who paid and closed the tab: anyone
-// who opened a Lemon Squeezy checkout in the last day has their orders looked
-// up every few minutes, so credits arrive whether or not they come back.
+// `sweepStoreOrders` finds every paid order in the store that is not credited
+// yet — the buyer who paid and closed the tab, the one who reached the LS link
+// some other way — every minute, so credits arrive whether or not they come
+// back (and within seconds when the LS webhook is configured).
 //
 // `syncRenewals` is the same idea for the charges after the first: LS bills a
 // subscription again at the end of each period, and those renewals are only
@@ -34,16 +35,44 @@ export class PaymentCron {
     private readonly service: PaymentService,
   ) {}
 
-  // How long after opening a checkout an account keeps being checked.
-  private static readonly CHECKOUT_WATCH_MS = 24 * 60 * 60 * 1000;
+  // Every minute: credit any paid order in the store from the last three days
+  // that is not credited yet, matched to its account by email. One LS request
+  // per run. This replaced watching only the accounts that had opened a
+  // checkout through this API, which missed every buyer who did not — and
+  // every order LS confirmed after the success page stopped asking.
+  private static readonly SWEEP_WINDOW_MS = 3 * 24 * 60 * 60 * 1000;
+  private sweeping = false;
 
-  @Cron(CronExpression.EVERY_5_MINUTES)
-  async claimPendingCheckouts(): Promise<number> {
+  @Cron(CronExpression.EVERY_MINUTE)
+  async sweepStoreOrders(): Promise<void> {
+    if (this.sweeping) return;
+    this.sweeping = true;
+    try {
+      const r = await this.service.sweepStoreOrders(PaymentCron.SWEEP_WINDOW_MS);
+      if (r.credited > 0 || r.noAccount > 0) {
+        this.logger.log(
+          `Order sweep: ${r.checked} uncredited paid order(s), ` +
+            `${r.credited} account(s) credited, ${r.noAccount} with no account`,
+        );
+      }
+    } catch (err) {
+      this.logger.warn(
+        `Order sweep failed, will retry next minute: ${
+          err instanceof Error ? err.message : err
+        }`,
+      );
+    } finally {
+      this.sweeping = false;
+    }
+  }
+
+  /** Claims for accounts that opened a checkout within `windowMs`. Not scheduled — the sweep covers it. */
+  async claimPendingCheckouts(windowMs: number): Promise<number> {
     // A slow LS response must not stack a second run on top of the first.
     if (this.claiming) return 0;
     this.claiming = true;
     try {
-      const since = new Date(Date.now() - PaymentCron.CHECKOUT_WATCH_MS);
+      const since = new Date(Date.now() - windowMs);
       const users = await this.prisma.user.findMany({
         where: { lsCheckoutStartedAt: { gte: since } },
         select: { id: true },

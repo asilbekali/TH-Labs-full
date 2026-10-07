@@ -98,6 +98,53 @@ function escapeHtml(value: string): string {
     .replace(/'/g, '&#39;');
 }
 
+/**
+ * Sent once a purchase has been confirmed and credited — a plan, a renewal or
+ * a credit pack. The receipt itself is Lemon Squeezy's (it holds the tax and
+ * the card details); this links to it and says what the money bought here.
+ */
+export function paymentReceiptTemplate(
+  name: string,
+  appUrl: string,
+  p: {
+    description: string;
+    creditsGranted: number;
+    balance: number;
+    amountCents: number;
+    reference: string;
+    receiptUrl: string | null;
+  },
+): TemplateOptions {
+  const amount = `$${(p.amountCents / 100).toFixed(2)}`;
+  return {
+    name,
+    heading: `Payment received — thanks, ${name}`,
+    text:
+      `Your payment went through and it's on your account.
+
+` +
+      `${p.description}
+` +
+      `Paid: ${amount}
+` +
+      `Credits added: ${p.creditsGranted.toLocaleString('en-US')}
+` +
+      `Balance now: ${p.balance.toLocaleString('en-US')} credits
+` +
+      `Reference: ${p.reference}
+
+` +
+      (p.receiptUrl
+        ? `Your official receipt from Lemon Squeezy, our payment provider, is one click away below.`
+        : `Lemon Squeezy, our payment provider, emails the official receipt separately.`),
+    cta: p.receiptUrl
+      ? { label: 'View your receipt', url: p.receiptUrl }
+      : { label: 'Open the Studio', url: `${appUrl.replace(/\/+$/, '')}/studio` },
+    footnote:
+      "Didn't make this purchase, or something looks wrong? Reply to this email with the reference above.",
+  };
+}
+
 /** Turn plain text into paragraphs, preserving blank-line breaks. */
 function toParagraphs(text: string): string {
   return text

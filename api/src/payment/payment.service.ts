@@ -19,6 +19,7 @@ import {
 } from '@prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service';
+import { MailService } from '../mail/mail.service';
 import {
   LemonSqueezyService,
   LemonSqueezyUnavailableError,
@@ -28,7 +29,16 @@ import {
 } from './lemonsqueezy.service';
 import { CanDubDto, CanDubResult } from './dto/can-dub.dto';
 import { CommitDubDto, CommitDubResult } from './dto/commit-dub.dto';
-import { PaymentRequiredException } from './payment-required.exception';
+import {
+  PaymentRequiredException,
+  PlanUpgradeRequiredException,
+} from './payment-required.exception';
+import {
+  PLAN_FEATURES,
+  TIER_DISPLAY_NAME,
+  TURKIC_LANGUAGES,
+  checkFeatures,
+} from './plan-features';
 import {
   CREDITS_PER_MINUTE,
   CREDITS_PER_MINUTE_BY_QUALITY,
@@ -81,6 +91,7 @@ export class PaymentService {
     private readonly prisma: PrismaService,
     private readonly ls: LemonSqueezyService,
     private readonly config: ConfigService,
+    private readonly mail: MailService,
   ) {}
 
   // The free allowance is no longer a special-cased "one free dub of up to N
@@ -134,6 +145,11 @@ export class PaymentService {
       qualityMultiplier: QUALITY_MULTIPLIER,
       freeMinuteSeconds: this.freeMinuteSeconds,
       signupBonusCredits: SIGNUP_BONUS_CREDITS,
+      /** What each tier may use in the Studio. See plan-features.ts. */
+      features: PLAN_FEATURES,
+      /** Customer-facing tier names (STUDIO is sold as "Studio Max"). */
+      tierNames: TIER_DISPLAY_NAME,
+      turkicLanguages: TURKIC_LANGUAGES,
       checkout: {
         provider: 'lemonsqueezy' as const,
         /**
@@ -462,6 +478,173 @@ export class PaymentService {
     };
   }
 
+  // ── Webhook: credit the moment LS says it is paid ─────────────────────
+  /**
+   * `POST /payments/webhook`. The webhook is a doorbell, not the source of
+   * truth: a correctly signed event only tells us WHICH account to look at,
+   * and the credits then come from claimOrders / syncRenewals, which read the
+   * order back from the LS API exactly as the success page does. So the
+   * webhook, the success page and the cron share one grant path and one UNIQUE
+   * order id, and however many of them fire, every order pays out once.
+   *
+   * Throws 503 when LS could not be asked, so LS retries the delivery.
+   */
+  async handleWebhook(payload: unknown): Promise<{ ok: true; handled: string }> {
+    const body = (payload ?? {}) as {
+      meta?: { event_name?: string; custom_data?: Record<string, unknown> };
+      data?: { id?: string; type?: string; attributes?: Record<string, unknown> };
+    };
+    const event = body.meta?.event_name ?? 'unknown';
+    const attrs = body.data?.attributes ?? {};
+
+    if (event === 'order_created' || event === 'subscription_created') {
+      const userId = await this.webhookUser(
+        body.meta?.custom_data?.user_id,
+        attrs.user_email,
+      );
+      if (!userId) {
+        this.logger.warn(
+          `LS webhook ${event}: no account for user_id=` +
+            `${String(body.meta?.custom_data?.user_id)} / email=${String(attrs.user_email)}. ` +
+            'Not credited — support can settle it from the LS receipt.',
+        );
+        return { ok: true, handled: 'no-account' };
+      }
+      const result = await this.claimOrders(userId);
+      this.logger.log(
+        `LS webhook ${event}: user ${userId} — ${
+          result.claimed
+            ? `credited ${result.creditsGranted}`
+            : result.pending
+              ? 'order still pending'
+              : 'nothing new'
+        }`,
+      );
+      return { ok: true, handled: 'claimed' };
+    }
+
+    if (event.startsWith('subscription_')) {
+      // Renewals (subscription_payment_success) and status changes
+      // (cancelled / expired / past_due). The subscription id is the resource
+      // id for subscription_* events and an attribute on invoice events.
+      const lsSubId =
+        body.data?.type === 'subscriptions'
+          ? body.data.id
+          : attrs.subscription_id != null
+            ? String(attrs.subscription_id)
+            : undefined;
+      const sub = lsSubId
+        ? await this.prisma.subscription.findUnique({
+            where: { lsSubscriptionId: lsSubId },
+            include: { plan: true },
+          })
+        : null;
+      if (!sub) return { ok: true, handled: 'unknown-subscription' };
+      try {
+        await this.syncRenewals(sub);
+      } catch (error) {
+        if (error instanceof LemonSqueezyUnavailableError) {
+          throw new ServiceUnavailableException('Lemon Squeezy unreachable.');
+        }
+        throw error;
+      }
+      return { ok: true, handled: 'synced' };
+    }
+
+    return { ok: true, handled: 'ignored' };
+  }
+
+  // ── Store sweep: nothing paid is left uncredited ─────────────────────────
+  /**
+   * Credit every paid order in the store from the last `windowMs` that has not
+   * been credited yet, whoever placed it and however they reached checkout.
+   *
+   * This is the safety net under the success page and the webhook. The old
+   * one only watched accounts that had opened a checkout through this API in
+   * the last day, so a buyer who reached the LS link another way, or whose
+   * order was confirmed after the success page stopped asking, was never
+   * credited. One LS request lists the whole window; only accounts with a new
+   * paid order are then claimed, through the same idempotent claimOrders.
+   */
+  async sweepStoreOrders(windowMs: number): Promise<{
+    checked: number;
+    credited: number;
+    noAccount: number;
+  }> {
+    if (!this.ls.configured) return { checked: 0, credited: 0, noAccount: 0 };
+
+    const orders = (
+      await this.ls.listRecentOrders(new Date(Date.now() - windowMs))
+    ).filter((o) => o.paid);
+    if (orders.length === 0) return { checked: 0, credited: 0, noAccount: 0 };
+
+    const done = new Set(
+      (
+        await this.prisma.payment.findMany({
+          where: { lsOrderId: { in: orders.map((o) => o.id) } },
+          select: { lsOrderId: true },
+        })
+      ).map((p) => p.lsOrderId),
+    );
+    const open = orders.filter((o) => !done.has(o.id));
+
+    // One claim per account, however many new orders it has.
+    const emails = [...new Set(open.map((o) => o.userEmail.trim().toLowerCase()))];
+    let credited = 0;
+    let noAccount = 0;
+    for (const email of emails) {
+      const userId = await this.webhookUser(undefined, email);
+      if (!userId) {
+        noAccount++;
+        this.logger.warn(
+          `Paid LS order(s) for ${email} match no account — not credited. ` +
+            'The buyer used an email with no TH-Labs account; support can settle it.',
+        );
+        continue;
+      }
+      try {
+        const result = await this.claimOrders(userId);
+        if (result.claimed) {
+          credited++;
+          this.logger.log(
+            `Sweep credited user ${userId} with ${result.creditsGranted} credits ` +
+              `(${result.granted.map((g) => g.description).join('; ')})`,
+          );
+        }
+      } catch (error) {
+        this.logger.warn(
+          `Sweep claim for user ${userId} failed, will retry: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+    }
+    return { checked: open.length, credited, noAccount };
+  }
+
+  /** The account a webhook is about: our own user id from the checkout link, else the order email. */
+  private async webhookUser(
+    customUserId: unknown,
+    email: unknown,
+  ): Promise<number | null> {
+    const id = Number(customUserId);
+    if (Number.isInteger(id) && id > 0) {
+      const user = await this.prisma.user.findUnique({
+        where: { id },
+        select: { id: true },
+      });
+      if (user) return user.id;
+    }
+    if (typeof email === 'string' && email.includes('@')) {
+      const user = await this.prisma.user.findFirst({
+        where: { email: { equals: email.trim(), mode: 'insensitive' } },
+        select: { id: true },
+      });
+      if (user) return user.id;
+    }
+    return null;
+  }
+
   /** Which catalog row an LS variant sells. Inactive rows still count — a paid order is a paid order. */
   private async resolveVariant(
     variantId: string | null,
@@ -523,7 +706,7 @@ export class PaymentService {
 
     const periodStart = order.createdAt;
     const periodEnd = this.periodEndFor(plan.cycle, periodStart, lsSub);
-    const description = `${plan.tier} ${plan.cycle} — ${plan.creditsGranted} credits`;
+    const description = `${TIER_DISPLAY_NAME[plan.tier]} ${plan.cycle} — ${plan.creditsGranted} credits`;
 
     const result = await this.prisma.transaction(async (tx) => {
       // One live subscription per user. Buying a different tier retires the old
@@ -603,6 +786,14 @@ export class PaymentService {
     );
 
     await this.rememberCustomer(userId, order.customerId);
+    this.emailReceipt(userId, {
+      description,
+      creditsGranted: plan.creditsGranted,
+      balance: result.balance,
+      amountCents: order.totalUsd || plan.priceCents,
+      reference: `LS order #${order.orderNumber}`,
+      receiptUrl: order.receiptUrl,
+    });
 
     // Switching plans: the old LS subscription would otherwise keep charging
     // the card for a plan this account no longer has. Cancelled at LS, which
@@ -641,7 +832,7 @@ export class PaymentService {
     this.checkAmount(order, pack.priceCents, pack.slug);
     const description = `${pack.credits} credits — one-time pack`;
 
-    await this.prisma.transaction(async (tx) => {
+    const balance = await this.prisma.transaction(async (tx) => {
       await tx.payment.create({
         data: {
           userId,
@@ -653,7 +844,7 @@ export class PaymentService {
           lsOrderIdentifier: order.identifier,
         },
       });
-      await this.applyCredits(
+      return this.applyCredits(
         tx,
         userId,
         pack.credits,
@@ -668,8 +859,45 @@ export class PaymentService {
         `(${pack.slug}, LS order ${order.id})`,
     );
     await this.rememberCustomer(userId, order.customerId);
+    this.emailReceipt(userId, {
+      description,
+      creditsGranted: pack.credits,
+      balance,
+      amountCents: order.totalUsd || pack.priceCents,
+      reference: `LS order #${order.orderNumber}`,
+      receiptUrl: order.receiptUrl,
+    });
 
     return { orderId: order.id, description, creditsGranted: pack.credits };
+  }
+
+  /**
+   * The receipt email. Fire-and-forget, after the grant has committed: it only
+   * ever runs once per order (the grant is UNIQUE on it), and a mail failure
+   * must never turn a credited purchase into an error for the buyer.
+   */
+  private emailReceipt(
+    userId: number,
+    payment: Parameters<MailService['sendPaymentReceipt']>[2],
+  ): void {
+    void (async () => {
+      const user = await this.prisma.user.findUnique({
+        where: { id: userId },
+        select: { email: true, name: true },
+      });
+      if (!user) return;
+      await this.mail.sendPaymentReceipt(
+        user.email,
+        user.name || user.email.split('@')[0],
+        payment,
+      );
+    })().catch((error) =>
+      this.logger.error(
+        `Receipt email for user ${userId} failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      ),
+    );
   }
 
   /** Outside the grant transaction on purpose: it is bookkeeping, and must never fail a paid claim. */
@@ -756,9 +984,9 @@ export class PaymentService {
   ): Promise<GrantedPurchase> {
     const periodStart = invoice.createdAt;
     const periodEnd = this.periodEndFor(plan.cycle, periodStart, lsSub);
-    const description = `${plan.tier} ${plan.cycle} renewal — ${plan.creditsGranted} credits`;
+    const description = `${TIER_DISPLAY_NAME[plan.tier]} ${plan.cycle} renewal — ${plan.creditsGranted} credits`;
 
-    await this.prisma.transaction(async (tx) => {
+    const balance = await this.prisma.transaction(async (tx) => {
       await tx.payment.create({
         data: {
           userId: sub.userId,
@@ -781,7 +1009,7 @@ export class PaymentService {
           grantsIssued: 1,
         },
       });
-      await this.applyCredits(
+      return this.applyCredits(
         tx,
         sub.userId,
         plan.creditsGranted,
@@ -790,6 +1018,14 @@ export class PaymentService {
         `${plan.tier} ${plan.cycle} renewal (LS invoice ${invoice.id})`,
       );
     }, `grantRenewal(${invoice.id})`);
+    this.emailReceipt(sub.userId, {
+      description,
+      creditsGranted: plan.creditsGranted,
+      balance,
+      amountCents: invoice.totalUsd || plan.priceCents,
+      reference: `LS invoice ${invoice.id}`,
+      receiptUrl: invoice.invoiceUrl,
+    });
 
     this.logger.log(
       `Renewal: granted ${plan.creditsGranted} credits to user ${sub.userId} ` +
@@ -957,6 +1193,9 @@ export class PaymentService {
       select: { credits: true },
     });
     if (!user) throw new NotFoundException('User not found.');
+    // Plan first: a dub the plan does not include is refused whatever the
+    // balance, so the user is told to upgrade rather than to buy credits.
+    const tier = await this.assertPlanAllows(userId, dto);
 
     const duration = Math.max(0, Number(dto.durationSeconds) || 0);
     const cost = costForDub(duration, dto.quality);
@@ -980,6 +1219,7 @@ export class PaymentService {
       trimmed: billableSeconds > 0 && billableSeconds < duration,
       affordableSeconds: affordable,
       creditsPerMinute: rateFor(dto.quality),
+      tier,
     };
   }
 
@@ -991,6 +1231,7 @@ export class PaymentService {
   // Idempotent on jobId: a retried request returns the first result and never
   // charges twice.
   async commitDub(userId: number, dto: CommitDubDto): Promise<CommitDubResult> {
+    await this.assertPlanAllows(userId, dto);
     const duration = Math.max(0, Number(dto.durationSeconds) || 0);
     const cost = costForDub(duration, dto.quality);
 
@@ -1087,6 +1328,55 @@ export class PaymentService {
         idempotent: false,
       };
     }, `commitDub(${dto.jobId})`);
+  }
+
+  // ── Plan features ────────────────────────────────────────────────────────
+  /**
+   * The tier this account is on right now: its latest subscription's tier
+   * while that is ACTIVE (or PAST_DUE inside the grace window) and not lapsed,
+   * otherwise FREE. Same rule as getSubscription, so the badge the UI shows
+   * and the gate the dub hits always agree.
+   */
+  async getEffectiveTier(userId: number): Promise<PlanTier> {
+    const { subscription } = await this.getSubscription(userId);
+    if (
+      subscription &&
+      (subscription.status === SubscriptionStatus.ACTIVE ||
+        subscription.status === SubscriptionStatus.PAST_DUE)
+    ) {
+      return subscription.plan.tier;
+    }
+    return PlanTier.FREE;
+  }
+
+  /** `GET /payments/entitlements` — this account's tier and what it unlocks. */
+  async getEntitlements(userId: number) {
+    const tier = await this.getEffectiveTier(userId);
+    return {
+      tier,
+      tierName: TIER_DISPLAY_NAME[tier],
+      features: PLAN_FEATURES[tier],
+      allTiers: PLAN_FEATURES,
+      tierNames: TIER_DISPLAY_NAME,
+    };
+  }
+
+  /** Throws a 402 PLAN_UPGRADE_REQUIRED when the plan does not include this dub. */
+  private async assertPlanAllows(
+    userId: number,
+    dto: CanDubDto,
+  ): Promise<PlanTier> {
+    const tier = await this.getEffectiveTier(userId);
+    const refusal = checkFeatures(tier, dto);
+    if (refusal) {
+      throw new PlanUpgradeRequiredException({
+        message: refusal.message,
+        feature: refusal.feature,
+        currentTier: tier,
+        requiredTier: refusal.requiredTier,
+      });
+    }
+    return tier;
   }
 
   // ── Subscriptions ────────────────────────────────────────────────────────

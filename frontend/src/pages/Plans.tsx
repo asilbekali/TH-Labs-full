@@ -26,7 +26,7 @@ import {
   useSubscription,
 } from '../lib/queries'
 import { checkoutUnavailableReason, unbuyablePlans } from '../lib/lemonsqueezy'
-import { creditsForMinutes, packFor } from '../lib/payments-api'
+import { PLAN_TIER_NAMES, creditsForMinutes, markCheckoutStarted, packFor } from '../lib/payments-api'
 import type {
   BillingCycle,
   CheckoutInfo,
@@ -70,10 +70,25 @@ interface UiTier {
 
 // What each tier unlocks. This is product copy, not data — the numbers beside
 // it (price, credits, limits) are always read from the API.
+//
+// Must agree with api/src/payment/plan-features.ts, which is what can-dub
+// actually enforces. STUDIO is the stored tier; customers see "Studio Max".
 const TIER_META: { tier: PlanTier; name: string; highlight: boolean; features: string[] }[] = [
-  { tier: 'FREE', name: 'Free', highlight: false, features: ['Fast & Balanced quality', 'Voice cloning', 'Standard queue'] },
-  { tier: 'PRO', name: 'Pro', highlight: true, features: ['All qualities incl. Studio', 'Voice cloning + lip sync', 'Priority queue', 'Background separation'] },
-  { tier: 'STUDIO', name: 'Studio', highlight: false, features: ['Everything in Pro', 'Batch dubbing', 'Highest fidelity output', 'Email support'] },
+  { tier: 'FREE', name: 'Free', highlight: false, features: ['Dub into Turkic languages', 'Their voice, spoken natively', 'Fast & Balanced quality', 'Standard queue'] },
+  { tier: 'PRO', name: 'Pro', highlight: true, features: ['Every language', 'All voice modes + custom voice', 'Keep background music & effects', 'Priority queue'] },
+  { tier: 'STUDIO', name: 'Studio Max', highlight: false, features: ['Everything in Pro', 'Lip sync', 'Studio quality — highest fidelity', 'Email support'] },
+]
+
+// The "Compare all plans" rows: Free / Pro / Studio Max, in TIER_META order.
+const COMPARE_ROWS: { feature: string; values: (string | boolean)[] }[] = [
+  { feature: 'Target languages', values: ['Turkic', 'All', 'All'] },
+  { feature: 'Voice modes', values: ['1', '3', '3'] },
+  { feature: 'Custom reference voice', values: [false, true, true] },
+  { feature: 'Keep background music & effects', values: [false, true, true] },
+  { feature: 'Fast & Balanced quality', values: [true, true, true] },
+  { feature: 'Studio quality', values: [false, false, true] },
+  { feature: 'Lip sync', values: [false, false, true] },
+  { feature: 'Priority queue', values: [false, true, true] },
 ]
 
 const CYCLE_KEYS: Cycle[] = ['monthly', 'yearly']
@@ -178,6 +193,7 @@ export default function Plans() {
         tier: t.tier as Exclude<PlanTier, 'FREE'>,
         cycle: api,
       })
+      markCheckoutStarted()
       window.location.href = url
     } catch (e) {
       setToast({ id: Date.now(), msg: e instanceof Error ? e.message : 'Could not start checkout' })
@@ -192,6 +208,7 @@ export default function Plans() {
     if (checkoutBlocked) return
     try {
       const { url } = await creditCheckout.mutateAsync({ packId })
+      markCheckoutStarted()
       window.location.href = url
     } catch (e) {
       setToast({
@@ -679,16 +696,20 @@ function PackCard({
         recommended ? 'border-brand/45 ring-1 ring-brand/40' : ''
       }`}
     >
-      {recommended && (
-        <span className="absolute -top-2 left-5 rounded-pill bg-brand px-2 py-0.5 font-mono text-[10px] font-medium uppercase tracking-wide text-canvas">
-          Your pick
-        </span>
-      )}
-      <div className="flex items-baseline gap-1.5">
-        <span className="font-mono text-2xl font-medium text-primary">
-          {pack.credits.toLocaleString()}
-        </span>
-        <span className="font-mono text-xs text-muted">credits</span>
+      {/* Inside the card, not hung over its top edge: `.sheen` clips its
+          overflow, which cut an absolutely-positioned `-top-2` badge in half. */}
+      <div className="above flex items-start justify-between gap-2">
+        <div className="flex items-baseline gap-1.5">
+          <span className="font-mono text-2xl font-medium text-primary">
+            {pack.credits.toLocaleString()}
+          </span>
+          <span className="font-mono text-xs text-muted">credits</span>
+        </div>
+        {recommended && (
+          <span className="shrink-0 rounded-pill bg-brand px-2.5 py-0.5 font-mono text-[10px] font-medium uppercase tracking-wide text-canvas">
+            Your pick
+          </span>
+        )}
       </div>
       <div className="mt-1 font-mono text-[11px] text-muted">
         ≈ {minutes.toFixed(1)} min at Balanced
@@ -747,9 +768,9 @@ function CompareDisclosure({
     })),
     { feature: 'Monthly price', values: tiers.map((t) => fmtPrice(t.prices.monthly)) },
     { feature: 'Yearly price', values: tiers.map((t) => fmtPrice(t.prices.yearly)) },
-    ...TIER_META[1].features.map((f) => ({
-      feature: f,
-      values: tiers.map((t) => t.features.includes(f) || t.tier === 'STUDIO'),
+    ...COMPARE_ROWS.map((r) => ({
+      feature: r.feature,
+      values: tiers.map((t) => r.values[TIER_META.findIndex((m) => m.tier === t.tier)] ?? false),
     })),
   ]
 
@@ -926,7 +947,7 @@ function SubscriptionCard({
       <div className="card p-6">
         <SectionMark>Subscription</SectionMark>
         <p className="mt-2 text-sm text-secondary">
-          You're on the Free plan. Choose Pro or Studio above to add monthly credits.
+          You're on the Free plan. Choose Pro or Studio Max above to add monthly credits.
         </p>
       </div>
     )
@@ -945,7 +966,7 @@ function SubscriptionCard({
         <SectionMark>Subscription</SectionMark>
         <div className="mt-2 flex items-center gap-2">
           <span className="font-mono text-lg font-medium text-primary">
-            {tier} · {cycle}
+            {PLAN_TIER_NAMES[tier]} · {cycle}
           </span>
           <StatusPill status={subscription.status} cancelAtPeriodEnd={subscription.cancelAtPeriodEnd} />
         </div>
@@ -1019,10 +1040,16 @@ function HistoryCard({ rows }: { rows: PaymentRow[] }) {
 function CheckoutFooter({ live }: { live: boolean }) {
   return (
     <div className="flex flex-wrap items-center justify-between gap-3 rounded-card border border-subtle bg-sunken/50 px-5 py-4">
-      <p className="font-mono text-xs text-muted">
-        Payments are processed by Lemon Squeezy. Card details never reach this site, and credits are
-        granted automatically as soon as Lemon Squeezy confirms the payment.
-      </p>
+      <div className="space-y-1.5">
+        <p className="font-mono text-xs font-medium text-primary">
+          Heads up: your plan and credits can take 5–10 minutes to appear after you pay.
+        </p>
+        <p className="font-mono text-xs text-muted">
+          Lemon Squeezy, our payment provider, has to confirm the payment first. They are added to your
+          account automatically the moment it does — you don't need to stay on the page — and we email
+          you a receipt. Card details never reach this site.
+        </p>
+      </div>
       {live && (
         <span className="shrink-0 rounded-pill bg-success/12 px-2.5 py-1 font-mono text-[10px] uppercase tracking-wide text-success">
           Live payments
