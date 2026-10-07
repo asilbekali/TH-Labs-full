@@ -16,6 +16,7 @@
 // So the trust boundary is exactly here. Everything downstream
 // (PaymentService.claimOrders / syncRenewals) acts only on what this service
 // returns: the order's status and its VARIANT, both set by LS.
+import { createHmac, timingSafeEqual } from 'node:crypto';
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 
@@ -43,6 +44,8 @@ export interface LsOrder {
   customerId: string | null;
   testMode: boolean;
   createdAt: Date;
+  /** LS's hosted receipt for this order, or null. Linked from the receipt email. */
+  receiptUrl: string | null;
 }
 
 export interface LsSubscription {
@@ -67,6 +70,8 @@ export interface LsInvoice {
   totalUsd: number;
   currency: string;
   createdAt: Date;
+  /** LS's hosted invoice for this charge, or null. */
+  invoiceUrl: string | null;
 }
 
 /** LS could not be asked (no key, network, outage). Never means "not paid". */
@@ -99,6 +104,7 @@ const MAX_PAGES = 10;
 export class LemonSqueezyService {
   private readonly logger = new Logger(LemonSqueezyService.name);
   private readonly apiKey: string | null;
+  private readonly webhookSecret: string | null;
   private storeId: string | null;
   private storeLookup: Promise<string> | null = null;
   private readonly modeCache = new Map<
@@ -110,6 +116,14 @@ export class LemonSqueezyService {
     this.apiKey = this.config.get<string>('LEMONSQUEEZY_API_KEY')?.trim() || null;
     this.storeId =
       this.config.get<string>('LEMONSQUEEZY_STORE_ID')?.trim() || null;
+    this.webhookSecret =
+      this.config.get<string>('LEMONSQUEEZY_WEBHOOK_SECRET')?.trim() || null;
+    if (!this.webhookSecret) {
+      this.logger.warn(
+        'LEMONSQUEEZY_WEBHOOK_SECRET is not set — the webhook is off, so a ' +
+          'purchase is credited when the buyer returns or by the cron, not instantly.',
+      );
+    }
 
     if (!this.apiKey) {
       // Not fatal: the catalog, the ledger and dubbing all work without it.
@@ -124,6 +138,28 @@ export class LemonSqueezyService {
 
   get configured(): boolean {
     return this.apiKey !== null;
+  }
+
+  get webhookConfigured(): boolean {
+    return this.webhookSecret !== null;
+  }
+
+  /**
+   * True when `signature` (the `X-Signature` header) is the HMAC-SHA256 of the
+   * exact request bytes under the webhook's signing secret. Constant-time.
+   */
+  verifyWebhookSignature(rawBody: Buffer, signature: string | undefined): boolean {
+    if (!this.webhookSecret || !signature) return false;
+    const expected = createHmac('sha256', this.webhookSecret)
+      .update(rawBody)
+      .digest();
+    let given: Buffer;
+    try {
+      given = Buffer.from(signature.trim(), 'hex');
+    } catch {
+      return false;
+    }
+    return given.length === expected.length && timingSafeEqual(given, expected);
   }
 
   // ── HTTP ──────────────────────────────────────────────────────────────────
@@ -222,6 +258,27 @@ export class LemonSqueezyService {
     return [...seen.values()];
   }
 
+  /**
+   * Every order in the store placed since `since`, newest first.
+   *
+   * LS lists a store's orders newest first, so paging stops at the first
+   * order older than `since` — a sweep of the last few days is one request.
+   */
+  async listRecentOrders(since: Date): Promise<LsOrder[]> {
+    const storeId = await this.getStoreId();
+    const out: LsOrder[] = [];
+    let next: string | null =
+      `/orders?filter[store_id]=${encodeURIComponent(storeId)}&page[size]=100`;
+    for (let page = 0; next && page < MAX_PAGES; page++) {
+      const body: JsonApiList = await this.request<JsonApiList>(next);
+      const orders = (body.data ?? []).map((r) => this.toOrder(r));
+      out.push(...orders.filter((o) => o.createdAt >= since));
+      if (orders.some((o) => o.createdAt < since)) break;
+      next = body.links?.next ?? null;
+    }
+    return out;
+  }
+
   /** The subscription an order opened, if it was a subscription purchase. */
   async getSubscriptionForOrder(orderId: string): Promise<LsSubscription | null> {
     const rows = await this.list(
@@ -250,6 +307,9 @@ export class LemonSqueezyService {
       totalUsd: num(r.attributes.total_usd),
       currency: String(r.attributes.currency ?? 'USD').toLowerCase(),
       createdAt: date(r.attributes.created_at) ?? new Date(0),
+      invoiceUrl: str(
+        (r.attributes.urls as Record<string, unknown> | undefined)?.invoice_url,
+      ),
     }));
   }
 
@@ -312,6 +372,7 @@ export class LemonSqueezyService {
       customerId: str(a.customer_id),
       testMode: a.test_mode === true,
       createdAt: date(a.created_at) ?? new Date(0),
+      receiptUrl: str((a.urls as Record<string, unknown> | undefined)?.receipt),
     };
   }
 

@@ -16,7 +16,7 @@ import {
   type UseMutationResult,
   type UseQueryResult,
 } from '@tanstack/react-query'
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 
 import { qk } from './query'
 import { getHealth, getLanguages, FALLBACK_LANGUAGES } from './api'
@@ -25,6 +25,10 @@ import { me, updateAccount, type AccountUser } from './auth-api'
 import {
   cancelSubscription,
   canDub,
+  checkoutStartedAt,
+  claimPurchases,
+  clearCheckoutStarted,
+  getEntitlements,
   commitDub,
   getCheckoutUrl,
   getCreditCheckoutUrl,
@@ -35,6 +39,8 @@ import {
   getSubscription,
   CREDITS_CHANGED_EVENT,
   type BillingCycle,
+  type DubFeatures,
+  type EntitlementsResponse,
   type CanDubResult,
   type CheckoutResponse,
   type CommitDubResult,
@@ -184,24 +190,33 @@ export function useCancelSubscription() {
   })
 }
 
-/** POST /v1/payments/can-dub — the read-only credit gate. Charges nothing. */
+/** GET /v1/payments/entitlements — the tier and what it unlocks in the Studio. */
+export function useEntitlements(enabled = true): UseQueryResult<EntitlementsResponse> {
+  return useQuery({ queryKey: qk.entitlements(), queryFn: getEntitlements, enabled })
+}
+
+/** POST /v1/payments/can-dub — the read-only credit + plan gate. Charges nothing. */
 export function useCanDub(): UseMutationResult<
   CanDubResult,
   Error,
-  { durationSeconds: number; quality: string }
+  { durationSeconds: number; quality: string; features?: DubFeatures }
 > {
-  return useMutation({ mutationFn: ({ durationSeconds, quality }) => canDub(durationSeconds, quality) })
+  return useMutation({
+    mutationFn: ({ durationSeconds, quality, features }) =>
+      canDub(durationSeconds, quality, features),
+  })
 }
 
 /** POST /v1/payments/commit-dub — the charge. Idempotent on jobId. */
 export function useCommitDub(): UseMutationResult<
   CommitDubResult,
   Error,
-  { jobId: string; durationSeconds: number; quality: string }
+  { jobId: string; durationSeconds: number; quality: string; features?: DubFeatures }
 > {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ jobId, durationSeconds, quality }) => commitDub(jobId, durationSeconds, quality),
+    mutationFn: ({ jobId, durationSeconds, quality, features }) =>
+      commitDub(jobId, durationSeconds, quality, features),
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: qk.payments() })
     },
@@ -223,4 +238,56 @@ export function usePaymentsInvalidation(): void {
     window.addEventListener(CREDITS_CHANGED_EVENT, invalidate)
     return () => window.removeEventListener(CREDITS_CHANGED_EVENT, invalidate)
   }, [qc])
+}
+
+/**
+ * Credit a purchase the moment the buyer is back, wherever they land.
+ *
+ * While a checkout opened from this browser is recent (markCheckoutStarted),
+ * this claims when the app is shown again — focus, tab switch, Back from
+ * Lemon Squeezy (pageshow) — and every few seconds while visible. It stops as
+ * soon as a purchase is credited. The claim is idempotent server-side, so this
+ * racing the success page, the webhook or the cron pays out once.
+ */
+export function usePendingCheckoutClaim(signedIn: boolean): void {
+  const qc = useQueryClient()
+  const inFlight = useRef(false)
+  useEffect(() => {
+    if (!signedIn) return
+    const tryClaim = async () => {
+      if (inFlight.current || document.visibilityState !== 'visible') return
+      const startedAt = checkoutStartedAt()
+      if (startedAt === null) return
+      inFlight.current = true
+      try {
+        const res = await claimPurchases()
+        // Done when this call credited something, or something was credited
+        // since the checkout opened (by the webhook, the cron, another tab).
+        // An older purchase from earlier in the hour does not count.
+        const creditedSince = res.recent.some(
+          (r) => new Date(r.createdAt).getTime() >= startedAt - 60_000,
+        )
+        if (res.claimed || creditedSince) {
+          clearCheckoutStarted()
+          void qc.invalidateQueries({ queryKey: qk.payments() })
+        }
+      } catch {
+        /* LS unreachable for a moment — the next tick tries again */
+      } finally {
+        inFlight.current = false
+      }
+    }
+    void tryClaim()
+    const onVisible = () => void tryClaim()
+    window.addEventListener('focus', onVisible)
+    window.addEventListener('pageshow', onVisible)
+    document.addEventListener('visibilitychange', onVisible)
+    const timer = window.setInterval(() => void tryClaim(), 8000)
+    return () => {
+      window.removeEventListener('focus', onVisible)
+      window.removeEventListener('pageshow', onVisible)
+      document.removeEventListener('visibilitychange', onVisible)
+      window.clearInterval(timer)
+    }
+  }, [signedIn, qc])
 }

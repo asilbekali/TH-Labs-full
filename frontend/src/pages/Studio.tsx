@@ -35,6 +35,7 @@ import StatTile from "../components/studio/StatTile";
 import MagneticButton from "../components/MagneticButton";
 import Equalizer from "../components/studio/Equalizer";
 import VoicePicker, {
+  PlanLockBadge,
   voiceModeLabel,
   type VoiceMode,
 } from "../components/studio/VoicePicker";
@@ -76,8 +77,15 @@ import {
   estimateDubCost,
 } from "../lib/wallet";
 import {
+  PLAN_TIER_NAMES,
+  cheapestTierWith,
+  languageAllowed,
+  type PlanFeatures,
+} from "../lib/payments-api";
+import {
   useCanDub,
   useCommitDub,
+  useEntitlements,
   useHealth,
   useLanguages,
   usePlans,
@@ -200,6 +208,57 @@ export default function Studio() {
   const [lipSync, setLipSync] = useState(false);
   const [keepBackground, setKeepBackground] = useState(true);
   const [quality, setQuality] = useState("balanced");
+
+  // What this account's plan unlocks (Free: no lip sync, no Studio quality, …).
+  // The API enforces the same table on can-dub and commit-dub; this only keeps
+  // the controls honest. Until it loads — or on an API that predates it —
+  // nothing is locked here and the server decides.
+  const { data: entitlements } = useEntitlements(!!user);
+  const features = entitlements?.features;
+  const tierNames = entitlements?.tierNames ?? PLAN_TIER_NAMES;
+  // Name of the cheapest plan that unlocks something, for the lock badges.
+  const unlockName = (ok: (f: PlanFeatures) => boolean) =>
+    tierNames[cheapestTierWith(entitlements?.allTiers, ok)];
+  const canLipSync = features?.lipSync ?? true;
+  const canKeepBackground = features?.keepBackground ?? true;
+  const canReference = features?.referenceVoice ?? true;
+  const qualityAllowed = (q: string) => features?.qualities.includes(q) ?? true;
+  const voiceModeAllowed = (m: string) =>
+    features?.voiceModes.includes(m) ?? true;
+  const langAllowed = (code: string) => languageAllowed(features, code);
+
+  // Keep the state itself within the plan, so a value set before the plan was
+  // known — a default, a "duplicate settings" replay, a swap — is never sent.
+  useEffect(() => {
+    if (!features) return;
+    if (!features.qualities.includes(quality)) {
+      setQuality(
+        features.qualities.includes("balanced")
+          ? "balanced"
+          : (features.qualities[0] ?? "fast"),
+      );
+    }
+    if (!languageAllowed(features, targetLang)) {
+      const list = features.targetLanguages;
+      const fallback =
+        list === "all" || list.includes("uz") ? "uz" : (list[0] ?? "uz");
+      setTargetLang(fallback);
+    }
+    if (!features.voiceModes.includes(voiceMode)) {
+      setVoiceMode((features.voiceModes[0] ?? "both") as VoiceMode);
+    }
+    if (!features.lipSync && lipSync) setLipSync(false);
+    if (!features.keepBackground && keepBackground) setKeepBackground(false);
+    if (!features.referenceVoice && reference) setReference(null);
+  }, [
+    features,
+    quality,
+    targetLang,
+    voiceMode,
+    lipSync,
+    keepBackground,
+    reference,
+  ]);
 
   const [job, setJob] = useState<Job | null>(null);
   const [busy, setBusy] = useState(false);
@@ -396,6 +455,15 @@ export default function Studio() {
   const lastWork = works[0];
 
   async function start() {
+    // The options a plan can lock, as the gate checks them.
+    const dubFeatures = {
+      targetLang,
+      voiceMode,
+      voiceClone,
+      referenceVoice: !!reference,
+      keepBackground,
+      lipSync: lipSyncAvailable && lipSync,
+    };
     setError(null);
     setNeedsCredits(false);
     // Server-authoritative gate. Read-only — it charges nothing.
@@ -414,7 +482,11 @@ export default function Studio() {
       isSampleRun ? null : file,
     );
     try {
-      const gate = await canDubGate.mutateAsync({ durationSeconds, quality });
+      const gate = await canDubGate.mutateAsync({
+        durationSeconds,
+        quality,
+        features: dubFeatures,
+      });
       if (!gate.allowed) {
         setNeedsCredits(true);
         setError(
@@ -495,7 +567,12 @@ export default function Studio() {
         void refreshWallet();
       } else {
         commit
-          .mutateAsync({ jobId: created.id, durationSeconds, quality })
+          .mutateAsync({
+            jobId: created.id,
+            durationSeconds,
+            quality,
+            features: dubFeatures,
+          })
           .then((res) =>
             updateWork(created.id, { creditsSpent: res.charged ? res.cost : 0 }),
           )
@@ -1010,6 +1087,8 @@ export default function Studio() {
           <LanguageSelect
             label="Target language"
             languages={languages}
+            isLocked={(code) => !langAllowed(code)}
+            lockedNote={`${unlockName((f) => f.targetLanguages === "all")} — dub into every language`}
             value={targetLang}
             onChange={(v) => {
               setTargetLang(v);
@@ -1066,6 +1145,14 @@ export default function Studio() {
             markTouched("options");
           }}
           reference={reference}
+          isModeLocked={(m) => !voiceModeAllowed(m)}
+          lockTier={unlockName((f) => f.voiceModes.length > 1)}
+          referenceLockTier={unlockName((f) => f.referenceVoice)}
+          referenceLockedReason={
+            canReference
+              ? null
+              : `Dubbing in a different voice is part of the ${unlockName((f) => f.referenceVoice)} plan.`
+          }
           onReference={(f) => {
             setReference(f);
             markTouched("options");
@@ -1073,19 +1160,34 @@ export default function Studio() {
         />
         <OptionToggle
           checked={keepBackground}
+          disabled={!canKeepBackground}
+          badge={
+            canKeepBackground ? undefined : (
+              <PlanLockBadge tier={unlockName((f) => f.keepBackground)} />
+            )
+          }
           onChange={(v) => {
             setKeepBackground(v);
             markTouched("options");
           }}
           title="Keep background & effects"
-          description="Dub over the original music/ambience instead of replacing it; the original speech is removed (Demucs)."
+          description={
+            canKeepBackground
+              ? "Dub over the original music/ambience instead of replacing it; the original speech is removed (Demucs)."
+              : `Keeping the original music & effects is part of the ${unlockName((f) => f.keepBackground)} plan.`
+          }
           icon={
             <path d="M9 18V5l12-2v13M9 13l12-2M6 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0zm15-2a3 3 0 1 1-6 0 3 3 0 0 1 6 0z" />
           }
         />
         <OptionToggle
           checked={lipSyncAvailable && lipSync}
-          disabled={!lipSyncAvailable}
+          disabled={!lipSyncAvailable || !canLipSync}
+          badge={
+            canLipSync ? undefined : (
+              <PlanLockBadge tier={unlockName((f) => f.lipSync)} />
+            )
+          }
           onChange={(v) => {
             setLipSync(v);
             markTouched("options");
@@ -1093,9 +1195,11 @@ export default function Studio() {
           accent="magenta"
           title="Lip sync (optional)"
           description={
-            lipSyncAvailable
-              ? "Reshape the speaker's mouth to match the translated speech."
-              : "Not available on this deployment — dubs run without it."
+            !canLipSync
+              ? `Lip sync is part of the ${unlockName((f) => f.lipSync)} plan. Upgrade to reshape the speaker's mouth to the new speech.`
+              : lipSyncAvailable
+                ? "Reshape the speaker's mouth to match the translated speech."
+                : "Not available on this deployment — dubs run without it."
           }
           icon={<path d="M3 12c3-3 15-3 18 0-3 4-15 4-18 0zM7 12h10" />}
         />
@@ -1118,8 +1222,15 @@ export default function Studio() {
                 setQuality(q.key);
                 markTouched("quality");
               }}
-              disabled={running}
-              className="focusable relative flex-1 rounded-[10px] px-3 py-2 font-mono text-xs font-medium transition-colors"
+              disabled={running || !qualityAllowed(q.key)}
+              title={
+                qualityAllowed(q.key)
+                  ? undefined
+                  : `${q.label} quality is part of the ${unlockName((f) => f.qualities.includes(q.key))} plan`
+              }
+              className={`focusable relative flex-1 rounded-[10px] px-3 py-2 font-mono text-xs font-medium transition-colors ${
+                qualityAllowed(q.key) ? "" : "cursor-not-allowed opacity-50"
+              }`}
             >
               {/* One pill that slides between the three options — the same
                   element, so the movement is a layout animation rather than a
@@ -1132,9 +1243,15 @@ export default function Studio() {
                 />
               )}
               <span
-                className={`relative z-10 ${quality === q.key ? "text-brand" : "text-muted hover:text-primary"}`}
+                className={`relative z-10 inline-flex items-center gap-1 ${quality === q.key ? "text-brand" : "text-muted hover:text-primary"}`}
               >
                 {q.label}
+                {!qualityAllowed(q.key) && (
+                  <svg viewBox="0 0 24 24" className="h-3 w-3" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-label="Locked">
+                    <rect x="5" y="11" width="14" height="10" rx="2" />
+                    <path d="M8 11V7a4 4 0 0 1 8 0v4" />
+                  </svg>
+                )}
               </span>
             </button>
           ))}

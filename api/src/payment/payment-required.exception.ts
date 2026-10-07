@@ -32,3 +32,31 @@ export class PaymentRequiredException extends HttpException {
     );
   }
 }
+
+/**
+ * 402 with `reason: 'PLAN_UPGRADE_REQUIRED'` — the dub asks for something the
+ * caller's plan does not include (Studio quality on Free, lip sync, …).
+ *
+ * A 402 rather than a 403 on purpose: it IS a paywall, a real one, and the
+ * dubbing pipeline (backend/app/billing.py) forwards a 402's message to the
+ * user verbatim while turning any other 4xx into "try again later". A 403 here
+ * would tell someone on Free that the service is down.
+ */
+export class PlanUpgradeRequiredException extends HttpException {
+  constructor(payload: {
+    message: string;
+    feature: string;
+    currentTier: string;
+    requiredTier: string;
+  }) {
+    super(
+      {
+        statusCode: HttpStatus.PAYMENT_REQUIRED,
+        error: 'Payment Required',
+        reason: 'PLAN_UPGRADE_REQUIRED',
+        ...payload,
+      },
+      HttpStatus.PAYMENT_REQUIRED,
+    );
+  }
+}

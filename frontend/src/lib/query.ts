@@ -42,6 +42,7 @@ export const qk = {
   plans: () => ['payments', 'plans'] as const,
   creditPacks: () => ['payments', 'credit-packs'] as const,
   subscription: () => ['payments', 'subscription'] as const,
+  entitlements: () => ['payments', 'entitlements'] as const,
   credits: (page: number, limit: number) => ['payments', 'credits', page, limit] as const,
   history: (page: number, limit: number) => ['payments', 'history', page, limit] as const,
   // Prefixes covering every page of the two paginated billing queries — used to

@@ -7,8 +7,8 @@
 // Gmail rate-limited us. Callers that genuinely need to know pass
 // `{ throwOnError: true }` and get the transport error back.
 //
-// The automatic emails are community join, account signup, and the feedback
-// receipt. Each is a side effect of something the user did (see
+// The automatic emails are community join, account signup, the feedback
+// receipt, and the payment receipt. Each is a side effect of something the user did (see
 // sendCommunityWelcome / sendSignupWelcome / sendFeedbackReceipt); nothing here
 // is triggered by an API call.
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
@@ -19,6 +19,7 @@ import type { Transporter } from 'nodemailer';
 import {
   communityWelcomeTemplate,
   feedbackReceiptTemplate,
+  paymentReceiptTemplate,
   renderEmail,
   renderText,
   signupWelcomeTemplate,
@@ -178,6 +179,19 @@ export class MailService implements OnModuleInit {
       email,
       subject: `▶ Message received — thanks, ${name}`,
       ...feedbackReceiptTemplate(name, this.appUrl),
+    });
+  }
+
+  /** A purchase was confirmed and credited. Sent once per order or renewal. */
+  sendPaymentReceipt(
+    email: string,
+    name: string,
+    payment: Parameters<typeof paymentReceiptTemplate>[2],
+  ): Promise<SendMailResult> {
+    return this.sendMail({
+      email,
+      subject: `▶ Payment received — ${payment.creditsGranted.toLocaleString('en-US')} credits added`,
+      ...paymentReceiptTemplate(name, this.appUrl, payment),
     });
   }
 

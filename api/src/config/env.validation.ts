@@ -10,8 +10,9 @@
 // loudly at boot, and GET /v1/admin/billing/overview reports it as
 // `canGrantCredits`.
 //
-// There is deliberately no webhook secret here yet. Purchases are confirmed by
-// reading orders back from Lemon Squeezy. See src/payment/lemonsqueezy.service.ts.
+// LEMONSQUEEZY_WEBHOOK_SECRET is optional too. With it, the LS webhook
+// (POST /v1/payments/webhook) credits a purchase the moment it is paid; without
+// it, purchases are still credited by the success page and the cron.
 import { Logger } from '@nestjs/common';
 
 type RawEnv = Record<string, string | undefined>;
@@ -58,6 +59,11 @@ export interface AppEnv {
    * shared across stores can never credit an order from the wrong one.
    */
   LEMONSQUEEZY_STORE_ID?: string;
+  /**
+   * Signing secret of the LS webhook (Settings → Webhooks). Turns on
+   * POST /v1/payments/webhook, which credits a purchase the instant it is paid.
+   */
+  LEMONSQUEEZY_WEBHOOK_SECRET?: string;
 
   // ── Audit log ────────────────────────────────────────────────────────────
   /** 'true' records GET reads as well as mutations. A lot of rows. */
@@ -121,6 +127,8 @@ export function validateEnv(config: RawEnv): AppEnv {
 
     LEMONSQUEEZY_API_KEY: lsKey || undefined,
     LEMONSQUEEZY_STORE_ID: lsStore || undefined,
+    LEMONSQUEEZY_WEBHOOK_SECRET:
+      config.LEMONSQUEEZY_WEBHOOK_SECRET?.trim() || undefined,
 
     AUDIT_LOG_READS: config.AUDIT_LOG_READS?.trim() === 'true',
     AUDIT_LOG_RETENTION_DAYS: toInt(config.AUDIT_LOG_RETENTION_DAYS, 90),

@@ -1,5 +1,15 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsIn, IsNumber, Max, Min } from 'class-validator';
+import { ApiPropertyOptional } from '@nestjs/swagger';
+import {
+  IsBoolean,
+  IsIn,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Matches,
+  Max,
+  Min,
+} from 'class-validator';
 
 // `durationSeconds` is a REAL number, not an integer.
 //
@@ -31,9 +41,50 @@ export class CanDubDto {
   // 400'd at the charge — a gate that says yes and a charge that says no.
   @IsIn(['fast', 'balanced', 'studio'])
   quality!: string;
+
+  // The Studio options a plan can lock (see plan-features.ts). Optional, so an
+  // older caller that sends only the quality — the dubbing pipeline does — is
+  // still checked on the quality and not refused for what it did not send.
+  @ApiPropertyOptional({
+    example: 'uz',
+    description: 'Target language code — the Free plan dubs into Turkic ones',
+  })
+  @IsOptional()
+  @IsString()
+  @Matches(/^[a-z]{2,3}$/i)
+  targetLang?: string;
+
+  @ApiPropertyOptional({ enum: ['both', 'speaker', 'native'] })
+  @IsOptional()
+  @IsIn(['both', 'speaker', 'native'])
+  voiceMode?: string;
+
+  @ApiPropertyOptional({
+    description: 'Clone the speaker voice (older callers; false = native mode)',
+  })
+  @IsOptional()
+  @IsBoolean()
+  voiceClone?: boolean;
+
+  @ApiPropertyOptional({ description: 'Dub in an uploaded reference voice' })
+  @IsOptional()
+  @IsBoolean()
+  referenceVoice?: boolean;
+
+  @ApiPropertyOptional({ description: 'Keep background music & effects' })
+  @IsOptional()
+  @IsBoolean()
+  keepBackground?: boolean;
+
+  @ApiPropertyOptional({ description: 'Lip sync the speaker' })
+  @IsOptional()
+  @IsBoolean()
+  lipSync?: boolean;
 }
 
 export type CanDubReason = 'INSUFFICIENT_CREDITS' | null;
+
+export type PlanTierName = 'FREE' | 'PRO' | 'STUDIO';
 
 export interface CanDubResult {
   /**
@@ -61,4 +112,6 @@ export interface CanDubResult {
   affordableSeconds: number;
   /** The tariff used, so a caller can explain the number it was given. */
   creditsPerMinute: number;
+  /** The plan the request was checked against. */
+  tier: PlanTierName;
 }
