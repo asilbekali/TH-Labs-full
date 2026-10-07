@@ -21,6 +21,7 @@ import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+from pydantic import BaseModel
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
@@ -120,11 +121,13 @@ async def create_job(
     target_lang: str = Form(...),
     source_lang: str = Form("auto"),
     voice_clone: bool = Form(True),
+    voice_mode: str | None = Form(None),
     lip_sync: bool = Form(False),
     keep_background: bool = Form(True),
     quality: Quality = Form(Quality.balanced),
     sample: bool = Form(False),
     file: UploadFile | None = File(None),
+    reference: UploadFile | None = File(None),
     source_url: str | None = Form(None),
     user: StudioUser = Depends(require_user),
 ) -> dict:
@@ -138,6 +141,9 @@ async def create_job(
     if not languages.get(target_lang):
         raise HTTPException(400, f"Unsupported target language: {target_lang}")
 
+    if voice_mode not in (None, "", "speaker", "native", "both"):
+        raise HTTPException(400, f"Unknown voice mode: {voice_mode}")
+
     source_url = (source_url or "").strip() or None
     if file is not None and source_url:
         raise HTTPException(
@@ -145,7 +151,8 @@ async def create_job(
 
     options = DubOptions(
         source_lang=source_lang, target_lang=target_lang,
-        voice_clone=voice_clone, lip_sync=lip_sync,
+        voice_clone=voice_clone, voice_mode=voice_mode or None,
+        lip_sync=lip_sync,
         keep_background=keep_background, quality=quality,
     )
 
@@ -214,6 +221,16 @@ async def create_job(
             while chunk := await file.read(_UPLOAD_CHUNK):
                 out.write(chunk)
         filename = file.filename
+
+    # An optional voice to dub in, instead of the speaker from the video.
+    # Any format ffmpeg reads; it is trimmed and transcribed at use.
+    reference_path: Path | None = None
+    if reference is not None and reference.filename:
+        suffix = Path(reference.filename).suffix or ".wav"
+        reference_path = settings.uploads_dir / f"ref_{_safe_id()}{suffix}"
+        with reference_path.open("wb") as out:
+            while chunk := await reference.read(_UPLOAD_CHUNK):
+                out.write(chunk)
 
     # ── Credit gate ───────────────────────────────────────────────────────
     # Runs here, not only in the Studio: a bearer token proves who is asking,
@@ -291,7 +308,8 @@ async def create_job(
 
     job = manager.create(options, input_video, scenario, filename,
                          owner_id=user.id, force_simulate=force_simulate,
-                         job_id=job_id, billing=job_billing)
+                         job_id=job_id, billing=job_billing,
+                         reference_audio=reference_path)
 
     return {"id": job.id, "job": job.model_dump(mode="json")}
 
@@ -314,6 +332,65 @@ def _owned_job(job_id: str, user: StudioUser):
 def get_job(job_id: str, user: StudioUser = Depends(require_user)) -> dict:
     job = _owned_job(job_id, user)
     return {"job": job.model_dump(mode="json")}
+
+
+class SegmentEdit(BaseModel):
+    id: int
+    target_text: str
+
+
+class RevoiceRequest(BaseModel):
+    """Edited target-language lines, keyed by the segment id they replace."""
+    segments: list[SegmentEdit]
+
+
+@app.post("/api/jobs/{job_id}/revoice")
+async def revoice_job(
+    job_id: str,
+    body: RevoiceRequest,
+    user: StudioUser = Depends(require_user),
+) -> dict:
+    """Re-voice a finished job with the user's corrected translation.
+
+    Only the TARGET text is editable. The source transcript is what Whisper
+    heard, and letting it be rewritten would make the two columns disagree about
+    the same audio without changing what anyone hears — the dub is synthesized
+    from the target side alone.
+
+    This starts a NEW job so the original stays intact and playable while the
+    corrected one renders. It reuses the stored source video and skips ASR and
+    NMT, going straight to synthesis; no credits are charged, because fixing a
+    bad translation is a correction rather than a second dub.
+    """
+    job = _owned_job(job_id, user)
+    source = manager.source_video(job_id)
+    if source is None or not source.exists():
+        raise HTTPException(
+            410, "The source video for this job is no longer on the server, "
+                 "so it cannot be re-voiced. Upload it again to make edits.")
+    if not job.result.segments:
+        raise HTTPException(400, "This job has no transcript to edit.")
+
+    edits = {e.id: e.target_text.strip() for e in body.segments}
+    segments = [seg.model_copy(deep=True) for seg in job.result.segments]
+    changed = 0
+    for seg in segments:
+        new_text = edits.get(seg.id)
+        if new_text and new_text != (seg.target_text or ""):
+            seg.target_text = new_text
+            changed += 1
+    if not changed:
+        raise HTTPException(400, "None of the lines differ from the current "
+                                 "translation.")
+    if not any((s.target_text or "").strip() for s in segments):
+        raise HTTPException(400, "The edited translation is empty.")
+
+    new_job = manager.create(job.options, source, "lecture", job.filename,
+                             owner_id=user.id, preset_segments=segments,
+                             reference_audio=manager.reference_audio(job_id))
+    new_job.result.detected_source_lang = job.result.detected_source_lang
+    return {"id": new_job.id, "job": new_job.model_dump(mode="json"),
+            "edited_lines": changed}
 
 
 @app.get("/api/jobs/{job_id}/events")

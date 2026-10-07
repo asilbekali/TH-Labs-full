@@ -22,7 +22,7 @@ from pathlib import Path
 
 from ..config import get_settings
 from ..schemas import Segment
-from . import media
+from . import media, timeline
 
 SAMPLE_RATE = 24_000  # OmniVoice output sample rate
 
@@ -41,14 +41,109 @@ MIN_FITTED_SLOT = 0.35  # seconds
 # default is to pass the code straight through. This table holds the
 # exceptions plus the three primary targets, spelled out deliberately:
 OMNIVOICE_LANG: dict[str, str] = {
-    "uz": "uz",    # Uzbek — NLLB emits uzn_Latn (Northern Uzbek, Latin).
-                   # "uzn" is also in OmniVoice's table if you want to pin the
-                   # narrower variant; "uz" is the generic and is what we send.
+    "uz": "uzn",   # Uzbek — the NARROW variant: Northern Uzbek, Latin script,
+                   # which is what NLLB emits (uzn_Latn). The generic "uz" is
+                   # also in OmniVoice's table and was used until listening
+                   # comparison preferred "uzn". Noting the disagreement, since
+                   # it is the sort of thing someone will re-measure: an ASR
+                   # round-trip over identical text scored "uz" better (CER
+                   # 0.258 vs 0.294 with whisper-small forced to Uzbek). That
+                   # proxy is weak here — a native Uzbek voice speaking the
+                   # same text only reached 0.228, so the measurement floor
+                   # sits near the differences being compared — and a human
+                   # listening to the audio is the better judge of how a voice
+                   # pronounces a language.
     "ru": "ru",    # Russian — Cyrillic, matches NLLB's rus_Cyrl output.
     "en": "en",    # English.
     "ar": "arb",   # EXCEPTION: OmniVoice has no generic "ar", only variants
                    # (arb/arz/ary/...). arb = Modern Standard Arabic.
 }
+
+
+def dub_text(seg: Segment, same_language: bool = False) -> str:
+    """The text to voice for a segment — its translation, and nothing else.
+
+    Both engines used to fall back to `source_text` when a line had no
+    translation, which voices the ORIGINAL sentence in the cloned ORIGINAL
+    voice: indistinguishable, to a listener, from the source leaking through.
+    A missing translation is now a silent gap. So is a "translation" that is
+    the source copied verbatim (NMT copy-through), unless the job really is
+    same-language."""
+    target = (seg.target_text or "").strip()
+    if not target:
+        return ""
+    if not same_language:
+        norm = lambda t: " ".join(t.lower().split())
+        if norm(target) == norm(seg.source_text or ""):
+            return ""
+    return target
+
+
+# Clips shorter than this are not language-checked: Whisper's language ID needs
+# about a second of speech to say anything reliable.
+MIN_CHECKED_SECONDS = 1.0
+
+
+# Whisper's language ID cannot tell these apart — asked about real Uzbek it
+# answers "az" (see stt_gigaam.DETECTED_AS) — so a language in this group is
+# scored as the whole group. Turkish stays out: Whisper identifies it reliably.
+_TURKIC = frozenset({"uz", "kk", "ky", "az", "tk", "tt", "ba"})
+
+
+def _family(code: str) -> frozenset[str]:
+    return _TURKIC if code in _TURKIC else frozenset({code})
+
+
+def speaks_source(probs: dict[str, float] | None, source: str | None,
+                  target: str | None) -> bool:
+    """True when Whisper's language ID hears the SOURCE language, confidently
+    and more than the target. Unknown/same languages never trip it, and
+    neither does a pair Whisper cannot separate (uz -> kk)."""
+    if not probs or not source or not target or source == target \
+            or source == "auto":
+        return False
+    src, tgt = _family(source), _family(target)
+    if src & tgt:
+        return False
+    p_src = sum(probs.get(c, 0.0) for c in src)
+    p_tgt = sum(probs.get(c, 0.0) for c in tgt)
+    return p_src > 0.5 and p_src > p_tgt
+
+
+# Window for checking a generated line. Reference leakage puts a few source
+# words at the HEAD of a line and the target after them, so one verdict over
+# the whole clip is outvoted by the target and passes — measured: every line
+# passed whole-clip checks while 4.2 s of a 29 s dub was still English.
+CHECK_WINDOW_SECONDS = 2.5
+CHECK_HOP_SECONDS = 1.25
+# Windows quieter than this fraction of the clip's RMS are skipped: Whisper's
+# language ID calls near-silence "en", which would regenerate good lines.
+CHECK_MIN_RELATIVE_RMS = 0.3
+
+
+def source_heard(clip, sample_rate: int, language_probs, source: str | None,
+                 target: str | None) -> bool:
+    """True if ANY speech window of `clip` is heard in the source language."""
+    import numpy as np
+
+    x = np.asarray(clip, dtype=np.float32).reshape(-1)
+    win = int(CHECK_WINDOW_SECONDS * sample_rate)
+    hop = int(CHECK_HOP_SECONDS * sample_rate)
+    if x.shape[0] <= win:
+        starts = [0]
+    else:
+        starts = list(range(0, x.shape[0] - win + 1, hop))
+        if starts[-1] != x.shape[0] - win:
+            starts.append(x.shape[0] - win)
+    rms = lambda a: float(np.sqrt(np.mean(np.square(a)))) if a.size else 0.0
+    floor = CHECK_MIN_RELATIVE_RMS * rms(x)
+    for st in starts:
+        w = x[st:st + win]
+        if rms(w) < floor:
+            continue
+        if speaks_source(language_probs(w, sample_rate), source, target):
+            return True
+    return False
 
 
 def resolve_language(code: str | None) -> str | None:
@@ -113,59 +208,121 @@ class OmniVoiceTTS:
     def synthesize(self, segments: list[Segment], ref_audio: Path | None,
                    ref_text: str | None, voice_clone: bool,
                    out_audio: Path, total_duration: float | None,
-                   target_lang: str | None = None) -> bool:
+                   target_lang: str | None = None,
+                   source_lang: str | None = None,
+                   language_probs=None) -> bool:
         """Synthesize each translated segment and lay it on a timeline that
         matches the source timing, then write a 24 kHz WAV for the sync stage.
 
         `target_lang` is the app language code (e.g. "uz"); it is mapped to an
         OmniVoice identifier and passed per segment so the text is voiced with
         the right phonetics instead of the model guessing.
+
+        `language_probs(clip, sample_rate) -> {code: p}` (Whisper language ID)
+        checks every generated line. Zero-shot cloning can speak the
+        reference's language instead of the target's; a line heard in the
+        SOURCE language is regenerated, then regenerated without cloning, and
+        dropped if it still fails. What happened is left in `self.last_stats`.
         """
         import numpy as np
         import soundfile as sf
 
         model = self._load()
-        clone = bool(voice_clone and ref_audio and Path(ref_audio).exists())
+        clone = bool(voice_clone and ref_audio and Path(ref_audio).exists()
+                     and (ref_text or "").strip())
         ref = str(ref_audio) if clone else None
         language = resolve_language(target_lang)
+        same_language = bool(source_lang and source_lang == target_lang)
+        stats = {"lines": 0, "untranslated_skipped": 0, "checked": 0,
+                 "regenerated": 0, "unclone_fallback": 0, "dropped": 0}
+        self.last_stats = stats
 
-        total = total_duration or (segments[-1].end if segments else 1.0)
-        buf = np.zeros(int(total * SAMPLE_RATE) + SAMPLE_RATE, dtype=np.float32)
-
+        lines: list[tuple[Segment, str]] = []
         for seg in segments:
-            text = (seg.target_text or seg.source_text or "").strip()
-            if not text:
-                continue
-            # Fit the clip to its source slot so dubbed segments don't overrun
-            # into the next one. OmniVoice targets the duration during
-            # generation, which beats synthesising then time-stretching with
-            # ffmpeg (what the edge-tts path has to do).
-            #
-            # Measured: it's a SOFT target. Asking it to compress is accurate
-            # (3.0 s requested -> 3.11 s), but it will not pad to fill a longer
-            # slot (5.0 s requested -> 4.53 s). That asymmetry suits dubbing:
-            # overruns are what break timing, and undershooting just leaves a
-            # short gap. Very short slots keep the model's own estimate rather
-            # than forcing a rush.
-            slot = seg.end - seg.start
+            text = dub_text(seg, same_language)
+            if text:
+                lines.append((seg, text))
+            elif (seg.source_text or "").strip():
+                stats["untranslated_skipped"] += 1
+        stats["lines"] = len(lines)
+        total = total_duration or (segments[-1].end if segments else 1.0)
+
+        # Each clip gets a budget from `timeline`, exactly as the edge-tts path
+        # does, and is placed against a cursor so it cannot land on top of the
+        # line after it. Generation is sequential here, so the budget is
+        # computed one line at a time rather than planned up front.
+        #
+        # The duration argument is a SOFT target — measured, asking OmniVoice to
+        # compress is accurate (3.0 s requested -> 3.11 s) but it will not pad to
+        # fill a longer slot (5.0 s -> 4.53 s). Undershooting only leaves a short
+        # gap; overrunning is what used to put two dubbed voices in the same
+        # samples, so `cut_to` bounds it whatever the model returns.
+        placements: list[tuple[int, "np.ndarray"]] = []
+        cursor = 0.0
+        for i, (seg, text) in enumerate(lines):
+            due_next = (lines[i + 1][0].start if i + 1 < len(lines)
+                        else max(total, seg.end))
+            at, target, limit = timeline.slot_budget(
+                max(0.0, seg.start), seg.end, due_next, cursor)
             kwargs: dict = {"text": text}
             if language:
                 kwargs["language"] = language
-            if slot >= MIN_FITTED_SLOT:
-                kwargs["duration"] = slot
+            # Very short slots keep the model's own estimate rather than being
+            # forced into a rush.
+            if target >= MIN_FITTED_SLOT:
+                kwargs["duration"] = target
             if ref:
                 kwargs["ref_audio"] = ref
                 kwargs["ref_text"] = ref_text or ""
-            out = model.generate(**kwargs)
-            clip = np.asarray(out[0], dtype=np.float32).reshape(-1)
-            start = int(max(0.0, seg.start) * SAMPLE_RATE)
-            end = start + clip.shape[0]
-            if end > buf.shape[0]:
-                buf = np.pad(buf, (0, end - buf.shape[0]))
-            buf[start:end] += clip
 
+            # Attempts, in order: as configured; again without the duration
+            # target (squeezing a long translation into a short slot is when
+            # the model is likeliest to fall back on the reference); then with
+            # no reference at all — a generic voice in the right language beats
+            # the right voice in the wrong one.
+            attempts = [dict(kwargs)]
+            if "duration" in kwargs:
+                attempts.append({k: v for k, v in kwargs.items() if k != "duration"})
+            if ref:
+                attempts.append({k: v for k, v in kwargs.items()
+                                 if k not in ("ref_audio", "ref_text")})
+            clip = None
+            for n, attempt in enumerate(attempts):
+                out = model.generate(**attempt)
+                cand = np.asarray(out[0], dtype=np.float32).reshape(-1)
+                if (language_probs is None
+                        or cand.shape[0] < MIN_CHECKED_SECONDS * SAMPLE_RATE):
+                    clip = cand
+                    break
+                stats["checked"] += 1
+                try:
+                    heard = source_heard(cand, SAMPLE_RATE, language_probs,
+                                         source_lang, target_lang)
+                except Exception:
+                    heard = False         # a broken check must not block the dub
+                if not heard:
+                    clip = cand
+                    if n:
+                        stats["regenerated"] += 1
+                        if "ref_audio" not in attempt and ref:
+                            stats["unclone_fallback"] += 1
+                    break
+            if clip is None:
+                stats["dropped"] += 1     # every attempt spoke the source
+                continue
+            clip = timeline.cut_to(clip, int(limit * SAMPLE_RATE), SAMPLE_RATE)
+            if not clip.shape[0]:
+                continue
+            placements.append((int(at * SAMPLE_RATE), clip))
+            cursor = at + clip.shape[0] / SAMPLE_RATE
+
+        end = max((s + len(c) for s, c in placements),
+                  default=int(total * SAMPLE_RATE))
+        buf = np.zeros(max(end, int(total * SAMPLE_RATE)) + SAMPLE_RATE,
+                       dtype=np.float32)
+        timeline.write_without_overlap(buf, placements)
         peak = float(np.max(np.abs(buf))) if buf.size else 0.0
-        if peak > 1.0:                      # prevent clipping from overlaps
+        if peak > 1.0:
             buf = buf / peak
         sf.write(str(out_audio), buf, SAMPLE_RATE)
         return Path(out_audio).exists()

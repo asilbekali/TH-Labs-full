@@ -10,12 +10,16 @@ so the rest of the pipeline stays fully functional.
 """
 from __future__ import annotations
 
+import logging
+
 from pathlib import Path
 
 from ..config import get_settings
 from ..schemas import Segment
 from . import samples
 from .vad import SileroVAD
+
+log = logging.getLogger(__name__)
 
 
 class WhisperSTT:
@@ -58,6 +62,72 @@ class WhisperSTT:
         with self._lock:
             self._models.clear()
         _free_cuda()
+
+    def detect_language(self, audio: Path, model_name: str = "base") -> str | None:
+        """Identify the spoken language from the first 30 s, without decoding.
+
+        Needed because engine selection happens before transcription: a source
+        set to "auto" has to be resolved to a language before the pipeline can
+        tell whether GigaAM or Whisper should handle it. One forward pass on a
+        single window with the smallest model, so the answer is cheap even
+        though it is thrown away for anything Whisper goes on to transcribe
+        itself.
+
+        Returns None if detection fails; callers should fall back to Whisper,
+        which does its own detection while decoding.
+        """
+        try:
+            import whisper
+            model = self._load(model_name)
+            clip = whisper.pad_or_trim(whisper.load_audio(str(audio)))
+            mel = whisper.log_mel_spectrogram(
+                clip, getattr(model.dims, "n_mels", 80)).to(model.device)
+            _, probs = model.detect_language(mel)
+            if isinstance(probs, list):
+                probs = probs[0]
+            return max(probs, key=probs.get) if probs else None
+        except Exception as exc:
+            log.warning("language detection failed (%s)", type(exc).__name__)
+            return None
+
+    def speech_regions(self, audio: Path) -> list[tuple[float, float]] | None:
+        """VAD speech intervals, or None when VAD is unavailable.
+
+        Exposed so another engine can segment against the same regions this one
+        gates itself with, instead of computing them twice.
+        """
+        if not self._vad.available():
+            return None
+        try:
+            return self._vad.speech_regions(audio)
+        except Exception:
+            return None
+
+    def language_probs(self, audio, sample_rate: int,
+                       model_name: str | None = None) -> dict[str, float]:
+        """Whisper language ID on an in-memory mono clip → {code: probability}.
+
+        One encoder pass and a single decoder step, so it is cheap enough to
+        run on every generated TTS line. Reuses whichever Whisper model is
+        already resident rather than loading another."""
+        import numpy as np
+        import whisper
+        from scipy.signal import resample_poly
+
+        if model_name is None and self._models:
+            model = next(iter(self._models.values()))
+        else:
+            model = self._load(model_name or "small")
+        x = np.asarray(audio, dtype=np.float32).reshape(-1)
+        if sample_rate != 16000:
+            from math import gcd
+            g = gcd(16000, sample_rate)
+            x = resample_poly(x, 16000 // g, sample_rate // g).astype(np.float32)
+        import torch
+        seg = whisper.pad_or_trim(torch.from_numpy(x))
+        mel = whisper.log_mel_spectrogram(seg, model.dims.n_mels).to(model.device)
+        _, probs = model.detect_language(mel)
+        return {k: float(v) for k, v in probs.items()}
 
     # ── real transcription (VAD-gated) ────────────────────────────────────
     def transcribe(self, audio: Path, source_lang: str,

@@ -40,6 +40,7 @@ export default function OptionToggle({
       type="button"
       role="switch"
       aria-checked={checked}
+      aria-disabled={disabled}
       disabled={disabled}
       onClick={() => {
         if (disabled) return

@@ -81,6 +81,19 @@ class Settings(BaseSettings):
     whisper_device: str = "auto"           # auto|cuda|cpu
     whisper_compute_type: str = "auto"     # e.g. float16 / int8
 
+    # ── ASR · GigaAM Multilingual (Turkic + Russian) ──────────────────────
+    # A second ASR engine for the languages Whisper cannot transcribe. Measured
+    # on clean synthesized Uzbek against a known transcript: whisper small and
+    # large-v3 both 80% WER, GigaAM large_ctc 0% — and 25x faster. English is
+    # deliberately NOT routed here; Whisper is more than twice as accurate on it
+    # (3.9 vs 9.4 on FLEURS, GigaAM's own figures). See pipeline/stt_gigaam.py.
+    gigaam_enabled: bool = True
+    gigaam_model: str = "ai-sage/GigaAM-Multilingual"
+    gigaam_revision: str = "large_ctc"   # ctc = 220M, large_ctc = 600M
+    # Which source languages it handles. Comma-separated so a deployment can
+    # widen or narrow it without a code change.
+    gigaam_languages: str = "uz,kk,ky,ru"
+
     # ── VAD · silero-vad ──────────────────────────────────────────────────
     # Gates ASR to real speech regions so Whisper doesn't hallucinate text on
     # music/silence (and so "no speech" is reported honestly, not faked).
@@ -103,18 +116,53 @@ class Settings(BaseSettings):
     # media.mix_voice_over_background).
     background_gain: float = 0.25
 
-    # How much quieter the no_vocals stem must be than the vocals stem before
-    # we conclude there is no real music bed and go voice-only. Guards against
-    # mixing separation residue — i.e. the source language — back under the
-    # dub. Measured on a real speech-only clip the gap was 11.3 dB; a genuine
-    # music bed sits at or above the vocals level, so 8 dB separates the two
-    # cases with margin. Raise it to keep more background, lower it to be
+    # How much louder the no_vocals stem may get while the original speaker is
+    # talking before we conclude it is carrying the source dialogue rather than
+    # a music bed, and go voice-only. See separation.speech_lift_db: a real M&E
+    # bed is indifferent to the speech and measures around 0 dB, while a stem
+    # holding the speaker measured +26.4 dB on a real job. 6 dB sits in the wide
+    # gap between those. Raise it to keep more background, lower it to be
     # stricter about source-language bleed.
-    background_min_lead_db: float = 8.0
+    background_max_speech_lift_db: float = 6.0
     voice_gain: float = 1.25             # dubbed voice level
+
+    # ── Original-voice bleed suppression (pipeline/bleed.py) ──────────────
+    # No separator removes speech completely, and the residue sits exactly
+    # where the ORIGINAL speaker talked — not where the dub talks (the dub is
+    # usually shorter). So the kept background is gated over the original
+    # speech windows: the speech band (bleed_band_*_hz) is cut hard there,
+    # the rest of the spectrum only lightly, so bass and drums carry through.
+    bleed_gate_band_db: float = -30.0    # speech band inside speech windows
+    bleed_gate_full_db: float = -6.0     # whole bed inside speech windows
+    bleed_band_low_hz: float = 250.0
+    bleed_band_high_hz: float = 4500.0
+    bleed_gate_pad_s: float = 0.15       # widen each window on both sides
+    bleed_gate_fade_s: float = 0.08      # ramp in/out so the cut never clicks
+    # After gating, the bed is checked for surviving speech (VAD, confirmed by
+    # Whisper in the source language). More than this many transcribed words
+    # escalates to a full-band cut; still failing → the background is dropped
+    # and the dub goes out voice-only. 0 disables the check.
+    bleed_max_words: int = 3
+    bleed_strict_db: float = -40.0       # escalation: full band, all windows
 
     # ── NMT · NLLB-200 ────────────────────────────────────────────────────
     nmt_model: str = "facebook/nllb-200-distilled-600M"
+
+    # ── Translation repair ────────────────────────────────────────────────
+    # A second pass over segments NLLB rendered badly — copied through
+    # untranslated, truncated, looping, or impossibly long. Only those segments
+    # are sent anywhere; see pipeline/refine.py for the tests and for why every
+    # failure here keeps the original translation.
+    #
+    # The key is NEVER a literal in this file. It arrives from the environment,
+    # which on Modal means a Secret (see deploy/modal/modal_app.py) and locally
+    # means TH_LABS_REFINE_API_KEY. Unset, the whole stage is inert and the
+    # pipeline behaves exactly as it did before.
+    refine_enabled: bool = True
+    refine_api_key: str = ""
+    refine_base_url: str = "https://api.deepseek.com/v1"
+    refine_model: str = "deepseek-chat"
+    refine_timeout: int = 25             # seconds per request
 
     # ── Voice cloning · OpenVoice v2 tone-color converter ─────────────────
     # Clones the source speaker's timbre onto the edge-tts output — real voice

@@ -40,9 +40,30 @@ class OpenVoiceCloner:
                 and ckpt.exists())
 
     def _build(self, device: str):
-        from openvoice.api import ToneColorConverter
+        """Construct the tone-colour converter with watermarking off.
+
+        `ToneColorConverter(..., enable_watermark=False)` is the documented way
+        to do this and does not work: its __init__ reads that keyword out of
+        kwargs and then forwards the same kwargs to a base class that rejects
+        it, so the call raises before it can be honoured.
+
+        Everything ToneColorConverter adds over its base is the two lines
+        reproduced below — load a watermark model, record a version — so this
+        does that directly, keeping the watermark model unset. The alternative
+        was installing `wavmark` and letting it stamp an inaudible watermark on
+        every dub, plus another model download at runtime, for a feature
+        nothing here wants.
+        """
+        from openvoice.api import OpenVoiceBaseClass, ToneColorConverter
         s = get_settings()
-        conv = ToneColorConverter(
+
+        class _Unwatermarked(ToneColorConverter):
+            def __init__(self, *args, **kwargs):
+                OpenVoiceBaseClass.__init__(self, *args, **kwargs)
+                self.watermark_model = None
+                self.version = getattr(self.hps, "_version_", "v1")
+
+        conv = _Unwatermarked(
             str(s.openvoice_converter_dir / "config.json"), device=device)
         conv.load_ckpt(str(s.openvoice_converter_dir / "checkpoint.pth"))
         return conv
@@ -99,15 +120,14 @@ class OpenVoiceCloner:
             if not chunks:             # short track → single pass
                 src = self._se(base_audio)
                 self._conv.convert(audio_src_path=str(base_audio), src_se=src,
-                                   tgt_se=tgt, output_path=str(out_audio),
-                                   message="@TH-Labs")
+                                   tgt_se=tgt, output_path=str(out_audio))
                 return [out_audio] if out_audio.exists() else []
             src = self._se(chunks[0])  # source voice embedding from first chunk
             outs = []
             for ch in chunks:
                 o = ch.with_name(ch.stem + "_c.wav")
                 self._conv.convert(audio_src_path=str(ch), src_se=src, tgt_se=tgt,
-                                   output_path=str(o), message="@TH-Labs")
+                                   output_path=str(o))
                 if o.exists():
                     outs.append(o)
             return outs

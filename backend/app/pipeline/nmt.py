@@ -11,10 +11,42 @@ sample translations (and falls back to the source text for unseen content).
 """
 from __future__ import annotations
 
+import html
+import re
+
 from ..config import get_settings
 from ..languages import get as get_lang
 from ..schemas import Segment
 from . import samples
+
+
+# NLLB's training data was Moses-tokenized and escaped, so the model emits those
+# escapes verbatim: an apostrophe comes back as `&apos;`, an ampersand as
+# `&amp;`, and the two compose into `&amp;apos;`. Seen in a real Uzbek-to-English
+# dub as "Habu &amp;apos;am is a guest-friend", shown to the viewer exactly like
+# that. The same tokenization also detaches punctuation and clitics — "Let ' s
+# take a look", "We 've been working on it ." — which a TTS engine then reads
+# with the gaps in place.
+#
+# Both are artefacts of how the text was written down rather than of what was
+# translated, so they are undone here instead of being left for every consumer
+# of target_text to trip over.
+def _detokenize(text: str) -> str:
+    """Undo Moses escaping and punctuation spacing in an NLLB output."""
+    text = text.strip()
+    # `&amp;apos;` needs two passes; bounded, so a pathological run of escapes
+    # cannot spin here.
+    for _ in range(3):
+        once = html.unescape(text)
+        if once == text:
+            break
+        text = once
+    text = re.sub(r"\s+([,.!?;:%])", r"\g<1>", text)
+    # "Let ' s" -> "Let's", and in Uzbek "o ' z" -> "o'z", where the apostrophe
+    # is a letter rather than punctuation.
+    text = re.sub(r"\s+'\s*(\w)", "'" + r"\g<1>", text)
+    text = re.sub(r"\(\s+", "(", text)
+    return re.sub(r"\s{2,}", " ", text).strip()
 
 
 class NLLBTranslator:
@@ -94,7 +126,7 @@ class NLLBTranslator:
                 num_beams=4, length_penalty=1.0, no_repeat_ngram_size=3)
             out = self._tok.batch_decode(gen, skip_special_tokens=True)
             for seg, txt in zip(chunk, out):
-                seg.target_text = txt.strip()
+                seg.target_text = _detokenize(txt)
         return segments
 
     # ── simulation ────────────────────────────────────────────────────────
