@@ -79,6 +79,9 @@
   --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI',
     Roboto, Helvetica, Arial, sans-serif;
   --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', 'Fira Code', monospace;
+  /* Editorial serif for headlines and big figures — the receipt email's face.
+     System fonts only, so nothing extra to download. */
+  --font-display: Georgia, 'Times New Roman', Times, serif;
 
   /* Semantic colors — resolved from the channel triplets defined per theme.
      Defined as plain colors (no <alpha-value>); Tailwind v4 applies /opacity

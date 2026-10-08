@@ -31,9 +31,11 @@ import { pipelineDown } from '../lib/api'
 import WorkThumb from '../components/WorkThumb'
 import { useAuth } from '../lib/auth'
 import { useWorks, workPair, workTitle } from '../lib/works'
+import { affordableSeconds, useWallet } from '../lib/wallet'
 import type { Language } from '../lib/types'
 
-const LANG_COLS = { gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))' } as const
+// Two columns on a phone; on wider screens as many 190px columns as fit.
+const LANG_GRID = 'grid grid-cols-2 gap-2 sm:gap-3 sm:[grid-template-columns:repeat(auto-fill,minmax(190px,1fr))]'
 
 // A stable identity for "not loaded yet", so the memos below don't recompute on
 // every render while the languages query is still in flight.
@@ -69,6 +71,11 @@ export default function Home() {
 
   const [query, setQuery] = useState('')
   const [target, setTarget] = useState('uz')
+  // Phones only: the long sections start folded so the page fits in about two
+  // screens. Desktop ignores these and always shows everything.
+  const [allLangs, setAllLangs] = useState(false)
+  const [pipelineOpen, setPipelineOpen] = useState(false)
+  const [feedbackOpen, setFeedbackOpen] = useState(false)
 
   const firstName = user?.name?.trim().split(/\s+/)[0]
   const catalog = languages.data ?? NO_LANGUAGES
@@ -112,13 +119,14 @@ export default function Home() {
   const dubInto = (code: string) => navigate('/studio', { state: { targetLang: code } })
 
   return (
-    <Page className="space-y-10">
+    <Page className="space-y-6 sm:space-y-10">
       {/* ── A · The composer ────────────────────────────────────────────────
           The page's primary action, at the top, already open. */}
-      <section className="space-y-4">
-        <h1 className="text-[1.75rem] font-semibold tracking-tight text-primary">
+      <section className="space-y-3 sm:space-y-4">
+        <h1 className="font-display text-[1.6rem] leading-tight text-primary sm:text-[2.1rem]">
           {firstName ? `Welcome back, ${firstName}` : 'Welcome back'}
         </h1>
+        <AccountStats dubs={works.length} />
         <Composer
           languages={catalog}
           target={target}
@@ -137,22 +145,25 @@ export default function Home() {
         variants={stagger}
         initial="hidden"
         animate="show"
-        className="grid grid-cols-1 gap-4 sm:grid-cols-3"
+        className="grid grid-cols-3 gap-2 sm:gap-4"
       >
         <QuickStart
           title="Dub a video"
+          short="Video"
           sub="Balanced quality, from a file or a link"
           icon={ICON.video}
           onClick={() => navigate('/studio', { state: { preset: 'video', targetLang: target } })}
         />
         <QuickStart
           title="Dub a podcast"
+          short="Podcast"
           sub="Audio only, studio quality"
           icon={ICON.podcast}
           onClick={() => navigate('/studio', { state: { preset: 'podcast', targetLang: target } })}
         />
         <QuickStart
           title="Clone a voice"
+          short="Voice"
           sub="Keeps the original speaker"
           icon={ICON.voice}
           onClick={() => navigate('/studio', { state: { preset: 'voice', targetLang: target } })}
@@ -166,10 +177,10 @@ export default function Home() {
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.4, ease: EASE_ENTRANCE }}
-        className="promo grain px-6 py-12 text-center sm:py-16"
+        className="promo grain hidden px-6 py-12 text-center sm:block sm:py-16"
       >
         <div className="relative mx-auto max-w-xl">
-          <h2 className="text-[1.9rem] font-semibold tracking-tight sm:text-[2.3rem]">
+          <h2 className="font-display text-[2.1rem] leading-tight sm:text-[2.6rem]">
             Keep the speaker's own voice
           </h2>
           <p className="mt-2 text-[15px] text-white/75">
@@ -238,11 +249,12 @@ export default function Home() {
       )}
 
       {/* ── E · Language lab ──────────────────────────────────────────────── */}
-      <Reveal className="space-y-4">
+      <Reveal className="space-y-3 sm:space-y-4">
         <div id="language-lab" className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
           <SectionHead
             title="Languages"
             sub="Pick a target to open the Studio with it loaded."
+            subDesktopOnly
           />
 
           <div className="relative lg:w-72">
@@ -289,7 +301,7 @@ export default function Home() {
             {turkic.length > 0 && (
               <div>
                 <GroupHead title="Turkic languages" count={turkic.length} note="What TH-Labs is built for" />
-                <motion.div layout className="mt-3 grid gap-3" style={LANG_COLS}>
+                <motion.div layout className={`mt-3 ${LANG_GRID}`}>
                   <AnimatePresence mode="popLayout">
                     {turkic.map((l, i) => (
                       <LanguageCard key={l.code} lang={l} index={i} featured onClick={() => dubInto(l.code)} />
@@ -299,10 +311,19 @@ export default function Home() {
               </div>
             )}
 
+            {otherLangs.length > 0 && !allLangs && !query && (
+              <button
+                type="button"
+                onClick={() => setAllLangs(true)}
+                className="btn-ghost focusable w-full py-3 text-sm sm:hidden"
+              >
+                Show {otherLangs.length} more languages
+              </button>
+            )}
             {otherLangs.length > 0 && (
-              <div>
+              <div className={allLangs || query ? '' : 'hidden sm:block'}>
                 <GroupHead title="Everything else" count={otherLangs.length} />
-                <motion.div layout className="mt-3 grid gap-3" style={LANG_COLS}>
+                <motion.div layout className={`mt-3 ${LANG_GRID}`}>
                   <AnimatePresence mode="popLayout">
                     {otherLangs.map((l, i) => (
                       <LanguageCard key={l.code} lang={l} index={i} onClick={() => dubInto(l.code)} />
@@ -316,14 +337,31 @@ export default function Home() {
       </Reveal>
 
       {/* ── F · Pipeline ──────────────────────────────────────────────────── */}
-      <Reveal className="space-y-4">
+      <Reveal className="space-y-3 sm:space-y-4">
         <SectionHead
           title="Pipeline"
           sub="The five stages every dub runs through, and which engine is loaded right now."
+          subDesktopOnly
         />
         {/* An empty `stages` means the API could not reach the pipeline, so it
             has to render as the failure it is — an empty grid would read as a
             pipeline with nothing in it. */}
+        {/* Phones get one status line; the stage cards open on tap. */}
+        {!dubbingDown && health.data && (
+          <button
+            type="button"
+            onClick={() => setPipelineOpen((v) => !v)}
+            aria-expanded={pipelineOpen}
+            className="card focusable flex w-full items-center gap-3 p-4 text-left sm:hidden"
+          >
+            <span className="h-2 w-2 shrink-0 rounded-full bg-success" aria-hidden />
+            <span className="min-w-0 flex-1 text-sm text-primary">
+              {health.data.stages.filter((st) => st.mode === 'real').length} of{' '}
+              {health.data.stages.length} stages live
+            </span>
+            <span className="text-sm text-muted">{pipelineOpen ? 'Hide' : 'Details'}</span>
+          </button>
+        )}
         {dubbingDown ? (
           <FailedCard
             title="Dubbing service unreachable"
@@ -342,7 +380,7 @@ export default function Home() {
             initial="hidden"
             whileInView="show"
             viewport={{ once: true, amount: 0.05 }}
-            className="grid gap-3"
+            className={`gap-3 ${pipelineOpen ? 'grid' : 'hidden sm:grid'}`}
             style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}
           >
             {health.data.stages.map((s) => (
@@ -413,14 +451,80 @@ export default function Home() {
       {/* Last on the page on purpose: it is the one section that asks the user
           for something rather than showing them something, so it belongs after
           they have had a reason to form an opinion. */}
-      <Reveal className="space-y-4 pb-4">
+      <Reveal className="space-y-3 pb-4 sm:space-y-4">
         <SectionHead
           title="Feedback"
           sub="Found a bug, or a dub that came out wrong? Tell us and it reaches the team directly."
+          subDesktopOnly
         />
-        <FeedbackSection />
+        {!feedbackOpen && (
+          <button
+            type="button"
+            onClick={() => setFeedbackOpen(true)}
+            className="btn-ghost focusable w-full py-3 text-sm sm:hidden"
+          >
+            Send feedback
+          </button>
+        )}
+        <div className={feedbackOpen ? '' : 'hidden sm:block'}>
+          <FeedbackSection />
+        </div>
       </Reveal>
     </Page>
+  )
+}
+
+/* ── Account at a glance ────────────────────────────────────────────────── */
+
+// The receipt email's stat panel, brought into the app: a quiet sunken well,
+// small muted labels and big serif figures, in the app's own ink.
+function AccountStats({ dubs }: { dubs: number }) {
+  const navigate = useNavigate()
+  const { balance, planInfo, loading } = useWallet()
+  const minutes = Math.floor(affordableSeconds(balance, 'balanced') / 60)
+
+  // `short` is the label on a phone, where all four share one row.
+  const stats: { label: string; short: string; value: ReactNode }[] = [
+    { label: 'Credit balance', short: 'Credits', value: <AnimatedNumber value={balance} /> },
+    { label: 'Minutes left', short: 'Minutes', value: <AnimatedNumber value={minutes} /> },
+    { label: 'Plan', short: 'Plan', value: planInfo.name },
+    { label: 'Dubs made', short: 'Dubs', value: <AnimatedNumber value={dubs} /> },
+  ]
+
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.4, ease: EASE_ENTRANCE }}
+      className="rounded-card bg-sunken px-4 py-3.5 sm:px-6 sm:py-5"
+    >
+      <div className="grid grid-cols-4 gap-x-3 sm:gap-x-4">
+        {stats.map((s) => (
+          <div key={s.label} className="min-w-0">
+            <div className="truncate text-[12px] text-muted sm:text-[13px]">
+              <span className="sm:hidden">{s.short}</span>
+              <span className="hidden sm:inline">{s.label}</span>
+            </div>
+            <div
+              className={`mt-0.5 truncate font-display text-[1.35rem] leading-tight text-primary sm:mt-1 sm:text-[1.75rem] ${
+                loading ? 'opacity-40' : ''
+              }`}
+            >
+              {s.value}
+            </div>
+          </div>
+        ))}
+      </div>
+      {!loading && minutes < 5 && (
+        <button
+          type="button"
+          onClick={() => navigate('/plans')}
+          className="focusable mt-3 text-sm font-medium text-primary sm:mt-4 transition-opacity hover:opacity-80"
+        >
+          Running low. Top up credits →
+        </button>
+      )}
+    </motion.div>
   )
 }
 
@@ -481,7 +585,7 @@ function Composer({
         </button>
       </div>
 
-      <div className="min-h-[9.5rem] px-5 py-5 sm:min-h-[11rem]">
+      <div className="min-h-[6.5rem] px-4 py-4 sm:min-h-[11rem] sm:px-5 sm:py-5">
         {mode === 'link' ? (
           <>
             <input
@@ -658,11 +762,14 @@ function Reveal({ children, className }: { children: ReactNode; className?: stri
 /** One of the three preset doors into the Studio. */
 function QuickStart({
   title,
+  short,
   sub,
   icon,
   onClick,
 }: {
   title: string
+  /** The label on a phone, where three tiles share one row. */
+  short: string
   sub: string
   icon: string
   onClick: () => void
@@ -672,29 +779,42 @@ function QuickStart({
       type="button"
       variants={rise}
       onClick={onClick}
-      className="card card-hover focusable group flex items-center gap-3.5 p-4 text-left"
+      aria-label={title}
+      className="card card-hover focusable group flex flex-col items-center gap-2 p-3 text-center sm:flex-row sm:gap-3.5 sm:p-4 sm:text-left"
     >
       <span className="icon-tile grid h-10 w-10 shrink-0 bg-sunken text-primary">
         <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
           <path d={icon} />
         </svg>
       </span>
-      <span className="min-w-0 flex-1">
+      <span className="text-[13px] font-medium text-primary sm:hidden">{short}</span>
+      <span className="hidden min-w-0 flex-1 sm:block">
         <span className="block truncate text-sm font-medium text-primary">{title}</span>
         <span className="mt-0.5 block text-[12px] text-muted">{sub}</span>
       </span>
-      <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0 text-muted transition-transform duration-200 group-hover:translate-x-0.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <svg viewBox="0 0 24 24" className="hidden h-4 w-4 shrink-0 text-muted sm:block transition-transform duration-200 group-hover:translate-x-0.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
         <path d="M5 12h14M13 6l6 6-6 6" />
       </svg>
     </motion.button>
   )
 }
 
-function SectionHead({ title, sub }: { title: string; sub?: string }) {
+function SectionHead({
+  title,
+  sub,
+  subDesktopOnly,
+}: {
+  title: string
+  sub?: string
+  /** Drop the explainer on phones, where it costs a line and says little. */
+  subDesktopOnly?: boolean
+}) {
   return (
     <div className="min-w-0">
-      <h2 className="text-[1.05rem] font-semibold tracking-tight text-primary">{title}</h2>
-      {sub && <p className="mt-1 text-sm text-secondary">{sub}</p>}
+      <h2 className="font-display text-[1.25rem] leading-snug text-primary sm:text-[1.4rem]">{title}</h2>
+      {sub && (
+        <p className={`mt-1 text-sm text-secondary ${subDesktopOnly ? 'hidden sm:block' : ''}`}>{sub}</p>
+      )}
     </div>
   )
 }
@@ -734,18 +854,18 @@ function LanguageCard({
         delay: reduce ? 0 : Math.min(index, 14) * 0.015,
       }}
       onClick={onClick}
-      className={`card card-hover focusable flex items-center gap-3 p-3.5 text-left ${
+      className={`card card-hover focusable flex min-w-0 items-center gap-2.5 p-2.5 text-left sm:gap-3 sm:p-3.5 ${
         featured ? 'bg-sunken/60' : ''
       }`}
     >
-      <span className="grid h-10 w-10 shrink-0 place-items-center rounded-control bg-sunken text-xl" aria-hidden>
+      <span className="grid h-8 w-8 shrink-0 place-items-center rounded-control bg-sunken text-lg sm:h-10 sm:w-10 sm:text-xl" aria-hidden>
         {lang.flag}
       </span>
       <span className="min-w-0 flex-1">
         <span className="block truncate text-sm font-medium text-primary">{lang.native}</span>
         <span className="block truncate text-[12px] text-muted">{lang.name}</span>
       </span>
-      <span className="shrink-0 text-[11px] uppercase text-muted">{lang.code}</span>
+      <span className="hidden shrink-0 text-[11px] uppercase text-muted sm:inline">{lang.code}</span>
     </motion.button>
   )
 }

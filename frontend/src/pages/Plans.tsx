@@ -160,6 +160,8 @@ export default function Plans() {
 
   const [cycle, setCycle] = useState<Cycle>('monthly')
   const [showCompare, setShowCompare] = useState(false)
+  // Phones show one plan card at a time; desktop shows all three side by side.
+  const [mobileTier, setMobileTier] = useState<PlanTier>('PRO')
   const [toast, setToast] = useState<{ id: number; msg: string } | null>(null)
 
   const tiers = plansQuery.data ? buildTiers(plansQuery.data.plans) : []
@@ -234,7 +236,7 @@ export default function Plans() {
   }
 
   return (
-    <Page className="space-y-8 pb-4">
+    <Page className="space-y-6 pb-4 sm:space-y-8">
       {/* A test-mode build takes fake cards and grants real credits in your
           database. Never let that be a surprise. */}
       {inTestCheckout && (
@@ -279,6 +281,26 @@ export default function Plans() {
             </div>
           </div>
         ) : (
+          <>
+          {tiers.length > 0 && (
+            <div role="tablist" aria-label="Plan" className="flex gap-1 rounded-control border border-subtle bg-sunken p-1 md:hidden">
+              {tiers.map((t) => (
+                <button
+                  key={t.tier}
+                  type="button"
+                  role="tab"
+                  aria-selected={mobileTier === t.tier}
+                  onClick={() => setMobileTier(t.tier)}
+                  className={`focusable min-h-[44px] flex-1 rounded-[8px] text-sm font-medium transition-colors ${
+                    mobileTier === t.tier ? 'bg-surface text-primary shadow-[var(--shadow-sm)]' : 'text-muted'
+                  }`}
+                >
+                  {t.name}
+                  {isCurrent(t) && <span className="ml-1 text-[11px] text-muted">· yours</span>}
+                </button>
+              ))}
+            </div>
+          )}
           <motion.div variants={stagger} className="grid grid-cols-1 gap-6 md:grid-cols-3">
             {tiers.length === 0
               ? Array.from({ length: 3 }).map((_, i) => <div key={i} className="card shimmer h-96" />)
@@ -291,9 +313,11 @@ export default function Plans() {
                     busy={checkout.isPending && checkout.variables?.tier === t.tier}
                     disabled={!!checkoutBlocked}
                     onSelect={() => void startCheckout(t)}
+                    mobileHidden={t.tier !== mobileTier}
                   />
                 ))}
           </motion.div>
+          </>
         )}
 
         {plansQuery.data && (
@@ -393,6 +417,7 @@ function TierCard({
   busy,
   disabled,
   onSelect,
+  mobileHidden,
 }: {
   tier: UiTier
   cycle: Cycle
@@ -400,6 +425,8 @@ function TierCard({
   busy: boolean
   disabled: boolean
   onSelect: () => void
+  /** Not the plan picked in the phone-only switcher above the grid. */
+  mobileHidden?: boolean
 }) {
   const featured = tier.highlight
   const price = tier.prices[cycle]
@@ -435,9 +462,9 @@ function TierCard({
       variants={rise}
       whileHover={{ y: -3 }}
       transition={{ type: 'spring', stiffness: 380, damping: 26 }}
-      className={`card spotlight sheen relative flex flex-col p-6 ${featured ? 'border-brand/45 max-md:order-first' : ''} ${
-        current ? 'ring-1 ring-brand' : ''
-      }`}
+      className={`card spotlight sheen relative flex-col p-5 md:p-6 ${mobileHidden ? 'hidden md:flex' : 'flex'} ${
+        featured ? 'border-brand/45' : ''
+      } ${current ? 'ring-1 ring-brand' : ''}`}
     >
       <div className="above flex items-center justify-between">
         <span className="font-mono text-[11px] font-medium uppercase tracking-[0.12em] text-muted">{tier.name}</span>
@@ -449,7 +476,7 @@ function TierCard({
       </div>
 
       <div className="mt-4 flex items-baseline gap-1">
-        <span className="font-mono text-4xl font-medium text-primary">
+        <span className="font-display text-[2.75rem] leading-none text-primary">
           $<AnimatedNumber value={price} />
         </span>
         <span className="font-mono text-sm text-muted">{suffix}</span>
@@ -615,7 +642,7 @@ function TopUpSection({
           <div className="mt-5 border-t border-subtle pt-4">
             <div className="flex items-baseline justify-between">
               <span className="text-sm text-secondary">You need about</span>
-              <span className="font-mono text-2xl font-medium text-brand">
+              <span className="font-display text-[1.75rem] text-primary">
                 <AnimatedNumber value={needed} /> <span className="text-sm text-muted">credits</span>
               </span>
             </div>
@@ -643,7 +670,7 @@ function TopUpSection({
         </div>
 
         {/* Packs */}
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid gap-3 sm:grid-cols-2 sm:gap-4">
           {packs.map((p) => (
             <PackCard
               key={p.id}
@@ -692,10 +719,11 @@ function PackCard({
       onPointerMove={spot.onPointerMove}
       whileHover={{ y: -3 }}
       transition={{ type: 'spring', stiffness: 380, damping: 26 }}
-      className={`card spotlight sheen relative flex flex-col p-5 ${
+      className={`card spotlight sheen relative flex items-center gap-3 p-4 sm:flex-col sm:items-stretch sm:gap-0 sm:p-5 ${
         recommended ? 'border-brand/45 ring-1 ring-brand/40' : ''
       }`}
     >
+      <div className="min-w-0 flex-1 sm:flex-none">
       {/* Inside the card, not hung over its top edge: `.sheen` clips its
           overflow, which cut an absolutely-positioned `-top-2` badge in half. */}
       <div className="above flex items-start justify-between gap-2">
@@ -714,12 +742,13 @@ function PackCard({
       <div className="mt-1 font-mono text-[11px] text-muted">
         ≈ {minutes.toFixed(1)} min at Balanced
       </div>
+      </div>
 
-      <div className="mt-4 flex items-baseline gap-1.5">
-        <span className="font-mono text-xl font-medium text-primary">
+      <div className="flex items-baseline gap-1.5 sm:mt-4">
+        <span className="font-display text-[1.5rem] leading-none text-primary sm:text-[1.9rem]">
           {fmtCents(pack.priceCents, pack.currency)}
         </span>
-        <span className="font-mono text-[11px] text-muted">
+        <span className="hidden font-mono text-[11px] text-muted sm:inline">
           · ${perCredit.toFixed(3)} / credit
         </span>
       </div>
@@ -727,11 +756,15 @@ function PackCard({
       <MagneticButton
         onClick={onBuy}
         disabled={disabled}
-        className={`focusable above mt-4 w-full rounded-control py-2.5 font-mono text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+        className={`focusable above min-h-[44px] shrink-0 rounded-control px-4 py-2.5 font-mono text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60 sm:mt-4 sm:w-full ${
           recommended ? 'btn-primary' : 'btn-ghost'
         }`}
       >
-        {busy ? 'Redirecting…' : unavailable ? 'Not available yet' : 'Buy credits'}
+        {busy ? 'Redirecting…' : unavailable ? 'Not available yet' : (
+          <>
+            Buy<span className="hidden sm:inline"> credits</span>
+          </>
+        )}
       </MagneticButton>
     </motion.div>
   )
