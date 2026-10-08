@@ -787,7 +787,10 @@ export class PaymentService {
 
     await this.rememberCustomer(userId, order.customerId);
     this.emailReceipt(userId, {
-      description,
+      kind: 'plan',
+      item: `${TIER_DISPLAY_NAME[plan.tier]} plan · ${plan.cycle.toLowerCase()}`,
+      paidAt: order.createdAt,
+      renewsOn: lsSub ? periodEnd : null,
       creditsGranted: plan.creditsGranted,
       balance: result.balance,
       amountCents: order.totalUsd || plan.priceCents,
@@ -860,7 +863,9 @@ export class PaymentService {
     );
     await this.rememberCustomer(userId, order.customerId);
     this.emailReceipt(userId, {
-      description,
+      kind: 'pack',
+      item: `${pack.credits.toLocaleString('en-US')} credits`,
+      paidAt: order.createdAt,
       creditsGranted: pack.credits,
       balance,
       amountCents: order.totalUsd || pack.priceCents,
@@ -1019,7 +1024,10 @@ export class PaymentService {
       );
     }, `grantRenewal(${invoice.id})`);
     this.emailReceipt(sub.userId, {
-      description,
+      kind: 'renewal',
+      item: `${TIER_DISPLAY_NAME[plan.tier]} plan · ${plan.cycle.toLowerCase()}`,
+      paidAt: invoice.createdAt,
+      renewsOn: periodEnd,
       creditsGranted: plan.creditsGranted,
       balance,
       amountCents: invoice.totalUsd || plan.priceCents,
