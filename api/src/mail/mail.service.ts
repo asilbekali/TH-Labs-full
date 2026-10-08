@@ -19,12 +19,12 @@ import type { Transporter } from 'nodemailer';
 import {
   communityWelcomeTemplate,
   feedbackReceiptTemplate,
-  paymentReceiptTemplate,
   renderEmail,
   renderText,
   signupWelcomeTemplate,
   type TemplateOptions,
 } from './mail.templates';
+import { renderPaymentReceipt, type PaymentReceipt } from './receipt.template';
 
 export interface SendMailOptions {
   /** Recipient address. */
@@ -43,6 +43,8 @@ export interface SendMailOptions {
   footnote?: string;
   /** Ready-made HTML. Skips the branded template entirely. */
   html?: string;
+  /** Ready-made plain-text part, paired with `html`. */
+  plain?: string;
   /** Re-raise transport failures instead of swallowing them. */
   throwOnError?: boolean;
 }
@@ -136,7 +138,7 @@ export class MailService implements OnModuleInit {
         from: this.from,
         to: email,
         subject,
-        text: renderText(template),
+        text: options.plain ?? renderText(template),
         html: options.html ?? renderEmail(template),
       });
 
@@ -186,13 +188,10 @@ export class MailService implements OnModuleInit {
   sendPaymentReceipt(
     email: string,
     name: string,
-    payment: Parameters<typeof paymentReceiptTemplate>[2],
+    payment: PaymentReceipt,
   ): Promise<SendMailResult> {
-    return this.sendMail({
-      email,
-      subject: `▶ Payment received — ${payment.creditsGranted.toLocaleString('en-US')} credits added`,
-      ...paymentReceiptTemplate(name, this.appUrl, payment),
-    });
+    const { subject, html, text } = renderPaymentReceipt(name, this.appUrl, payment);
+    return this.sendMail({ email, name, subject, text, html, plain: text });
   }
 
   private describe(error: unknown): string {
