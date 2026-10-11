@@ -79,6 +79,10 @@ services:
       # ids live in the catalog (admin panel / seed), not in the environment.
       LEMONSQUEEZY_API_KEY: ${LEMONSQUEEZY_API_KEY:?set LEMONSQUEEZY_API_KEY in .env — without it a purchase cannot be credited}
       LEMONSQUEEZY_STORE_ID: ${LEMONSQUEEZY_STORE_ID:-}
+      # Optional. Turns on POST /v1/payments/webhook, which credits a purchase
+      # the moment LS marks it paid; without it the success page and the cron
+      # still credit it.
+      LEMONSQUEEZY_WEBHOOK_SECRET: ${LEMONSQUEEZY_WEBHOOK_SECRET:-}
       # The dubbing pipeline's origin (the Modal web URL). GET /v1/health probes
       # <this>/api/health and reports `pipeline: up|down`; unset reports
       # `not_configured`, which the Studio shows as "unreachable". The probe hits
@@ -88,6 +92,15 @@ services:
       # decides the refresh cookie's Secure/SameSite pair (api/src/auth).
       APP_URL: ${APP_URL:-}
       CORS_ORIGINS: ${CORS_ORIGINS:-}
+      # ── Mail (receipts, verification codes) ──────────────────────────────
+      # Without MAIL_USER / MAIL_PASS the API boots but skips every email.
+      # HOST, PORT and FROM carry real defaults rather than empty strings:
+      # MailService falls back with `??`, which an empty string would defeat.
+      MAIL_HOST: ${MAIL_HOST:-smtp.gmail.com}
+      MAIL_PORT: ${MAIL_PORT:-465}
+      MAIL_USER: ${MAIL_USER:-}
+      MAIL_PASS: ${MAIL_PASS:-}
+      MAIL_FROM: ${MAIL_FROM:-TH Labs <${MAIL_USER:-}>}
     networks:
       internal:
       edge:
