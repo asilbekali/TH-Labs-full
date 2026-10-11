@@ -18,6 +18,7 @@ import { LanguagesModule } from './languages/languages.module';
 import { HealthModule } from './health/health.module';
 import { PriceTokenModule } from './price-token/price-token.module';
 import { AuditModule } from './audit/audit.module';
+import { WorksModule } from './works/works.module';
 
 @Module({
   imports: [
@@ -41,6 +42,7 @@ import { AuditModule } from './audit/audit.module';
     LanguagesModule,
     HealthModule,
     PriceTokenModule,
+    WorksModule,
   ],
   controllers: [AppController],
   providers: [AppService],

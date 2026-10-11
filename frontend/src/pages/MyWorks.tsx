@@ -21,7 +21,6 @@ import { usePointerSpotlight } from '../hooks/usePointerSpotlight'
 import {
   useWorks,
   workPair,
-  worksStorageNote,
   workTitle,
   type Work,
   type WorkStatus,
@@ -970,7 +969,6 @@ function EmptyLibrary() {
         <p className="mx-auto mt-2 max-w-sm text-sm text-secondary">
           Every dub you run lands here with its media, transcript and cost.
         </p>
-        <p className="mx-auto mt-2 max-w-sm text-xs text-muted">{worksStorageNote}</p>
         <button onClick={() => navigate('/studio')} className="btn-primary focusable mt-6 px-5 py-2.5 font-mono text-sm">
           Go to studio →
         </button>

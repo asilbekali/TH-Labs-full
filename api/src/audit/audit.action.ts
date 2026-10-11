@@ -329,6 +329,11 @@ export function isAuditable(
   }
   // Reading the audit log must not write to it — that is an infinite feed.
   if (path.startsWith('/admin/logs')) return false;
+  // The Studio re-saves a running dub as the pipeline reports progress, with
+  // its whole transcript in the body. That is sync, not an action — a row per
+  // save would bury the feed and copy every transcript into it. Deleting a dub
+  // is an action, and stays.
+  if (path.startsWith('/works') && method === 'PUT') return false;
 
   if (method !== 'GET') return true;
 
