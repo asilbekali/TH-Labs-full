@@ -1,38 +1,34 @@
-// A dub's thumbnail: a frame of the actual video, with a deterministic gradient
-// behind it.
+// A dub's thumbnail: a real frame of the video, shown as an image.
 //
-// It used to be the gradient alone, everywhere — because the pipeline writes no
-// poster image. So every list of real dubs (My Works, Recent dubs on Home, the
-// Studio's strip) looked like a list of coloured rectangles, and nothing on
-// screen told you which video was which.
+// The pipeline writes no poster, so the first time a dub is shown this captures
+// one frame into a small JPEG (lib/poster.ts) and saves it on the work record.
+// The record syncs to the account, so from then on every page and every device
+// paints an `<img>` straight away — no video download, no decode.
 //
-// The fix needs no poster and no backend change: a muted `<video>` with a `#t=`
-// media fragment makes the browser decode exactly that one frame and paint it,
-// which is a thumbnail. It also works retroactively for every dub already in
-// the library.
+// Before this, each card was a muted `<video #t=1 preload=metadata>`. That was
+// slow on a full library, and Safari paints no frame for preload=metadata at
+// all, so cards there were just coloured gradients. The video element is kept
+// only as a last resort for a dub whose frame cannot be captured.
 //
-// Why it is layered rather than conditional:
+// Layers, bottom up:
+//   - The deterministic gradient: the loading state, and the fallback for a
+//     running or failed job or a media URL that no longer resolves.
+//   - The live `<video>` frame, only when capture failed.
+//   - The captured image.
 //
-//   - `preload="metadata"` fetches headers and that one frame, not the file. A
-//     grid of these costs kilobytes each, not megabytes.
-//   - The gradient stays underneath as the loading state AND the fallback, so a
-//     still-processing job, a failed one, a media URL that no longer resolves
-//     and a codec the browser will not decode all degrade to exactly what these
-//     pages showed before, instead of to an empty box.
-//   - `onError` hides the video for good, so a broken URL does not retry on
-//     every re-render.
-//
-// The dubbed output is preferred over the source: it is the thing the user made
-// and came back to look at. A job still running has neither, and gets the
-// gradient until it does.
+// The dubbed output is preferred over the source: it is the thing the user
+// made. A running job's frame comes from its source and is not saved, because
+// the output will replace it.
 //
 // This component owns no box of its own — it fills its parent, which must be
 // `relative` and sized by the page. The three call sites want three different
 // shapes (16:9 card, 10×14 strip, 12×16 row) and all of them want the same
 // picture.
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { mediaUrl } from '../lib/api'
+import { capturePoster } from '../lib/poster'
 import { gradientFor } from '../lib/thumb'
+import { useWorks } from '../lib/works'
 
 /** The subset of a Work this needs. Kept structural so Studio's own row type fits. */
 export interface ThumbWork {
@@ -40,6 +36,7 @@ export interface ThumbWork {
   outputUrl: string | null
   sourceUrl?: string | null
   status?: string
+  thumbnail?: string | null
 }
 
 export default function WorkThumb({
@@ -52,39 +49,70 @@ export default function WorkThumb({
   rounded?: boolean
   className?: string
 }) {
-  const [broken, setBroken] = useState(false)
+  const { updateWork } = useWorks()
+  const [captured, setCaptured] = useState<string | null>(null)
+  const [captureFailed, setCaptureFailed] = useState(false)
+  const [videoBroken, setVideoBroken] = useState(false)
   const failed = work.status === 'failed'
+  const output = mediaUrl(work.outputUrl)
   // Dubbed first, source as the stand-in while a job is mid-pipeline.
-  const frame = mediaUrl(work.outputUrl) ?? mediaUrl(work.sourceUrl ?? null)
-  // `#t=1` asks for the frame one second in. Not 0: the first frame of a video
-  // is very often black or a fade-in, which is indistinguishable from a broken
-  // thumbnail. One second in there is a picture.
-  const src = frame ? `${frame}#t=1` : null
+  const frame = output ?? mediaUrl(work.sourceUrl ?? null)
+  const image = work.thumbnail || captured
+
+  useEffect(() => {
+    if (work.thumbnail || !frame) return
+    let cancelled = false
+    setCaptureFailed(false)
+    void capturePoster(frame).then((poster) => {
+      if (cancelled) return
+      if (!poster) return setCaptureFailed(true)
+      setCaptured(poster)
+      // Saved only from the finished dub, so it never has to be redone.
+      if (output && frame === output) updateWork(work.id, { thumbnail: poster })
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [work.id, work.thumbnail, frame, output, updateWork])
+
+  const round = rounded ? 'rounded-lg' : ''
+  const gray = failed ? 'grayscale' : ''
 
   return (
     <>
       <span
-        className={`thumb-grad absolute inset-0 ${failed ? 'grayscale' : ''} ${
-          rounded ? 'rounded-lg' : ''
-        }`}
+        className={`thumb-grad absolute inset-0 ${gray} ${round}`}
         style={{ backgroundImage: gradientFor(work.id) }}
       />
-      {src && !broken && (
-        <video
-          src={src}
-          muted
-          playsInline
-          preload="metadata"
-          // No controls and no autoplay: this is an image that happens to be a
-          // video element. aria-hidden because the control around it already
-          // carries the label, and tabIndex -1 so it never takes focus.
+      {image ? (
+        <img
+          src={image}
+          alt=""
           aria-hidden
-          tabIndex={-1}
-          onError={() => setBroken(true)}
-          className={`absolute inset-0 h-full w-full object-cover ${
-            failed ? 'grayscale' : ''
-          } ${rounded ? 'rounded-lg' : ''} ${className}`}
+          decoding="async"
+          draggable={false}
+          className={`absolute inset-0 h-full w-full object-cover ${gray} ${round} ${className}`}
         />
+      ) : (
+        captureFailed &&
+        frame &&
+        !videoBroken && (
+          <video
+            // `#t=1` asks for the frame one second in. Not 0: the first frame
+            // of a video is very often black or a fade-in.
+            src={`${frame}#t=1`}
+            muted
+            playsInline
+            preload="metadata"
+            // No controls and no autoplay: this is an image that happens to be
+            // a video element. aria-hidden because the control around it
+            // already carries the label, and tabIndex -1 so it never takes focus.
+            aria-hidden
+            tabIndex={-1}
+            onError={() => setVideoBroken(true)}
+            className={`absolute inset-0 h-full w-full object-cover ${gray} ${round} ${className}`}
+          />
+        )
       )}
     </>
   )

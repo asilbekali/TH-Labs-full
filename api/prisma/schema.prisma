@@ -49,7 +49,7 @@ model Feedback {
   /// What kind of message this is, so the panel can triage a crash report
   /// ahead of a feature wish instead of reading a single undifferentiated
   /// inbox.
-  kind   FeedbackKind   @default(GENERAL)
+  kind   FeedbackKind @default(GENERAL)
   /// 1-5 when the sender rated us, null when they only wrote prose. Not a
   /// required field: demanding a star rating to file a bug report is how you
   /// stop getting bug reports.
@@ -58,7 +58,7 @@ model Feedback {
   /// Triage state, moved by an ADMIN from the panel. Nothing is ever deleted
   /// as part of normal triage — `RESOLVED` is the end state, and delete is a
   /// SUPERADMIN-only correction for spam.
-  status FeedbackStatus @default(NEW)
+  status    FeedbackStatus @default(NEW)
   /// Private staff note. Never shown to the sender; the panel labels it so.
   adminNote String?
 
@@ -104,7 +104,7 @@ model User {
   /// UsersService.create) — a bare column default gave every account credits
   /// that no ledger row accounted for, which is exactly the drift
   /// /payments/credits/reconcile exists to report.
-  credits        Int     @default(0)
+  credits             Int       @default(0)
   /// Lemon Squeezy customer id, learned from the first order this account
   /// claims. LS creates the customer itself at checkout, so this is recorded
   /// rather than requested. Not unique: one LS customer is one email, and an
@@ -121,6 +121,7 @@ model User {
   creditEntries CreditEntry[]
   refreshTokens RefreshToken[]
   handoffCodes  HandoffCode[]
+  works         Work[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @default(now()) @updatedAt
@@ -199,12 +200,12 @@ model Plan {
   /// (`https://<store>.lemonsqueezy.com/checkout/buy/<uuid>`). Pasted in from
   /// the admin panel; empty means this plan cannot be bought yet, which the
   /// pricing page reports rather than hiding.
-  checkoutUrl String?
+  checkoutUrl     String?
   /// The Lemon Squeezy VARIANT that link sells. This is what a paid order is
   /// matched back to, and it is AUTHORITATIVE: LS reports it on the order, the
   /// buyer cannot change it. Without it a paid order cannot be credited.
-  lsVariantId String?      @unique
-  active      Boolean      @default(true)
+  lsVariantId     String?      @unique
+  active          Boolean      @default(true)
 
   subscriptions Subscription[]
 
@@ -219,21 +220,21 @@ model Plan {
 /// paste in the Lemon Squeezy checkout link from the panel, and the site picks it up on
 /// the next request.
 model CreditPack {
-  id     String @id @default(cuid())
+  id         String  @id @default(cuid())
   /// Stable public id (`pack_240`). It travels to Lemon Squeezy in the
   /// checkout's custom data, so renaming one is confusing in the LS dashboard
   /// and the history — change the label, not the slug.
-  slug   String @unique
+  slug       String  @unique
   credits    Int
   priceCents Int
-  currency   String @default("usd")
+  currency   String  @default("usd")
   /// Marks the pack the pricing page highlights. Not enforced to be unique;
   /// the page simply highlights whichever rows carry it.
-  popular   Boolean @default(false)
-  sortOrder Int     @default(0)
+  popular    Boolean @default(false)
+  sortOrder  Int     @default(0)
   /// Soft delete. A deactivated pack stops being offered but keeps its slug,
   /// so the payment history of everyone who bought one still resolves.
-  active    Boolean @default(true)
+  active     Boolean @default(true)
 
   /// The Lemon Squeezy share link the Buy button opens, and the variant it
   /// sells. Same contract as Plan: a paid order is matched on the variant.
@@ -254,15 +255,15 @@ model Subscription {
 
   /// Lemon Squeezy's subscription id. What the renewal poll asks LS about:
   /// each paid renewal invoice on it opens a new period and grants credits.
-  lsSubscriptionId     String?   @unique
-  currentPeriodStart   DateTime
-  currentPeriodEnd     DateTime
-  cancelAtPeriodEnd    Boolean   @default(false)
-  lastGrantAt          DateTime?
+  lsSubscriptionId   String?   @unique
+  currentPeriodStart DateTime
+  currentPeriodEnd   DateTime
+  cancelAtPeriodEnd  Boolean   @default(false)
+  lastGrantAt        DateTime?
   /// Allocations already handed out for the CURRENT period. Set to 1 by the
   /// claim (which grants immediately); incremented by the recurring cron, which
   /// stops once it reaches plan.grantsPerPeriod.
-  grantsIssued         Int       @default(0)
+  grantsIssued       Int       @default(0)
 
   user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   plan     Plan      @relation(fields: [planId], references: [id])
@@ -368,6 +369,33 @@ model HandoffCode {
   @@index([userId])
 }
 
+/// One dub in a user's My Works library.
+///
+/// The library used to live only in the browser's localStorage, so a dub made
+/// in Chrome never showed up when the same account signed in on Safari or a
+/// phone. It is kept here now, per account, and the browser's copy is only a
+/// cache that paints the page before this answers.
+///
+/// `data` is the Studio's own record (status, media URLs, transcript, settings,
+/// a small poster image) stored as written. The API does not interpret it: the
+/// pipeline owns the job and the Studio owns how it is shown, and modelling
+/// every field as a column would mean a migration each time the card grows one.
+///
+/// Keyed by (userId, jobId) rather than jobId alone, so one account can never
+/// overwrite or read another's record by guessing a job id.
+model Work {
+  userId    Int
+  /// The dubbing pipeline's job id.
+  jobId     String
+  data      Json
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  @@id([userId, jobId])
+  @@index([userId, createdAt])
+}
+
 // model PriceOfCredits {
 //   id        Int      @id @default(autoincrement())
 //   price     Float    @default(0.65)
@@ -448,9 +476,9 @@ model AuditLog {
   targetId    String?
   targetLabel String?
   /// One human sentence for the feed, with the label already substituted.
-  summary   String?
+  summary     String?
   /// Request/response detail, with every credential-shaped field redacted.
-  meta      Json?
+  meta        Json?
 
   ip        String?
   userAgent String?

@@ -2,6 +2,7 @@
 // Yeah, I'm an alien and I love coding with TypeScript & NestJS. 👽
 
 import { ValidationPipe, VersioningType } from '@nestjs/common';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
@@ -62,7 +63,13 @@ async function bootstrap() {
   // rawBody: the Lemon Squeezy webhook's signature covers the exact request
   // bytes, which a re-serialized JSON body would not match. Nest keeps the
   // buffer on req.rawBody alongside the parsed body.
-  const app = await NestFactory.create(AppModule, { rawBody: true });
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
+    rawBody: true,
+  });
+  // Express's 100 KB default is too small for a My Works record: a long dub's
+  // transcript plus its poster image runs past it. WorksService enforces its
+  // own per-record cap below this.
+  app.useBodyParser('json', { limit: '2mb' });
 
   const PORT = Number(process.env.PORT) || 3001;
   const HOST = process.env.HOST || 'localhost';
