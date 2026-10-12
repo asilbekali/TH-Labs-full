@@ -109,6 +109,16 @@ function detailLine(st: StageState): string {
   }
   if (st.key === 'nmt' && d.length_ratio != null) return `length ratio ${d.length_ratio}`
   if (st.key === 'tts' && d.engine) {
+    if (d.engine === 'Navoiy') {
+      const voice = d.voice_clone ? 'native Uzbek in the source voice (Navoiy)' : 'native Uzbek voice (Navoiy)'
+      const emotions = d.emotions as { counts?: Record<string, number> } | null | undefined
+      const counts = emotions?.counts ?? {}
+      const moods = Object.entries(counts)
+        .sort((a, b) => b[1] - a[1])
+        .map(([name, n]) => `${n} ${name}`)
+        .join(', ')
+      return moods ? `${voice} · ${moods}` : voice
+    }
     if (d.engine === 'OmniVoice') return 'cloning source voice (OmniVoice)'
     if (d.engine === 'edge-tts + OpenVoice') return 'edge-tts + OpenVoice voice clone'
     if (d.engine === 'edge-tts') return 'neural voice · edge-tts'

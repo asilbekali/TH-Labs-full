@@ -103,7 +103,6 @@ class OpenVoiceCloner:
         `ref_audio`. Converts in ~30 s chunks so a long track never becomes one
         huge tensor (which hangs/OOMs). Runs on GPU (~15× faster) with automatic
         CPU fallback if VRAM is tight. Returns measured similarity (%)."""
-        import torch
         from . import media
 
         self._load()
@@ -150,11 +149,7 @@ class OpenVoiceCloner:
         if not out_audio.exists() or not chunks_out:
             return None
 
-        def cos(a, b) -> float:
-            a = a.flatten().float(); b = b.flatten().float()
-            return float(torch.dot(a, b) / (a.norm() * b.norm() + 1e-8))
-
-        sim = round(max(0.0, min(99.9, cos(self._se(chunks_out[0]), tgt) * 100)), 1)
+        sim = _similarity(self._se(chunks_out[0]), tgt)
         # tidy chunk scratch
         try:
             for p in chunk_dir.glob("*.wav"):
@@ -163,3 +158,20 @@ class OpenVoiceCloner:
         except Exception:
             pass
         return sim
+
+    def similarity(self, ref_audio: Path, audio: Path) -> float | None:
+        """Measured speaker similarity (%) between `audio` and the speaker in
+        `ref_audio`, for engines that clone by themselves. The same number
+        `clone()` reports, so the two are comparable."""
+        self._load()
+        return _similarity(self._se(audio), self._se(ref_audio))
+
+
+def _similarity(a, b) -> float:
+    """Cosine of two tone-colour embeddings, as a percentage."""
+    import torch
+
+    a = a.flatten().float()
+    b = b.flatten().float()
+    cos = float(torch.dot(a, b) / (a.norm() * b.norm() + 1e-8))
+    return round(max(0.0, min(99.9, cos * 100)), 1)

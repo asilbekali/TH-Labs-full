@@ -17,7 +17,7 @@ from typing import Awaitable, Callable
 from ..config import get_settings
 from ..schemas import (DubOptions, Job, JobResult, Segment, StageState,
                        StageStatus)
-from . import bleed, media, metrics, refine
+from . import bleed, emotion, media, metrics, refine
 from .lipsync import Wav2LipSync
 from .nmt import NLLBTranslator
 from .separation import DemucsSeparator
@@ -27,6 +27,7 @@ from . import stt_gigaam
 from .sync import Synchronizer
 from .tts import OmniVoiceTTS
 from .tts_edge import EdgeTTS, TTSOutcome
+from .tts_navoiy import NavoiyTTS
 from .voice_clone import OpenVoiceCloner
 
 EmitFn = Callable[..., Awaitable[None]]
@@ -45,6 +46,7 @@ class Orchestrator:
         self.giga = GigaAMSTT()   # Turkic + Russian ASR (see stt_gigaam)
         self.nmt = NLLBTranslator()
         self.tts = OmniVoiceTTS()          # voice cloning (when it can load)
+        self.navoiy = NavoiyTTS()          # Uzbek targets (remote, see tts_navoiy)
         self.edge = EdgeTTS()              # real neural speech (generic voice)
         self.cloner = OpenVoiceCloner()    # clone source speaker onto edge-tts
         self.sep = DemucsSeparator()       # keep original music/FX background
@@ -75,10 +77,12 @@ class Orchestrator:
                          else (self.edge.engine if self.edge.available()
                                else self.tts.engine)),
                  mode="real" if self._tts_available() else "simulation",
-                 detail=("OmniVoice · voice cloning" if self.tts.mode() == "real"
-                         else "edge-tts · neural voice per language"
-                         if self.edge.available()
-                         else "placeholder tone (no TTS engine)")),
+                 detail=(("OmniVoice · voice cloning" if self.tts.mode() == "real"
+                          else "edge-tts · neural voice per language"
+                          if self.edge.available()
+                          else "placeholder tone (no TTS engine)")
+                         + (" · Navoiy for Uzbek" if self.navoiy.available()
+                            else ""))),
             dict(key=self.sep.key, label=self.sep.label, engine=self.sep.engine,
                  mode=self.sep.mode(),
                  detail="Keep original music/FX · remove source speech"),
@@ -196,6 +200,10 @@ class Orchestrator:
         real_nmt = self.nmt.mode() == "real" and not force_simulate
         real_tts = self.tts.mode() == "real" and not force_simulate
         used_real = False
+        # Navoiy runs in its own container; start it now so it is warm by the
+        # time translation is done, instead of cold-starting in the TTS stage.
+        if not force_simulate and self.navoiy.supports(options.target_lang):
+            self.navoiy.warm()
         log.info("[%s] engines: asr=%s nmt=%s tts=%s separation=%s",
                  job.id, self.stt.mode(), self.nmt.mode(), self.tts.mode(),
                  self.sep.mode())
@@ -375,6 +383,7 @@ class Orchestrator:
         measured_similarity: float | None = None
         voiced: TTSOutcome | None = None
         tts_stats: dict | None = None
+        emotions: dict | None = None
         async with _stage(job, "tts", emit) as st:
             done = False
             # voice_mode is authoritative; voice_clone is what older clients
@@ -386,8 +395,67 @@ class Orchestrator:
             want_clone = mode in ("speaker", "both")
             log.info("[%s] tts: voice_mode=%s (voice_clone=%s)", job.id, mode,
                      options.voice_clone)
+            # 0) Navoiy — Uzbek targets only. A model trained on Uzbek, so the
+            # pronunciation is native whichever mode was asked for; the cloning
+            # modes add the speaker's timbre from a reference clip. That makes
+            # "speaker" and "both" the same thing here: native Uzbek in the
+            # speaker's voice. Anything that goes wrong falls through to the
+            # engines below, which is what Uzbek used before.
+            if (not force_simulate and segments
+                    and self.navoiy.supports(options.target_lang)
+                    and self.navoiy.available()):
+                try:
+                    ref_audio = None
+                    if want_clone:
+                        ref_audio, _ = await self._speaker_ref(
+                            job, segments, reference_audio, want_text=False)
+                    tts_src = job.result.detected_source_lang or options.source_lang
+                    # One preset per line, from how it was said and what it
+                    # says (pipeline/emotion.py). A re-voice keeps the first
+                    # dub's presets; the source audio is only heard if needed.
+                    # Anything going wrong here costs the emotions (every line
+                    # calm), never the engine.
+                    src_wav = s.uploads_dir / f"{job.id}.wav"
+                    try:
+                        emotions = await self._heartbeat(job, "tts", emit,
+                            lambda: emotion.assign(
+                                segments, tts_src,
+                                lambda: self.navoiy.hear(src_wav, segments)))
+                    except Exception as exc:
+                        log.warning("[%s] emotion presets skipped (%s)",
+                                    job.id, exc)
+                    lid = (self.stt.language_probs if self.stt.available()
+                           else None)
+                    voiced = await self._heartbeat(job, "tts", emit,
+                        lambda: self.navoiy.synthesize(
+                            segments, ref_audio, dubbed_audio, duration,
+                            source_lang=tts_src,
+                            target_lang=options.target_lang,
+                            language_probs=lid))
+                    tts_stats = self.navoiy.last_stats
+                    log.info("[%s] tts navoiy: voiced %s/%s lines, %s, "
+                             "emotions %s", job.id, voiced.voiced, voiced.total,
+                             tts_stats, emotions)
+                    if voiced.ok:
+                        tts_engine, used_real, done = "Navoiy", True, True
+                        voice_cloned = bool(tts_stats and tts_stats["cloned"])
+                        if voice_cloned and self.cloner.available():
+                            measured_similarity = await asyncio.to_thread(
+                                _measure_similarity, self.cloner, job.id,
+                                ref_audio, dubbed_audio, segments)
+                        if voiced.voiced < voiced.total:
+                            st.message = (f"{voiced.total - voiced.voiced} of "
+                                          f"{voiced.total} lines could not be "
+                                          f"synthesized — the rest was dubbed")
+                    else:
+                        voiced = None
+                except Exception as exc:
+                    log.warning("[%s] navoiy failed (%s) — falling back", job.id,
+                                exc)
+                    voiced, tts_stats = None, None
+                    st.message = f"Navoiy unavailable ({str(exc)[:45]})"
             # 1) OmniVoice — the speaker's own voice, accent included
-            if mode == "speaker" and self.tts.mode() == "real":
+            if not done and mode == "speaker" and self.tts.mode() == "real":
                 try:
                     ref_audio, ref_text = await self._speaker_ref(
                         job, segments, reference_audio, want_text=True)
@@ -479,6 +547,8 @@ class Orchestrator:
             st.detail = {"engine": tts_engine, "voice_mode": mode,
                          "voice_clone": voice_cloned,
                          "language_check": tts_stats,
+                         **({"emotions": emotions}
+                            if emotions and tts_engine == "Navoiy" else {}),
                          "engine_mode": "real" if tts_engine != "simulation"
                          else "simulation",
                          **({"voiced": voiced.voiced, "lines": voiced.total}
@@ -756,6 +826,26 @@ def _rewarm_models(orch) -> None:
         except Exception:
             pass
     threading.Thread(target=warm, daemon=True).start()
+
+
+def _measure_similarity(cloner, job_id: str, ref_audio: Path,
+                        dubbed: Path, segments: list[Segment]) -> float | None:
+    """Speaker similarity of an engine that clones by itself, measured the way
+    the OpenVoice path measures its own: on up to 30 s of the dub, from where
+    the speech starts. None if it cannot be measured, which reports no number
+    rather than a made-up one."""
+    s = get_settings()
+    clip = s.outputs_dir / f"{job_id}_simcheck.wav"
+    start = segments[0].start if segments else 0.0
+    try:
+        if not media.trim_audio(dubbed, clip, 30.0, start=start):
+            return None
+        return cloner.similarity(ref_audio, clip)
+    except Exception as exc:
+        log.warning("[%s] similarity not measured (%s)", job_id, exc)
+        return None
+    finally:
+        clip.unlink(missing_ok=True)
 
 
 def _build_speaker_ref(job_id: str, segments: list[Segment]):
