@@ -628,7 +628,11 @@ navoiy_image = (
 
 @app.cls(
     image=navoiy_image,
-    gpu="L4",
+    # Any of these, in order of preference. Navoiy is fp16 and needs ~5 GB, so
+    # it runs on all three; pinned to L4 alone, a dub waited 6 minutes in
+    # Modal's queue on 2026-10-12 ("waiting to be scheduled on a GPU_L4
+    # worker") while the rest of the job sat finished.
+    gpu=["L4", "A10", "T4"],
     timeout=1800,
     # Up to three containers, so a long video's batches run side by side. A
     # short clip is a single batch and only ever starts one.
