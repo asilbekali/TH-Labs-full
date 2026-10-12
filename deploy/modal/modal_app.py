@@ -400,6 +400,271 @@ image = (
 )
 
 
+# ── Navoiy: Uzbek TTS, in an image of its own ──────────────────────────────
+# Navoiy (aisha-org/navoiy-tts, Apache-2.0) is an Uzbek-trained LM for
+# CosyVoice2-0.5B. backend/app/pipeline/tts_navoiy.py uses it for every Uzbek
+# target. It cannot share the pipeline image for the same reason LatentSync
+# cannot: CosyVoice pins torch 2.3.1 and transformers 4.51.3, and this app runs
+# transformers >=5.3 for OmniVoice. So it lives in a Modal class with its own
+# image, and the pipeline calls it.
+#
+# Everything is pinned to what Navoiy's own demos were made with (see
+# demo/manifest.json in its repo): CosyVoice at 074ca6d, CosyVoice2-0.5B at
+# eec1ae6, torch 2.3.1+cu121, fp16. The same stack scored a median CER of 0-2 %
+# on Uzbek under GigaAM in TTS_train/uz_eval on the dev laptop.
+COSYVOICE_DIR = "/opt/CosyVoice"
+COSYVOICE_REV = "074ca6dc9e80a2f424f1f74b48bdd7d3fea531cc"
+NAVOIY_MODEL_DIR = "/opt/navoiy/model"   # CosyVoice2 layout, llm.pt = Navoiy
+NAVOIY_CODE_DIR = "/opt/navoiy/code"     # Navoiy's uztts normaliser + styles
+NAVOIY_BASE = ("FunAudioLLM/CosyVoice2-0.5B",
+               "eec1ae6c79877dbd9379285cf8789c9e0879293d")
+NAVOIY_CKPT = ("aisha-org/navoiy-tts",
+               "7060e5e784b669e8581fbd13898a01294da7c263")
+NAVOIY_FP16 = True
+# The voice for "native" dubs: CosyVoice's own sample clip, which is also the
+# reference every Navoiy demo was generated with.
+NAVOIY_STOCK_PROMPT = f"{COSYVOICE_DIR}/asset/zero_shot_prompt.wav"
+# CosyVoice refuses prompts over 30 s; a cloning reference needs far less.
+NAVOIY_REF_SECONDS = 15.0
+# onnxruntime-gpu 1.18 on PyPI is a CUDA 11.8 build, which cannot use torch
+# 2.3.1's CUDA 12 libraries and silently runs the speech tokenizer on CPU.
+# CosyVoice's requirements take the CUDA 12 build from this feed.
+ORT_CUDA12_INDEX = ("https://aiinfra.pkgs.visualstudio.com/PublicPackages/"
+                    "_packaging/onnxruntime-cuda-12/pypi/simple/")
+
+
+def _fetch_navoiy() -> None:
+    """Lay out a CosyVoice2 model directory whose llm.pt is Navoiy's LM.
+
+    Navoiy ships only the LM; flow, vocoder and tokenizers come from the
+    CosyVoice2 base. Its checkpoint is unwrapped and saved as llm.pt rather than
+    overlaid at load time, so the stock loader reads it with strict=True: a
+    checkpoint that does not cover the whole LM fails loudly here instead of
+    quietly running half the base model. The base llm.pt is never downloaded.
+    """
+    from pathlib import Path
+
+    import torch
+    from huggingface_hub import hf_hub_download, snapshot_download
+
+    model = Path(NAVOIY_MODEL_DIR)
+    repo, rev = NAVOIY_BASE
+    snapshot_download(repo, revision=rev, local_dir=str(model), allow_patterns=[
+        "cosyvoice2.yaml", "flow.pt", "hift.pt", "campplus.onnx",
+        "speech_tokenizer_v2.onnx", "CosyVoice-BlankEN/*"])
+    repo, rev = NAVOIY_CKPT
+    snapshot_download(repo, revision=rev, local_dir=NAVOIY_CODE_DIR,
+                      allow_patterns=["emotions_40h.json", "uztts/*",
+                                      "LICENSE", "NOTICE"])
+    llm = model / "llm.pt"
+    if llm.exists():
+        return
+    ckpt = Path(hf_hub_download(repo, "emotion_600h_joint.pt", revision=rev,
+                                local_dir="/tmp/navoiy-ckpt"))
+    state = torch.load(ckpt, map_location="cpu", weights_only=True)
+    for key in ("state_dict", "model", "llm"):
+        if isinstance(state.get(key), dict):
+            state = state[key]
+    # The training loop's bookkeeping, not weights.
+    state = {k: v for k, v in state.items()
+             if isinstance(v, torch.Tensor) and k not in ("epoch", "step")}
+    torch.save(state, llm)
+    ckpt.unlink()
+    print(f"  ok    Navoiy LM -> {llm} ({len(state)} tensors)")
+
+
+def _download_navoiy() -> None:
+    """Build-time prefetch. Non-fatal, like the others: the class fetches
+    whatever is missing when it starts."""
+    try:
+        _fetch_navoiy()
+        print("  ok    Navoiy + CosyVoice2 base")
+    except Exception as exc:
+        print(f"  SKIP  Navoiy -> {type(exc).__name__}: {exc}")
+
+
+def _check_navoiy() -> None:
+    """Build-time load of the full model. Deliberately fatal: an image that
+    cannot load it would silently send every Uzbek dub to the fallback."""
+    if not (Path(NAVOIY_MODEL_DIR) / "llm.pt").exists():
+        print("  SKIP  Navoiy load check -> weights not baked in")
+        return
+    from cosyvoice.cli.cosyvoice import CosyVoice2
+
+    cv = CosyVoice2(NAVOIY_MODEL_DIR)       # no GPU at build: CPU, fp32
+    print(f"  ok    Navoiy loads ({cv.sample_rate} Hz)")
+
+
+navoiy_image = (
+    modal.Image.debian_slim(python_version="3.10")
+    .apt_install("git")
+    .run_commands(
+        f"git clone https://github.com/FunAudioLLM/CosyVoice.git {COSYVOICE_DIR}",
+        f"cd {COSYVOICE_DIR} && git checkout {COSYVOICE_REV} "
+        f"&& git submodule update --init --recursive",
+    )
+    # Linux PyPI wheels of 2.3.1 are the cu121 builds, as one pair.
+    .pip_install("torch==2.3.1", "torchaudio==2.3.1")
+    # openai-whisper 20231117 is an sdist whose setup.py imports pkg_resources,
+    # which setuptools no longer ships, so pip's isolated build env (always the
+    # newest setuptools) cannot build it. Build it against an older one.
+    .pip_install("setuptools<70", "wheel")
+    .run_commands("python -m pip install --no-build-isolation "
+                  "openai-whisper==20231117")
+    # CosyVoice's requirements.txt at that commit, minus what inference never
+    # touches: training (deepspeed, tensorboard), serving (gradio, fastapi,
+    # grpc), TensorRT, and wetext. wetext is CosyVoice's Chinese/English text
+    # normaliser; its import is optional, it would contact ModelScope on every
+    # cold start, and Uzbek goes through Navoiy's own normaliser instead.
+    .pip_install(
+        "transformers==4.51.3", "conformer==0.3.2", "diffusers==0.29.0",
+        "hydra-core==1.3.2", "HyperPyYAML==1.2.3", "inflect==7.3.1",
+        "librosa==0.10.2", "lightning==2.2.4", "matplotlib==3.7.5",
+        "modelscope==1.20.0", "networkx==3.1", "numpy==1.26.4",
+        "omegaconf==2.3.0", "onnx==1.16.0",
+        "protobuf==4.25.0", "pyarrow==18.1.0", "rich==13.7.1",
+        "soundfile==0.12.1", "x-transformers==2.11.24",
+        "huggingface_hub>=0.30,<1.0", "coloredlogs", "flatbuffers",
+    )
+    .run_commands(
+        f"python -m pip install --no-deps onnxruntime-gpu==1.18.0 "
+        f"--index-url {ORT_CUDA12_INDEX} "
+        f"|| python -m pip install --no-deps onnxruntime-gpu==1.18.0",
+    )
+    .env({"PYTHONPATH": f"{COSYVOICE_DIR}:{COSYVOICE_DIR}/third_party/Matcha-TTS:"
+                        f"{NAVOIY_CODE_DIR}",
+          "PYTHONUNBUFFERED": "1"})
+    # Fail here, not on the first Uzbek dub.
+    .run_commands('python -c "from cosyvoice.cli.cosyvoice import CosyVoice2"')
+    .run_function(_download_navoiy)
+    # Imported at module level by what cosyvoice2.yaml instantiates: gdown and
+    # wget by Matcha-TTS (vendored for the flow decoder), pyworld by
+    # cosyvoice.dataset.processor. pyworld has no wheel, hence the compiler.
+    # Below the weights so adding these did not re-download 6 GB.
+    .apt_install("build-essential")
+    .pip_install("gdown==5.1.0", "wget==3.2", "pyworld==0.3.4")
+    # The import check above cannot see what cosyvoice2.yaml instantiates, which
+    # is how gdown was missed. Load the whole model once, on CPU.
+    .run_function(_check_navoiy)
+)
+
+
+@app.cls(
+    image=navoiy_image,
+    gpu="L4",
+    timeout=1800,
+    # Up to three containers, so a long video's batches run side by side. A
+    # short clip is a single batch and only ever starts one.
+    max_containers=3,
+    scaledown_window=120,
+)
+class Navoiy:
+    """Navoiy TTS. Called by backend/app/pipeline/tts_navoiy.py."""
+
+    @modal.enter()
+    def load(self) -> None:
+        import json
+        import time
+        from pathlib import Path
+
+        import torch
+
+        if not (Path(NAVOIY_MODEL_DIR) / "llm.pt").exists() \
+                or not (Path(NAVOIY_CODE_DIR) / "uztts").exists():
+            _fetch_navoiy()
+        from cosyvoice.cli.cosyvoice import CosyVoice2
+        from cosyvoice.utils.common import set_all_random_seed
+        from uztts.normalize import normalize
+
+        t0 = time.perf_counter()
+        self.cv = CosyVoice2(NAVOIY_MODEL_DIR, load_jit=False, load_trt=False,
+                             fp16=NAVOIY_FP16)
+        self.normalize = normalize
+        self.seed_all = set_all_random_seed
+        styles = json.loads((Path(NAVOIY_CODE_DIR) / "emotions_40h.json")
+                            .read_text(encoding="utf-8"))
+        self.instructs = {
+            tag: e["instruct"].strip() + "<|endofprompt|>"
+            for e in styles
+            for tag in e["tag"].replace("[", " ").replace("]", " ").split()
+        }
+        print(f"navoiy: loaded in {time.perf_counter() - t0:.1f}s on "
+              f"{torch.cuda.get_device_name(0)}, speech tokenizer on "
+              f"{self.cv.frontend.speech_tokenizer_session.get_providers()[0]}")
+
+    @modal.method()
+    def ping(self) -> dict:
+        """Warm-up, and what the container is running."""
+        import torch
+
+        return {"sample_rate": self.cv.sample_rate, "fp16": NAVOIY_FP16,
+                "gpu": torch.cuda.get_device_name(0),
+                "speech_tokenizer":
+                    self.cv.frontend.speech_tokenizer_session.get_providers()[0]}
+
+    @modal.method()
+    def synthesize(self, texts: list[str], reference: bytes | None = None,
+                   style: str = "calm", seed: int = 1986) -> list[bytes]:
+        """Voice each text. Returns float32 little-endian PCM at 24 kHz per
+        text, or b"" for a line that failed — one bad line never sinks the rest.
+
+        Runs `inference_instruct2`, as Navoiy's own inference.py does: the
+        reference clip (or the stock voice) supplies timbre to the flow model,
+        and the LM gets an English style instruction instead of the reference's
+        speech. The text goes through Navoiy's Uzbek normaliser, which spells
+        out numbers, dates and times, then reaches the model with CosyVoice's
+        own (Chinese/English) front end off.
+        """
+        import io
+        import tempfile
+        import time
+
+        import soundfile as sf
+        import torch
+
+        instruct = self.instructs.get(style, self.instructs["calm"])
+        out: list[bytes] = []
+        with tempfile.TemporaryDirectory() as tmp:
+            prompt = NAVOIY_STOCK_PROMPT
+            if reference:
+                try:
+                    audio, sr = sf.read(io.BytesIO(reference), dtype="float32",
+                                        always_2d=True)
+                    audio = audio.mean(axis=1)[:int(NAVOIY_REF_SECONDS * sr)]
+                    if audio.shape[0] >= sr and sr >= 16000:
+                        prompt = f"{tmp}/ref.wav"
+                        sf.write(prompt, audio, sr)
+                    else:
+                        print(f"navoiy: reference too short or below 16 kHz "
+                              f"({audio.shape[0] / sr:.1f}s @ {sr}) - stock voice")
+                except Exception as exc:
+                    print(f"navoiy: unreadable reference ({exc}) - stock voice")
+            t0, spoken = time.perf_counter(), 0.0
+            for text in texts:
+                norm = self.normalize(text, mode="infer")
+                if not norm.strip():
+                    out.append(b"")
+                    continue
+                self.seed_all(seed)
+                try:
+                    with torch.inference_mode():
+                        parts = [o["tts_speech"] for o in self.cv.inference_instruct2(
+                            norm, instruct, prompt, stream=False,
+                            text_frontend=False)]
+                    wav = torch.cat(parts, dim=1).squeeze(0).float().cpu().numpy()
+                    spoken += wav.shape[0] / self.cv.sample_rate
+                    out.append(wav.astype("<f4").tobytes())
+                except Exception as exc:
+                    print(f"navoiy: line failed ({type(exc).__name__}: {exc}): "
+                          f"{norm[:60]!r}")
+                    out.append(b"")
+        took = time.perf_counter() - t0
+        print(f"navoiy: {len(texts)} lines, {spoken:.1f}s of speech in "
+              f"{took:.1f}s (rtf {took / max(spoken, 0.01):.2f}), "
+              f"{'cloned' if prompt != NAVOIY_STOCK_PROMPT else 'stock'} voice")
+        return out
+
+
 @app.function(
     image=image,
     gpu="L4",
@@ -421,6 +686,8 @@ image = (
 @modal.asgi_app()
 def web():
     """Return the existing FastAPI app unchanged."""
+    from app.pipeline import tts_navoiy
+    tts_navoiy.bind(Navoiy)               # Uzbek TTS, see the Navoiy class
     from app.main import app as fastapi_app
     return fastapi_app
 
@@ -505,10 +772,11 @@ def smoke() -> dict:
 
     from app.config import get_settings
     from app.jobs import _STAGE_DEFS, _initial_status
-    from app.pipeline import media
+    from app.pipeline import media, tts_navoiy
     from app.pipeline.orchestrator import Orchestrator
     from app.schemas import DubOptions, Job, JobResult, StageState
 
+    tts_navoiy.bind(Navoiy)
     s = get_settings()
     work = Path("/tmp/smoke")
     work.mkdir(parents=True, exist_ok=True)
@@ -541,12 +809,6 @@ def smoke() -> dict:
                       for k, l in _STAGE_DEFS],
               result=JobResult(), created_at=time.time(), updated_at=time.time())
 
-    ref_path = None
-    if reference:
-        ref_path = work / f"reference{reference_suffix}"
-        ref_path.write_bytes(reference)
-        print(f"dub: using a supplied voice reference ({len(reference)/1e6:.1f} MB)")
-
     async def emit(_j, final=False):
         return None
 
@@ -554,8 +816,7 @@ def smoke() -> dict:
     error = None
     try:
         asyncio.run(Orchestrator().run(job, src_video, "lecture", emit,
-                                       force_simulate=False,
-                                       reference_audio=ref_path))
+                                       force_simulate=False))
     except Exception as exc:
         error = f"{type(exc).__name__}: {exc}"
     elapsed = time.perf_counter() - started
@@ -609,10 +870,11 @@ def dub_bytes(video: bytes, target_lang: str = "uz", suffix: str = ".mp4",
 
     from app.config import get_settings
     from app.jobs import _STAGE_DEFS, _initial_status
-    from app.pipeline import media
+    from app.pipeline import media, tts_navoiy
     from app.pipeline.orchestrator import Orchestrator, _build_speaker_ref
     from app.schemas import DubOptions, Job, JobResult, StageState
 
+    tts_navoiy.bind(Navoiy)
     s = get_settings()
     work = Path("/tmp/dub")
     work.mkdir(parents=True, exist_ok=True)
@@ -705,6 +967,147 @@ def dub(path: str, target: str = "uz", out: str = "dub_result",
         print(f"wrote {out}.wav ({len(wav) / 1e6:.1f} MB)")
     print(f"wrote {out}.json")
 
+
+
+# Sentences for navoiy_check, each with what Navoiy's normaliser should make of
+# it, which is what a listener (and the ASR) actually hears. The last two test
+# the normaliser itself: dates, times, numbers and Cyrillic input.
+NAVOIY_SAMPLES = [
+    ("Assalomu alaykum, bugun havo juda yaxshi.", None),
+    ("Qishloqda gʻozlar va oʻrdaklar koʻp boʻladi.", None),
+    ("Xalqaro hamkorlik masalalari boʻyicha muzokaralar davom etmoqda.", None),
+    ("Kitob oʻqish insonning dunyoqarashini kengaytiradi.", None),
+    ("Uchrashuv 15-oktabr kuni soat 10:30 da boʻladi.",
+     "Uchrashuv o'n beshinchi oktabr kuni soat o'n o'ttiz da bo'ladi."),
+    ("Тошкент Ўзбекистоннинг пойтахти.", "Toshkent O'zbekistonning poytaxti."),
+]
+
+
+def _uz_cer(ref: str, hyp: str) -> float:
+    """Character error rate, ignoring case, punctuation and apostrophes (the
+    ASR and the text disagree on which apostrophe Uzbek uses)."""
+    import re
+
+    def norm(t: str) -> str:
+        t = re.sub(r"[ʻʼ‘’`´']", "", t.lower())
+        return re.sub(r"\s+", " ", re.sub(r"[^\w\s]", " ", t)).strip()
+
+    r, h = norm(ref), norm(hyp)
+    if not r:
+        return 1.0
+    prev = list(range(len(h) + 1))
+    for i, rc in enumerate(r, 1):
+        cur = [i]
+        for j, hc in enumerate(h, 1):
+            cur.append(min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (rc != hc)))
+        prev = cur
+    return prev[-1] / len(r)
+
+
+@app.function(image=image, gpu="L4", timeout=1200, memory=16384)
+def uz_transcribe(wavs: list[bytes]) -> list[str]:
+    """Transcribe Uzbek audio files with the pipeline's own GigaAM path (VAD
+    regions, then GigaAM large_ctc), the judge the laptop evaluation used."""
+    from pathlib import Path
+
+    from app.pipeline import media
+    from app.pipeline.stt import WhisperSTT
+    from app.pipeline.stt_gigaam import GigaAMSTT
+
+    stt, giga = WhisperSTT(), GigaAMSTT()
+    out = []
+    for i, data in enumerate(wavs):
+        src, wav = Path(f"/tmp/uz_{i}_in.wav"), Path(f"/tmp/uz_{i}.wav")
+        src.write_bytes(data)
+        if not data or not media.extract_audio(src, wav):
+            out.append("")
+            continue
+        segs, _, _ = giga.transcribe(wav, "uz", stt.speech_regions(wav))
+        out.append(" ".join(seg.source_text for seg in segs).strip())
+    return out
+
+
+@app.local_entrypoint()
+def navoiy_check(video: str = "", reference: str = "", source: str = "en",
+                 mode: str = "both", out: str = "navoiy_check"):
+    """Check the Navoiy class on Modal, scoring what it says with GigaAM.
+
+        modal run deploy/modal/modal_app.py::navoiy_check
+        modal run deploy/modal/modal_app.py::navoiy_check --reference voice.wav
+        modal run deploy/modal/modal_app.py::navoiy_check --video clip.mp4
+
+    Without --video it voices NAVOIY_SAMPLES (stock voice, or --reference) and
+    reports the CER of each line. With --video it also runs a whole dub into
+    Uzbek through dub_bytes, i.e. the orchestrator as a job runs it, and scores
+    the dubbed track against the translation it was meant to say.
+    """
+    import io
+    import json
+    import time
+    import wave
+    from pathlib import Path
+
+    import numpy as np
+
+    def to_wav(raw: bytes, rate: int = 24000) -> bytes:
+        pcm = np.clip(np.frombuffer(raw, dtype="<f4"), -1, 1)
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(rate)
+            w.writeframes((pcm * 32767).astype("<i2").tobytes())
+        return buf.getvalue()
+
+    folder = Path(out)
+    folder.mkdir(parents=True, exist_ok=True)
+    report: dict = {}
+
+    t0 = time.perf_counter()
+    report["ping"] = Navoiy().ping.remote()
+    report["cold_start_seconds"] = round(time.perf_counter() - t0, 1)
+    print("navoiy:", report["ping"], f"(ready after {report['cold_start_seconds']}s)")
+
+    ref = Path(reference).read_bytes() if reference else None
+    texts = [t for t, _ in NAVOIY_SAMPLES]
+    t0 = time.perf_counter()
+    clips = Navoiy().synthesize.remote(texts, ref)
+    took = time.perf_counter() - t0
+    wavs = [to_wav(c) if c else b"" for c in clips]
+    for i, w in enumerate(wavs):
+        if w:
+            (folder / f"line{i}.wav").write_bytes(w)
+    spoken = sum(len(c) / 4 / 24000 for c in clips)
+    heard = uz_transcribe.remote(wavs)
+    rows = []
+    for (text, said), clip, hyp in zip(NAVOIY_SAMPLES, clips, heard):
+        cer = _uz_cer(said or text, hyp) if clip else None
+        rows.append({"text": text, "heard": hyp, "seconds": round(len(clip) / 96000, 2),
+                     "cer": None if cer is None else round(cer * 100, 1)})
+        print(f"  CER {'FAIL' if cer is None else f'{cer * 100:5.1f}%'}  {text}\n"
+              f"             heard: {hyp}")
+    report["lines"] = rows
+    report["synthesis"] = {"seconds": round(took, 1), "speech_seconds": round(spoken, 1)}
+    print(f"navoiy: {spoken:.1f}s of speech in {took:.1f}s wall (incl. transfer)")
+
+    if video:
+        res = dub_bytes.remote(Path(video).read_bytes(), "uz",
+                               Path(video).suffix or ".mp4", source, True, mode)
+        dub_wav = res.pop("dub_wav", None)
+        tts = next((st for st in res["stages"] if st["key"] == "tts"), {})
+        said = " ".join(sg["tgt"] or "" for sg in res["segments"])
+        hyp = uz_transcribe.remote([dub_wav])[0] if dub_wav else ""
+        report["dub"] = {"elapsed_seconds": res["elapsed_seconds"],
+                         "error": res["error"], "tts": tts,
+                         "cer": round(_uz_cer(said, hyp) * 100, 1) if hyp else None,
+                         "translation": said, "heard": hyp}
+        if dub_wav:
+            (folder / "dub.wav").write_bytes(dub_wav)
+        print(json.dumps(report["dub"], indent=2, ensure_ascii=False))
+
+    (folder / "report.json").write_text(json.dumps(report, indent=2, ensure_ascii=False),
+                                        encoding="utf-8")
+    print(f"wrote {folder}/")
 
 @app.function(image=image, secrets=[*refine_secret], timeout=180)
 def refine_check() -> dict:

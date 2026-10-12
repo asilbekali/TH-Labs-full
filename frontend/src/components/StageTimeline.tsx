@@ -109,6 +109,8 @@ function detailLine(st: StageState): string {
   }
   if (st.key === 'nmt' && d.length_ratio != null) return `length ratio ${d.length_ratio}`
   if (st.key === 'tts' && d.engine) {
+    if (d.engine === 'Navoiy')
+      return d.voice_clone ? 'native Uzbek in the source voice (Navoiy)' : 'native Uzbek voice (Navoiy)'
     if (d.engine === 'OmniVoice') return 'cloning source voice (OmniVoice)'
     if (d.engine === 'edge-tts + OpenVoice') return 'edge-tts + OpenVoice voice clone'
     if (d.engine === 'edge-tts') return 'neural voice · edge-tts'

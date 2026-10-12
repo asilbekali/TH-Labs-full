@@ -181,6 +181,13 @@ class Settings(BaseSettings):
     omnivoice_device: str = "auto"       # auto|cuda:0|cpu
     omnivoice_ref_seconds: float = 12.0  # length of speaker reference clip
 
+    # ── TTS · Navoiy (Uzbek only) ─────────────────────────────────────────
+    # A CosyVoice2 model trained on Uzbek, used for every Uzbek target ahead
+    # of OmniVoice and edge-tts. It runs as a separate Modal class (see
+    # pipeline/tts_navoiy.py), so it is only active where the deployment binds
+    # one; this switch turns it off there without a code change.
+    navoiy_enabled: bool = True
+
     # ── Lip sync · Wav2Lip (optional) ─────────────────────────────────────
     wav2lip_dir: Path | None = None
 
