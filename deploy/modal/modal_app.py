@@ -799,7 +799,11 @@ class Navoiy:
 
 @app.function(
     image=image,
-    gpu="L4",
+    # An A10 when no L4 is free: same 24 GB, and Ampere has the bf16 OmniVoice
+    # needs (a T4 does not). This function also serves the Studio page, so a
+    # sign-in redirect waits out its whole cold start; pinned to L4 on
+    # 2026-10-12 that was 75 s, 74 of them queued for a GPU.
+    gpu=["L4", "A10"],
     volumes={DATA_DIR: media},
     # Supplies TH_LABS_JWT_SECRET at runtime; without it every authenticated
     # route returns 503 rather than running the pipeline for anonymous callers.
