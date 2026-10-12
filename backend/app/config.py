@@ -187,6 +187,10 @@ class Settings(BaseSettings):
     # pipeline/tts_navoiy.py), so it is only active where the deployment binds
     # one; this switch turns it off there without a code change.
     navoiy_enabled: bool = True
+    # Per-line emotion presets (pipeline/emotion.py): an audio emotion model
+    # hears each source line, the translation-repair provider picks the preset
+    # from that and the text. False voices every line calm, as before.
+    navoiy_emotions: bool = True
 
     # ── Lip sync · Wav2Lip (optional) ─────────────────────────────────────
     wav2lip_dir: Path | None = None

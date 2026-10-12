@@ -17,7 +17,7 @@ from typing import Awaitable, Callable
 from ..config import get_settings
 from ..schemas import (DubOptions, Job, JobResult, Segment, StageState,
                        StageStatus)
-from . import bleed, media, metrics, refine
+from . import bleed, emotion, media, metrics, refine
 from .lipsync import Wav2LipSync
 from .nmt import NLLBTranslator
 from .separation import DemucsSeparator
@@ -383,6 +383,7 @@ class Orchestrator:
         measured_similarity: float | None = None
         voiced: TTSOutcome | None = None
         tts_stats: dict | None = None
+        emotions: dict | None = None
         async with _stage(job, "tts", emit) as st:
             done = False
             # voice_mode is authoritative; voice_clone is what older clients
@@ -409,6 +410,20 @@ class Orchestrator:
                         ref_audio, _ = await self._speaker_ref(
                             job, segments, reference_audio, want_text=False)
                     tts_src = job.result.detected_source_lang or options.source_lang
+                    # One preset per line, from how it was said and what it
+                    # says (pipeline/emotion.py). A re-voice keeps the first
+                    # dub's presets; the source audio is only heard if needed.
+                    # Anything going wrong here costs the emotions (every line
+                    # calm), never the engine.
+                    src_wav = s.uploads_dir / f"{job.id}.wav"
+                    try:
+                        emotions = await self._heartbeat(job, "tts", emit,
+                            lambda: emotion.assign(
+                                segments, tts_src,
+                                lambda: self.navoiy.hear(src_wav, segments)))
+                    except Exception as exc:
+                        log.warning("[%s] emotion presets skipped (%s)",
+                                    job.id, exc)
                     lid = (self.stt.language_probs if self.stt.available()
                            else None)
                     voiced = await self._heartbeat(job, "tts", emit,
@@ -418,8 +433,9 @@ class Orchestrator:
                             target_lang=options.target_lang,
                             language_probs=lid))
                     tts_stats = self.navoiy.last_stats
-                    log.info("[%s] tts navoiy: voiced %s/%s lines, %s", job.id,
-                             voiced.voiced, voiced.total, tts_stats)
+                    log.info("[%s] tts navoiy: voiced %s/%s lines, %s, "
+                             "emotions %s", job.id, voiced.voiced, voiced.total,
+                             tts_stats, emotions)
                     if voiced.ok:
                         tts_engine, used_real, done = "Navoiy", True, True
                         voice_cloned = bool(tts_stats and tts_stats["cloned"])
@@ -531,6 +547,8 @@ class Orchestrator:
             st.detail = {"engine": tts_engine, "voice_mode": mode,
                          "voice_clone": voice_cloned,
                          "language_check": tts_stats,
+                         **({"emotions": emotions}
+                            if emotions and tts_engine == "Navoiy" else {}),
                          "engine_mode": "real" if tts_engine != "simulation"
                          else "simulation",
                          **({"voiced": voiced.voiced, "lines": voiced.total}

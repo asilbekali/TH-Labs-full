@@ -63,6 +63,10 @@ class Segment(BaseModel):
     source_text: str
     target_text: Optional[str] = None
     speaker_similarity: Optional[float] = None
+    # The delivery the line was dubbed with (one of pipeline.emotion.PRESETS),
+    # for engines that take one. Kept on the segment so re-voicing an edited
+    # translation reuses it instead of detecting it again.
+    emotion: Optional[str] = None
 
 
 class StageState(BaseModel):

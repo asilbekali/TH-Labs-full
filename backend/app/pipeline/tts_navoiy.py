@@ -87,18 +87,35 @@ class NavoiyTTS:
 
         threading.Thread(target=spawn, daemon=True).start()
 
-    def _generate(self, texts: list[str], reference: bytes | None):
-        """Voice `texts` remotely. Returns one float32 array per text, or None
-        where that line failed."""
+    def hear(self, audio: Path, segments: list[Segment]) -> list[dict | None]:
+        """How each segment was said in the source: the emotion model's
+        {"label", "score"} per segment, or None where it could not tell.
+        Never raises — no labels just means the text decides alone."""
+        if not segments or not Path(audio).exists():
+            return [None] * len(segments)
+        try:
+            heard = _remote().emotions.remote(
+                Path(audio).read_bytes(),
+                [[seg.start, seg.end] for seg in segments])
+        except Exception as exc:
+            log.warning("navoiy: emotion model failed (%s)", exc)
+            return [None] * len(segments)
+        if not isinstance(heard, list) or len(heard) != len(segments):
+            return [None] * len(segments)
+        return heard
+
+    def _generate(self, texts: list[str], reference: bytes | None,
+                  styles: list[str]):
+        """Voice `texts` remotely, each with its preset from `styles`. Returns
+        one float32 array per text, or None where that line failed."""
         import numpy as np
 
         if not texts:
             return []
-        batches = [texts[i:i + BATCH_LINES]
-                   for i in range(0, len(texts), BATCH_LINES)]
+        args = [(texts[i:i + BATCH_LINES], reference, styles[i:i + BATCH_LINES])
+                for i in range(0, len(texts), BATCH_LINES)]
         clips: list = []
-        for batch in _remote().synthesize.map(
-                batches, kwargs={"reference": reference}, order_outputs=True):
+        for batch in _remote().synthesize.starmap(args, order_outputs=True):
             for raw in batch:
                 clip = np.frombuffer(raw, dtype="<f4") if raw else None
                 clips.append(clip if clip is not None and clip.size else None)
@@ -112,6 +129,7 @@ class NavoiyTTS:
         """Voice every translated line and lay it on the source timeline.
 
         `ref_audio` is the voice to clone; None uses the model's stock voice.
+        Each line is spoken with its segment's `emotion` preset, calm if unset.
         Placement is the edge-tts path: trim, plan the timeline from the real
         clip lengths, compress toward each slot, cut at the collision limit.
         """
@@ -138,7 +156,8 @@ class NavoiyTTS:
                      if ref_audio and Path(ref_audio).exists() else None)
         stats["cloned"] = reference is not None
         texts = [t for _, t in lines]
-        clips = self._generate(texts, reference)
+        styles = [seg.emotion or "calm" for seg, _ in lines]
+        clips = self._generate(texts, reference, styles)
         failed = sum(c is None for c in clips)
 
         # A line heard in the source language is voiced again in the stock
@@ -155,7 +174,8 @@ class NavoiyTTS:
                     return False      # a broken check must not block the dub
             flagged = [i for i, c in enumerate(clips) if heard(c)]
             if flagged and reference is not None:
-                redo = self._generate([texts[i] for i in flagged], None)
+                redo = self._generate([texts[i] for i in flagged], None,
+                                      [styles[i] for i in flagged])
                 for i, clip in zip(flagged, redo):
                     if clip is not None and not heard(clip):
                         clips[i] = clip

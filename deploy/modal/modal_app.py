@@ -431,6 +431,15 @@ NAVOIY_REF_SECONDS = 15.0
 # CosyVoice's requirements take the CUDA 12 build from this feed.
 ORT_CUDA12_INDEX = ("https://aiinfra.pkgs.visualstudio.com/PublicPackages/"
                     "_packaging/onnxruntime-cuda-12/pypi/simple/")
+# emotion2vec+ large (~300M; FunASR model licence): hears how each source line
+# was said, so the dub can pick a matching Navoiy preset (pipeline/emotion.py).
+# Same lab and stack as CosyVoice, which is why it lives in this image.
+EMOTION2VEC = ("emotion2vec/emotion2vec_plus_large",
+               "6c303ba987b86b93193de93e34bb2b077a6bedc4")
+EMOTION2VEC_DIR = "/opt/emotion2vec"
+# Shorter than this and the emotion model is guessing; longer is capped, since a
+# line's delivery is audible well inside it.
+EMOTION_MIN_SECONDS, EMOTION_MAX_SECONDS = 0.6, 20.0
 
 
 def _fetch_navoiy() -> None:
@@ -483,9 +492,64 @@ def _download_navoiy() -> None:
         print(f"  SKIP  Navoiy -> {type(exc).__name__}: {exc}")
 
 
+# The model's class labels, in output order. configuration.json points funasr at
+# a tokens.txt for these, which the Hugging Face copy does not ship (only
+# ModelScope's does); without it every label lookup fails. Order and spelling
+# are the model card's list, identical to ModelScope's tokens.txt.
+EMOTION2VEC_TOKENS = ("生气/angry", "厌恶/disgusted", "恐惧/fearful", "开心/happy",
+                      "中立/neutral", "其他/other", "难过/sad", "吃惊/surprised",
+                      "<unk>")
+
+
+def _fetch_emotion2vec() -> None:
+    from huggingface_hub import snapshot_download
+
+    repo, rev = EMOTION2VEC
+    snapshot_download(repo, revision=rev, local_dir=EMOTION2VEC_DIR,
+                      allow_patterns=["config.yaml", "configuration.json",
+                                      "model.pt", "example/*"])
+
+
+def _download_emotion2vec() -> None:
+    try:
+        _fetch_emotion2vec()
+        print("  ok    emotion2vec+ large")
+    except Exception as exc:
+        print(f"  SKIP  emotion2vec -> {type(exc).__name__}: {exc}")
+
+
+def _load_emotion2vec(device: str):
+    """Load emotion2vec, writing its label list first if it is missing. Done
+    here rather than in the download step: Modal caches a build step by that
+    function's own source, so a change in a helper it calls never re-runs it."""
+    from funasr import AutoModel
+
+    tokens = Path(EMOTION2VEC_DIR) / "tokens.txt"
+    if not tokens.exists():
+        tokens.write_text("\n".join(EMOTION2VEC_TOKENS) + "\n", encoding="utf-8")
+    return AutoModel(model=EMOTION2VEC_DIR, device=device, disable_update=True,
+                     log_level="ERROR")
+
+
+def _top_emotion(result) -> dict | None:
+    """emotion2vec's best label for one clip, as {"label", "score"}. Its labels
+    are bilingual ("生气/angry"); <unk> is reported as "other"."""
+    if not result:
+        return None
+    labels, scores = result[0].get("labels"), result[0].get("scores")
+    if not labels or scores is None or len(labels) != len(scores):
+        return None
+    k = max(range(len(scores)), key=lambda j: float(scores[j]))
+    label = str(labels[k]).split("/")[-1].strip().lower()
+    return {"label": "other" if label in ("<unk>", "unk", "") else label,
+            "score": round(float(scores[k]), 3)}
+
+
 def _check_navoiy() -> None:
-    """Build-time load of the full model. Deliberately fatal: an image that
-    cannot load it would silently send every Uzbek dub to the fallback."""
+    """Build-time load of both models. Deliberately fatal: an image that
+    cannot load Navoiy would silently send every Uzbek dub to the fallback,
+    and funasr is installed on top of CosyVoice's pins, so this also proves it
+    did not move them."""
     if not (Path(NAVOIY_MODEL_DIR) / "llm.pt").exists():
         print("  SKIP  Navoiy load check -> weights not baked in")
         return
@@ -493,6 +557,14 @@ def _check_navoiy() -> None:
 
     cv = CosyVoice2(NAVOIY_MODEL_DIR)       # no GPU at build: CPU, fp32
     print(f"  ok    Navoiy loads ({cv.sample_rate} Hz)")
+    example = Path(EMOTION2VEC_DIR) / "example" / "test.wav"
+    if example.exists():
+        ser = _load_emotion2vec("cpu")
+        got = _top_emotion(ser.generate(str(example), granularity="utterance",
+                                        extract_embedding=False))
+        if got is None:
+            raise RuntimeError("emotion2vec loaded but returned no label")
+        print(f"  ok    emotion2vec+ hears its example as {got}")
 
 
 navoiy_image = (
@@ -543,6 +615,11 @@ navoiy_image = (
     # Below the weights so adding these did not re-download 6 GB.
     .apt_install("build-essential")
     .pip_install("gdown==5.1.0", "wget==3.2", "pyworld==0.3.4")
+    # funasr runs emotion2vec. Its own requirements are unpinned, so the stack
+    # CosyVoice was validated on is restated in the same call to hold it still.
+    .pip_install("funasr==1.4.16", "torch==2.3.1", "torchaudio==2.3.1",
+                 "transformers==4.51.3", "numpy==1.26.4", "modelscope==1.20.0")
+    .run_function(_download_emotion2vec)
     # The import check above cannot see what cosyvoice2.yaml instantiates, which
     # is how gdown was missed. Load the whole model once, on CPU.
     .run_function(_check_navoiy)
@@ -572,6 +649,15 @@ class Navoiy:
         if not (Path(NAVOIY_MODEL_DIR) / "llm.pt").exists() \
                 or not (Path(NAVOIY_CODE_DIR) / "uztts").exists():
             _fetch_navoiy()
+        # The emotion model is an extra: without it lines are still voiced,
+        # and pipeline/emotion.py decides from the text alone.
+        try:
+            if not (Path(EMOTION2VEC_DIR) / "model.pt").exists():
+                _fetch_emotion2vec()
+            self.ser = _load_emotion2vec("cuda")
+        except Exception as exc:
+            print(f"navoiy: emotion model unavailable ({type(exc).__name__}: {exc})")
+            self.ser = None
         from cosyvoice.cli.cosyvoice import CosyVoice2
         from cosyvoice.utils.common import set_all_random_seed
         from uztts.normalize import normalize
@@ -603,10 +689,50 @@ class Navoiy:
                     self.cv.frontend.speech_tokenizer_session.get_providers()[0]}
 
     @modal.method()
+    def emotions(self, audio: bytes, spans: list[list[float]]) -> list[dict | None]:
+        """How each span (start, end in seconds) of `audio` was said:
+        emotion2vec's {"label", "score"}, or None where it cannot tell (too
+        short, or no model)."""
+        import io
+        import tempfile
+
+        import soundfile as sf
+        import torch
+        import torchaudio
+
+        if self.ser is None:
+            return [None] * len(spans)
+        wav, sr = sf.read(io.BytesIO(audio), dtype="float32", always_2d=True)
+        x = torch.from_numpy(wav.mean(axis=1))
+        if sr != 16000:
+            x = torchaudio.functional.resample(x, sr, 16000)
+        x = x.numpy()
+        out: list[dict | None] = []
+        with tempfile.TemporaryDirectory() as tmp:
+            for n, (start, end) in enumerate(spans):
+                clip = x[int(max(0.0, start) * 16000):int(end * 16000)]
+                clip = clip[:int(EMOTION_MAX_SECONDS * 16000)]
+                if clip.shape[0] < EMOTION_MIN_SECONDS * 16000:
+                    out.append(None)
+                    continue
+                path = f"{tmp}/s{n}.wav"
+                sf.write(path, clip, 16000)
+                try:
+                    out.append(_top_emotion(self.ser.generate(
+                        path, granularity="utterance", extract_embedding=False)))
+                except Exception as exc:
+                    print(f"navoiy: emotion failed on span {n} ({exc})")
+                    out.append(None)
+        return out
+
+    @modal.method()
     def synthesize(self, texts: list[str], reference: bytes | None = None,
-                   style: str = "calm", seed: int = 1986) -> list[bytes]:
-        """Voice each text. Returns float32 little-endian PCM at 24 kHz per
-        text, or b"" for a line that failed — one bad line never sinks the rest.
+                   styles: list[str] | None = None,
+                   seed: int = 1986) -> list[bytes]:
+        """Voice each text, text i in preset `styles[i]` (one of Navoiy's
+        emotion tags; calm when unset or unknown). Returns float32
+        little-endian PCM at 24 kHz per text, or b"" for a line that failed —
+        one bad line never sinks the rest.
 
         Runs `inference_instruct2`, as Navoiy's own inference.py does: the
         reference clip (or the stock voice) supplies timbre to the flow model,
@@ -622,7 +748,7 @@ class Navoiy:
         import soundfile as sf
         import torch
 
-        instruct = self.instructs.get(style, self.instructs["calm"])
+        calm = self.instructs["calm"]
         out: list[bytes] = []
         with tempfile.TemporaryDirectory() as tmp:
             prompt = NAVOIY_STOCK_PROMPT
@@ -640,7 +766,9 @@ class Navoiy:
                 except Exception as exc:
                     print(f"navoiy: unreadable reference ({exc}) - stock voice")
             t0, spoken = time.perf_counter(), 0.0
-            for text in texts:
+            for n, text in enumerate(texts):
+                style = styles[n] if styles and n < len(styles) else "calm"
+                instruct = self.instructs.get(style or "calm", calm)
                 norm = self.normalize(text, mode="infer")
                 if not norm.strip():
                     out.append(b"")
@@ -742,7 +870,8 @@ def preflight() -> dict:
     return out
 
 
-@app.function(image=image, gpu="L4", timeout=1800, memory=16384)
+@app.function(image=image, gpu="L4", timeout=1800, memory=16384,
+              secrets=[*refine_secret])   # as web(): repair + emotion picks
 def smoke() -> dict:
     """Run one real dub end to end, inside the deployed image.
 
@@ -846,7 +975,8 @@ def smoke() -> dict:
     return result
 
 
-@app.function(image=image, gpu="L4", timeout=1800, memory=16384)
+@app.function(image=image, gpu="L4", timeout=1800, memory=16384,
+              secrets=[*refine_secret])   # as web(): repair + emotion picks
 def dub_bytes(video: bytes, target_lang: str = "uz", suffix: str = ".mp4",
               source_lang: str = "auto", voice_clone: bool = True,
               voice_mode: str = "", reference: bytes | None = None,
@@ -1027,19 +1157,30 @@ def uz_transcribe(wavs: list[bytes]) -> list[str]:
     return out
 
 
+# One sentence voiced in every Navoiy emotion preset, to listen to side by side.
+NAVOIY_PRESET_LINE = "Bugun biz siz bilan juda muhim bir mavzuni muhokama qilamiz."
+NAVOIY_PRESETS = ("calm", "happy", "sad", "angry", "nervous", "surprised",
+                  "whispers", "warm", "tired", "sarcastic")
+
+
 @app.local_entrypoint()
 def navoiy_check(video: str = "", reference: str = "", source: str = "en",
-                 mode: str = "both", out: str = "navoiy_check"):
+                 mode: str = "both", emotion_clips: str = "",
+                 out: str = "navoiy_check"):
     """Check the Navoiy class on Modal, scoring what it says with GigaAM.
 
         modal run deploy/modal/modal_app.py::navoiy_check
         modal run deploy/modal/modal_app.py::navoiy_check --reference voice.wav
         modal run deploy/modal/modal_app.py::navoiy_check --video clip.mp4
+        modal run deploy/modal/modal_app.py::navoiy_check --emotion-clips dir
 
-    Without --video it voices NAVOIY_SAMPLES (stock voice, or --reference) and
-    reports the CER of each line. With --video it also runs a whole dub into
-    Uzbek through dub_bytes, i.e. the orchestrator as a job runs it, and scores
-    the dubbed track against the translation it was meant to say.
+    Always: voices NAVOIY_SAMPLES (stock voice, or --reference), and
+    NAVOIY_PRESET_LINE once in every emotion preset; reports the CER of each
+    and saves the audio. --emotion-clips runs the emotion model over every
+    .wav in a folder, whole clip as one span, so labels can be checked against
+    clips whose emotion is known. --video also runs a whole dub into Uzbek through
+    dub_bytes, i.e. the orchestrator as a job runs it, and scores the dubbed
+    track against the translation it was meant to say.
     """
     import io
     import json
@@ -1089,6 +1230,30 @@ def navoiy_check(video: str = "", reference: str = "", source: str = "en",
     report["lines"] = rows
     report["synthesis"] = {"seconds": round(took, 1), "speech_seconds": round(spoken, 1)}
     print(f"navoiy: {spoken:.1f}s of speech in {took:.1f}s wall (incl. transfer)")
+
+    presets = Navoiy().synthesize.remote([NAVOIY_PRESET_LINE] * len(NAVOIY_PRESETS),
+                                         ref, list(NAVOIY_PRESETS))
+    pwavs = [to_wav(c) if c else b"" for c in presets]
+    report["presets"] = {}
+    for name, clip, w, hyp in zip(NAVOIY_PRESETS, presets, pwavs,
+                                  uz_transcribe.remote(pwavs)):
+        if w:
+            (folder / f"preset_{name}.wav").write_bytes(w)
+        cer = _uz_cer(NAVOIY_PRESET_LINE, hyp) if clip else None
+        report["presets"][name] = {"seconds": round(len(clip) / 96000, 2),
+                                   "cer": None if cer is None else round(cer * 100, 1)}
+        print(f"  preset {name:9s} {len(clip) / 96000:5.2f}s  CER "
+              f"{'FAIL' if cer is None else f'{cer * 100:5.1f}%'}")
+
+    if emotion_clips:
+        files = sorted(Path(emotion_clips).glob("*.wav"))
+        report["clips"] = {}
+        for f in files:
+            with wave.open(str(f), "rb") as w:
+                secs = w.getnframes() / w.getframerate()
+            got = Navoiy().emotions.remote(f.read_bytes(), [[0.0, secs]])[0]
+            report["clips"][f.name] = got
+            print(f"  heard {f.name:24s} -> {got}")
 
     if video:
         res = dub_bytes.remote(Path(video).read_bytes(), "uz",
