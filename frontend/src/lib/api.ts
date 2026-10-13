@@ -294,3 +294,77 @@ export function mediaUrl(path: string | null): string | undefined {
   if (/^https?:\/\//.test(path) || BASE.startsWith('/')) return path
   return new URL(path, BASE).toString()
 }
+
+// ── Text to speech (the /tts page; backend/app/speech.py) ─────────────────────
+// A render runs as a background task on the pipeline: POST starts it, GET polls
+// it. One long request would hit Modal's 150 s web timeout on a cold start.
+
+export interface SpeechVoice {
+  id: string
+  label: string
+  /** Uzbek only: one of Navoiy's trained styles, or a blend built on one. */
+  group?: 'trained' | 'blend'
+}
+
+export interface SpeechVoices {
+  navoiy: { available: boolean; languages: string[]; voices: SpeechVoice[]; default: string }
+  omnivoice: { available: boolean; voices: SpeechVoice[]; default: string }
+  max_chars: number
+}
+
+export interface SpeechTask {
+  id: string
+  language: string
+  voice: string
+  chars: number
+  status: 'queued' | 'running' | 'done' | 'failed'
+  engine: string | null
+  audio_url: string | null
+  duration: number | null
+  error: string | null
+  credits_charged: number | null
+  balance_after: number | null
+}
+
+/** Engines and voices. `warm` starts that language's engine early. */
+export async function getSpeechVoices(warm?: string): Promise<SpeechVoices> {
+  const q = warm ? `?warm=${encodeURIComponent(warm)}` : ''
+  const r = await fetch(`${BASE}/tts/voices${q}`)
+  if (!r.ok) throw new Error(`voices failed: ${r.status}`)
+  return r.json()
+}
+
+async function speechError(r: Response, what: string): Promise<Error> {
+  const raw = await r.text().catch(() => '')
+  let detail = ''
+  try {
+    const parsed = JSON.parse(raw)
+    if (typeof parsed?.detail === 'string') detail = parsed.detail
+  } catch {
+    /* not JSON */
+  }
+  if (r.status === 402) return new PaymentRequiredError(detail)
+  return new Error(detail || `${what}: ${r.status}`)
+}
+
+export async function createSpeech(input: {
+  text: string
+  language: string
+  voice?: string
+}): Promise<SpeechTask> {
+  const r = await authFetchUrl(`${BASE}/tts`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+  if (r.status === 401) throw new AuthRequiredError()
+  if (!r.ok) throw await speechError(r, 'speech failed')
+  return (await r.json()).task
+}
+
+export async function getSpeech(id: string): Promise<SpeechTask> {
+  const r = await authFetchUrl(`${BASE}/tts/${id}`)
+  if (r.status === 401) throw new AuthRequiredError()
+  if (!r.ok) throw await speechError(r, 'speech status failed')
+  return (await r.json()).task
+}

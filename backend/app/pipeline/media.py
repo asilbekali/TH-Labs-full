@@ -298,6 +298,24 @@ def tts_fit(src_audio: Path, out_wav: Path, target_seconds: float,
     return _run_ffmpeg(cmd, out_wav, f"tts_fit({src_audio.name})", timeout=60)
 
 
+def pitch_tempo(src: Path, out_wav: Path, semitones: float, tempo: float,
+                sr: int = 24000) -> bool:
+    """Shift pitch by `semitones` and change speed by `tempo` (>1 faster),
+    independently: resampling moves both, and atempo then undoes the speed
+    part of the shift. Used for the /tts page's blended Uzbek styles."""
+    ffmpeg = _bin("ffmpeg")
+    if not ffmpeg or not src.exists():
+        return False
+    ratio = 2 ** (semitones / 12)
+    chain = (f"asetrate={sr * ratio:.0f},aresample={sr},"
+             f"atempo={tempo / ratio:.5f}")
+    return _run_ffmpeg(
+        [ffmpeg, "-y", "-i", str(src), "-af", chain, "-ac", "1",
+         "-ar", str(sr), str(out_wav)],
+        out_wav, "pitch_tempo", timeout=60,
+    )
+
+
 def split_audio(src: Path, out_dir: Path, seconds: float = 30.0,
                 sr: int = 22050) -> list[Path]:
     """Split `src` into ~`seconds` mono WAV chunks (for chunked voice cloning
