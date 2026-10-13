@@ -163,8 +163,12 @@ class OmniVoiceTTS:
     engine = "OmniVoice"
 
     def __init__(self) -> None:
+        import threading
         self._model = None
         self._importable: bool | None = None
+        # One model, two callers: a dub's TTS stage and the /tts page
+        # (app/speech.py). Held for loading and for every generate call.
+        self.lock = threading.Lock()
 
     # ── capability probe ──────────────────────────────────────────────────
     def available(self) -> bool:
@@ -227,7 +231,8 @@ class OmniVoiceTTS:
         import numpy as np
         import soundfile as sf
 
-        model = self._load()
+        with self.lock:
+            model = self._load()
         clone = bool(voice_clone and ref_audio and Path(ref_audio).exists()
                      and (ref_text or "").strip())
         ref = str(ref_audio) if clone else None
@@ -288,7 +293,8 @@ class OmniVoiceTTS:
                                  if k not in ("ref_audio", "ref_text")})
             clip = None
             for n, attempt in enumerate(attempts):
-                out = model.generate(**attempt)
+                with self.lock:
+                    out = model.generate(**attempt)
                 cand = np.asarray(out[0], dtype=np.float32).reshape(-1)
                 if (language_probs is None
                         or cand.shape[0] < MIN_CHECKED_SECONDS * SAMPLE_RATE):

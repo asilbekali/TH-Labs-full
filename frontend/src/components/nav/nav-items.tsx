@@ -58,7 +58,7 @@ const ICON = {
 export const NAV_MAIN: NavItem[] = [
   { to: '/', label: 'Home', icon: ICON.home },
   { to: '/studio', label: 'Studio', icon: ICON.studio },
-  { to: '/tts', label: 'Text to speech', icon: ICON.tts, soon: true },
+  { to: '/tts', label: 'Text to speech', icon: ICON.tts },
   { to: '/works', label: 'My works', icon: ICON.works },
 ]
 

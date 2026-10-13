@@ -1653,3 +1653,91 @@ def lipsync(video: str, audio: str, out: str = "lipsync_out", steps: int = 20,
             print(f"{r['gpu']:10s} {r.get('elapsed_seconds', 0):8.0f}s "
                   f"{r.get('realtime_factor', 0):10.1f}x "
                   f"{r.get('cost_per_video_minute', 0):12.3f}")
+
+
+# ── Text to speech page (backend/app/speech.py) ───────────────────────────────
+TTS_CHECK_LINES = [
+    ("uz", "calm", "Salom! Bugun biz siz bilan juda muhim bir mavzuni muhokama "
+                   "qilamiz. Toshkent O'zbekistonning poytaxti."),
+    ("uz", "happy", "Tabriklayman, siz g'olib bo'ldingiz!"),
+    ("uz", "excited", "Tabriklayman, siz g'olib bo'ldingiz!"),
+    ("uz", "storyteller", "Bir bor ekan, bir yo'q ekan, qadim zamonda bir "
+                          "dono podshoh yashagan ekan."),
+    ("uz", "sleepy", "Bugun juda charchadim, endi uxlagim keladi."),
+    ("en", "female", "Hello! This is a short test of the text to speech page. "
+                     "Every other language is voiced by a multilingual model."),
+    ("ru", "male-deep", "Здравствуйте! Это короткая проверка синтеза речи."),
+]
+
+
+@app.function(image=image, gpu=["L4", "A10"], timeout=1800, memory=16384)
+def tts_bytes(lines: list[tuple[str, str, str]]) -> list[dict]:
+    """Render `lines` (language, voice, text) through the /tts page's own
+    service, billing off, and transcribe each result back with Whisper."""
+    import asyncio
+    import logging
+    import time
+    from pathlib import Path
+
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s | %(message)s")
+
+    from app import speech
+    from app.config import get_settings
+    from app.pipeline import tts_navoiy
+    from app.pipeline.orchestrator import Orchestrator
+
+    tts_navoiy.bind(Navoiy)
+    s = get_settings()
+    s.account_api_url = ""                 # billing off: no account is charged
+    orch = Orchestrator()
+    svc = speech.SpeechService(orch)
+
+    async def render(lang: str, voice: str, text: str):
+        task = await svc.start(text, lang, voice, 0, "")
+        while task.status in ("queued", "running"):
+            await asyncio.sleep(0.5)
+        return task
+
+    out = []
+    for lang, voice, text in lines:
+        t0 = time.perf_counter()
+        task = asyncio.run(render(lang, voice, text))
+        row = {"lang": lang, "voice": task.voice, "engine": task.engine,
+               "status": task.status, "error": task.error,
+               "duration": task.duration,
+               "seconds": round(time.perf_counter() - t0, 1), "text": text}
+        if task.audio_url:
+            wav = s.data_dir / task.audio_url.removeprefix("/media/")
+            row["wav"] = Path(wav).read_bytes()
+            if lang != "uz":
+                segs, _, _ = orch.stt.transcribe(Path(wav), lang, "small")
+                row["heard"] = " ".join(x.source_text for x in segs).strip()
+        out.append(row)
+    return out
+
+
+@app.local_entrypoint()
+def tts_check(out: str = "tts_check"):
+    """Check the Studio's text-to-speech page end to end, without the web app:
+
+        modal run deploy/modal/modal_app.py::tts_check
+
+    Uzbek goes through Navoiy and is scored with GigaAM (CER); the rest goes
+    through OmniVoice and is transcribed back with Whisper. WAVs are written
+    next to `out` to listen to.
+    """
+    import json
+    from pathlib import Path
+
+    rows = tts_bytes.remote(TTS_CHECK_LINES)
+    uz = [r for r in rows if r["lang"] == "uz" and r.get("wav")]
+    if uz:
+        for r, hyp in zip(uz, uz_transcribe.remote([r["wav"] for r in uz])):
+            r["heard"], r["cer"] = hyp, round(_uz_cer(r["text"], hyp), 3)
+    for i, r in enumerate(rows):
+        data = r.pop("wav", None)
+        if data:
+            path = Path(f"{out}_{i}_{r['lang']}_{r['voice']}.wav")
+            path.write_bytes(data)
+            r["file"] = str(path)
+        print(json.dumps(r, ensure_ascii=False, indent=2))

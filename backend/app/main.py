@@ -7,6 +7,9 @@ Endpoints
     POST /api/jobs              → create a dubbing job (upload, source_url, or sample=1)
     GET  /api/jobs/{id}         → job snapshot                        (auth, owner)
     GET  /api/jobs/{id}/events  → SSE live pipeline progress          (auth, owner)
+    GET  /api/tts/voices        → text-to-speech engines + voices     (public)
+    POST /api/tts               → start a text-to-speech render       (auth)
+    GET  /api/tts/{id}          → render status + audio url           (auth, owner)
     /media/...                  → served source & dubbed media
 
 Auth: everything under /api/jobs requires a bearer token issued by the NestJS
@@ -28,7 +31,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
-from . import __version__, billing, languages
+from . import __version__, billing, languages, speech
 from .auth import StudioUser, require_user, require_user_sse
 from .config import get_settings
 from .logging_config import setup_logging
@@ -413,6 +416,45 @@ async def job_events(
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no",
                  "Connection": "keep-alive"},
     )
+
+
+# ── Text to speech (the /tts page; see app/speech.py) ─────────────────────────
+
+def _speech() -> speech.SpeechService:
+    return speech.service(manager.orchestrator)
+
+
+@app.get("/api/tts/voices")
+def tts_voices(warm: str | None = None) -> dict:
+    """Engines and voices for the page. `warm=<lang>` also starts that
+    language's engine, so the first render does not wait out a cold start."""
+    if warm:
+        _speech().warm(warm)
+    return _speech().voices()
+
+
+class SpeechRequest(BaseModel):
+    text: str
+    language: str
+    voice: str | None = None
+
+
+@app.post("/api/tts")
+async def create_speech(body: SpeechRequest,
+                        user: StudioUser = Depends(require_user)) -> dict:
+    if not languages.get(body.language):
+        raise HTTPException(400, f"Unsupported language: {body.language}")
+    task = await _speech().start(body.text, body.language, body.voice,
+                                 user.id, user.token)
+    return {"task": task.public()}
+
+
+@app.get("/api/tts/{task_id}")
+def get_speech(task_id: str, user: StudioUser = Depends(require_user)) -> dict:
+    task = _speech().get(task_id, user.id)
+    if task is None:
+        raise HTTPException(404, "Not found")
+    return {"task": task.public()}
 
 
 def _safe_id() -> str:
