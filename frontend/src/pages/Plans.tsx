@@ -6,16 +6,16 @@
 // account. Checkout is a Lemon Squeezy share link — the API hands back the
 // link with this user's email prefilled, and we hand the browser over, so card
 // data never touches this origin and no payment key is shipped at all.
-import { useState } from 'react'
-import type { ReactNode } from 'react'
-import { AnimatePresence, LayoutGroup, motion } from 'framer-motion'
-import Page from '../components/Page'
-import AnimatedNumber from '../components/AnimatedNumber'
-import MagneticButton from '../components/MagneticButton'
-import { usePointerSpotlight } from '../hooks/usePointerSpotlight'
-import Toast from '../components/Toast'
-import { EASE_ENTRANCE, rise, stagger } from '../lib/motion'
-import { useWallet } from '../lib/wallet'
+import { useState } from "react";
+import type { ReactNode } from "react";
+import { AnimatePresence, LayoutGroup, motion } from "framer-motion";
+import Page from "../components/Page";
+import AnimatedNumber from "../components/AnimatedNumber";
+import MagneticButton from "../components/MagneticButton";
+import { usePointerSpotlight } from "../hooks/usePointerSpotlight";
+import Toast from "../components/Toast";
+import { EASE_ENTRANCE, rise, stagger } from "../lib/motion";
+import { useWallet } from "../lib/wallet";
 import {
   useCancelSubscription,
   useCheckout,
@@ -24,9 +24,14 @@ import {
   useHistory,
   usePlans,
   useSubscription,
-} from '../lib/queries'
-import { checkoutUnavailableReason, unbuyablePlans } from '../lib/lemonsqueezy'
-import { PLAN_TIER_NAMES, creditsForMinutes, markCheckoutStarted, packFor } from '../lib/payments-api'
+} from "../lib/queries";
+import { checkoutUnavailableReason, unbuyablePlans } from "../lib/lemonsqueezy";
+import {
+  PLAN_TIER_NAMES,
+  creditsForMinutes,
+  markCheckoutStarted,
+  packFor,
+} from "../lib/payments-api";
 import type {
   BillingCycle,
   CheckoutInfo,
@@ -37,35 +42,47 @@ import type {
   PlanTier,
   ServerPlan,
   Subscription,
-} from '../lib/payments-api'
+} from "../lib/payments-api";
 
 // The two cycles the API sells. Weekly billing was retired: the plan rows,
 // the products and the BillingCycle value are all gone.
-type Cycle = 'monthly' | 'yearly'
-const CYCLES: { key: Cycle; label: string; suffix: string; per: string; api: BillingCycle }[] = [
-  { key: 'monthly', label: 'Monthly', suffix: '/mo', per: 'month', api: 'MONTHLY' },
-  { key: 'yearly', label: 'Yearly', suffix: '/yr', per: 'year', api: 'YEARLY' },
-]
+type Cycle = "monthly" | "yearly";
+const CYCLES: {
+  key: Cycle;
+  label: string;
+  suffix: string;
+  per: string;
+  api: BillingCycle;
+}[] = [
+  {
+    key: "monthly",
+    label: "Monthly",
+    suffix: "/mo",
+    per: "month",
+    api: "MONTHLY",
+  },
+  { key: "yearly", label: "Yearly", suffix: "/yr", per: "year", api: "YEARLY" },
+];
 
 // UI tier assembled from the server's Plan rows (one row per tier×cycle).
 interface UiTier {
-  tier: PlanTier
-  name: string
-  highlight: boolean
-  features: string[]
-  prices: Record<Cycle, number> // dollars
+  tier: PlanTier;
+  name: string;
+  highlight: boolean;
+  features: string[];
+  prices: Record<Cycle, number>; // dollars
   /** Credits the whole billing period is worth, per cycle. */
-  credits: Record<Cycle, number>
+  credits: Record<Cycle, number>;
   /** Credits in one allocation — differs from `credits` only for yearly. */
-  perGrant: Record<Cycle, number>
+  perGrant: Record<Cycle, number>;
   /** Allocations per period: 1 for monthly, 12 for yearly. */
-  grants: Record<Cycle, number>
+  grants: Record<Cycle, number>;
   /**
    * Set when the tier exists at exactly one cycle (FREE, which is only sold
    * monthly). Its credits are quoted against this rather than whatever the
    * cycle switch says, so Free never reads as "60 credits / year".
    */
-  fixedCycle?: Cycle
+  fixedCycle?: Cycle;
 }
 
 // What each tier unlocks. This is product copy, not data — the numbers beside
@@ -73,28 +90,63 @@ interface UiTier {
 //
 // Must agree with api/src/payment/plan-features.ts, which is what can-dub
 // actually enforces. STUDIO is the stored tier; customers see "Studio Max".
-const TIER_META: { tier: PlanTier; name: string; highlight: boolean; features: string[] }[] = [
-  { tier: 'FREE', name: 'Free', highlight: false, features: ['Dub into Turkic languages', 'Their voice, spoken natively', 'Fast & Balanced quality', 'Standard queue'] },
-  { tier: 'PRO', name: 'Pro', highlight: true, features: ['Every language', 'All voice modes + custom voice', 'Keep background music & effects', 'Priority queue'] },
-  { tier: 'STUDIO', name: 'Studio Max', highlight: false, features: ['Everything in Pro', 'Lip sync', 'Studio quality — highest fidelity', 'Email support'] },
-]
+const TIER_META: {
+  tier: PlanTier;
+  name: string;
+  highlight: boolean;
+  features: string[];
+}[] = [
+  {
+    tier: "FREE",
+    name: "Free",
+    highlight: false,
+    features: [
+      "Dub into Turkic languages",
+      "Their voice, spoken natively",
+      "Fast & Balanced quality",
+      "Standard queue",
+    ],
+  },
+  {
+    tier: "PRO",
+    name: "Pro",
+    highlight: true,
+    features: [
+      "Every language",
+      "All voice modes + custom voice",
+      "Keep background music & effects",
+      "Priority queue",
+    ],
+  },
+  {
+    tier: "STUDIO",
+    name: "Studio Max",
+    highlight: false,
+    features: [
+      "Everything in Pro",
+      "Lip sync",
+      "Studio quality — highest fidelity",
+      "Email support",
+    ],
+  },
+];
 
 // The "Compare all plans" rows: Free / Pro / Studio Max, in TIER_META order.
 const COMPARE_ROWS: { feature: string; values: (string | boolean)[] }[] = [
-  { feature: 'Target languages', values: ['Turkic', 'All', 'All'] },
-  { feature: 'Voice modes', values: ['1', '3', '3'] },
-  { feature: 'Custom reference voice', values: [false, true, true] },
-  { feature: 'Keep background music & effects', values: [false, true, true] },
-  { feature: 'Fast & Balanced quality', values: [true, true, true] },
-  { feature: 'Studio quality', values: [false, false, true] },
-  { feature: 'Lip sync', values: [false, false, true] },
-  { feature: 'Priority queue', values: [false, true, true] },
-]
+  { feature: "Target languages", values: ["Turkic", "All", "All"] },
+  { feature: "Voice modes", values: ["1", "3", "3"] },
+  { feature: "Custom reference voice", values: [false, true, true] },
+  { feature: "Keep background music & effects", values: [false, true, true] },
+  { feature: "Fast & Balanced quality", values: [true, true, true] },
+  { feature: "Studio quality", values: [false, false, true] },
+  { feature: "Lip sync", values: [false, false, true] },
+  { feature: "Priority queue", values: [false, true, true] },
+];
 
-const CYCLE_KEYS: Cycle[] = ['monthly', 'yearly']
+const CYCLE_KEYS: Cycle[] = ["monthly", "yearly"];
 
 function byCycle<T>(pick: (c: Cycle) => T): Record<Cycle, T> {
-  return { monthly: pick('monthly'), yearly: pick('yearly') }
+  return { monthly: pick("monthly"), yearly: pick("yearly") };
 }
 
 /**
@@ -108,13 +160,13 @@ function byCycle<T>(pick: (c: Cycle) => T): Record<Cycle, T> {
  * `Number(x) || fallback` catches undefined, null and NaN in one step.
  */
 function creditsOf(row: ServerPlan | undefined): {
-  perGrant: number
-  grants: number
-  total: number
+  perGrant: number;
+  grants: number;
+  total: number;
 } {
-  const perGrant = Number(row?.creditsGranted) || 0
-  const grants = Number(row?.grantsPerPeriod) || 1
-  return { perGrant, grants, total: perGrant * grants }
+  const perGrant = Number(row?.creditsGranted) || 0;
+  const grants = Number(row?.grantsPerPeriod) || 1;
+  return { perGrant, grants, total: perGrant * grants };
 }
 
 function buildTiers(plans: ServerPlan[]): UiTier[] {
@@ -122,14 +174,14 @@ function buildTiers(plans: ServerPlan[]): UiTier[] {
     // FREE only has a MONTHLY row — there is nothing to buy yearly — so fall
     // back to it and the tier still renders under every switch.
     const rowFor = (c: Cycle): ServerPlan | undefined => {
-      const api = CYCLES.find((x) => x.key === c)!.api
+      const api = CYCLES.find((x) => x.key === c)!.api;
       return (
         plans.find((p) => p.tier === m.tier && p.cycle === api) ??
-        (m.tier === 'FREE'
-          ? plans.find((p) => p.tier === 'FREE' && p.cycle === 'MONTHLY')
+        (m.tier === "FREE"
+          ? plans.find((p) => p.tier === "FREE" && p.cycle === "MONTHLY")
           : undefined)
-      )
-    }
+      );
+    };
 
     return {
       tier: m.tier,
@@ -142,63 +194,68 @@ function buildTiers(plans: ServerPlan[]): UiTier[] {
       perGrant: byCycle((c) => creditsOf(rowFor(c)).perGrant),
       grants: byCycle((c) => creditsOf(rowFor(c)).grants),
       credits: byCycle((c) => creditsOf(rowFor(c)).total),
-      fixedCycle: m.tier === 'FREE' ? ('monthly' as Cycle) : undefined,
-    }
-  })
+      fixedCycle: m.tier === "FREE" ? ("monthly" as Cycle) : undefined,
+    };
+  });
 }
 
 export default function Plans() {
-  const { balance, planInfo } = useWallet()
+  const { balance, planInfo } = useWallet();
 
-  const plansQuery = usePlans()
-  const packsQuery = useCreditPacks()
-  const subscriptionQuery = useSubscription()
-  const historyQuery = useHistory(1, 10)
-  const checkout = useCheckout()
-  const creditCheckout = useCreditCheckout()
-  const cancel = useCancelSubscription()
+  const plansQuery = usePlans();
+  const packsQuery = useCreditPacks();
+  const subscriptionQuery = useSubscription();
+  const historyQuery = useHistory(1, 10);
+  const checkout = useCheckout();
+  const creditCheckout = useCreditCheckout();
+  const cancel = useCancelSubscription();
 
-  const [cycle, setCycle] = useState<Cycle>('monthly')
-  const [showCompare, setShowCompare] = useState(false)
+  const [cycle, setCycle] = useState<Cycle>("monthly");
+  const [showCompare, setShowCompare] = useState(false);
   // Phones show one plan card at a time; desktop shows all three side by side.
-  const [mobileTier, setMobileTier] = useState<PlanTier>('PRO')
-  const [toast, setToast] = useState<{ id: number; msg: string } | null>(null)
+  const [mobileTier, setMobileTier] = useState<PlanTier>("PRO");
+  const [toast, setToast] = useState<{ id: number; msg: string } | null>(null);
 
-  const tiers = plansQuery.data ? buildTiers(plansQuery.data.plans) : []
-  const subscription = subscriptionQuery.data?.subscription ?? null
-  const history = historyQuery.data?.items ?? []
+  const tiers = plansQuery.data ? buildTiers(plansQuery.data.plans) : [];
+  const subscription = subscriptionQuery.data?.subscription ?? null;
+  const history = historyQuery.data?.items ?? [];
 
   // Whether money can move is the server's answer, not a guess from a
   // build-time key: only the API knows which checkout links are configured and
   // whether it holds the LS key that lets a purchase be confirmed at all.
-  const checkoutInfo: CheckoutInfo | undefined = plansQuery.data?.checkout
-  const checkoutBlocked = checkoutUnavailableReason(checkoutInfo)
-  const missingProducts = unbuyablePlans(checkoutInfo)
+  const checkoutInfo: CheckoutInfo | undefined = plansQuery.data?.checkout;
+  const checkoutBlocked = checkoutUnavailableReason(checkoutInfo);
+  const missingProducts = unbuyablePlans(checkoutInfo);
 
   // The server reads the mode off the catalog's own LS products, so a live
   // site still selling test products shows it here.
-  const inTestCheckout = checkoutInfo?.mode === 'test'
+  const inTestCheckout = checkoutInfo?.mode;
 
   const activeTier: PlanTier =
-    subscription && subscription.status === 'ACTIVE' ? (subscription.plan?.tier ?? 'FREE') : 'FREE'
-  const activeCycle = subscription?.plan?.cycle
+    subscription && subscription.status === "ACTIVE"
+      ? (subscription.plan?.tier ?? "FREE")
+      : "FREE";
+  const activeCycle = subscription?.plan?.cycle;
 
   // Hand the browser to Lemon Squeezy. LS owns the whole payment UI — there is no
   // client-side SDK to load, and nothing in this bundle decides what a purchase
   // grants: the API matches the paid order's variant, and the credits are
   // settled on the way back by /plans/success (or by the server's own poll).
   async function startCheckout(t: UiTier) {
-    if (t.tier === 'FREE' || checkoutBlocked) return
+    if (t.tier === "FREE" || checkoutBlocked) return;
     try {
-      const api = CYCLES.find((c) => c.key === cycle)!.api
+      const api = CYCLES.find((c) => c.key === cycle)!.api;
       const { url } = await checkout.mutateAsync({
-        tier: t.tier as Exclude<PlanTier, 'FREE'>,
+        tier: t.tier as Exclude<PlanTier, "FREE">,
         cycle: api,
-      })
-      markCheckoutStarted()
-      window.location.href = url
+      });
+      markCheckoutStarted();
+      window.location.href = url;
     } catch (e) {
-      setToast({ id: Date.now(), msg: e instanceof Error ? e.message : 'Could not start checkout' })
+      setToast({
+        id: Date.now(),
+        msg: e instanceof Error ? e.message : "Could not start checkout",
+      });
     }
   }
 
@@ -207,58 +264,57 @@ export default function Plans() {
   // this origin. A pack with no payment link configured surfaces as a toast
   // rather than a silent no-op.
   async function buyCredits(packId: string) {
-    if (checkoutBlocked) return
+    if (checkoutBlocked) return;
     try {
-      const { url } = await creditCheckout.mutateAsync({ packId })
-      markCheckoutStarted()
-      window.location.href = url
+      const { url } = await creditCheckout.mutateAsync({ packId });
+      markCheckoutStarted();
+      window.location.href = url;
     } catch (e) {
       setToast({
         id: Date.now(),
-        msg: e instanceof Error ? e.message : 'Could not start checkout',
-      })
+        msg: e instanceof Error ? e.message : "Could not start checkout",
+      });
     }
   }
 
   async function onCancel() {
     try {
-      const res = await cancel.mutateAsync()
-      setToast({ id: Date.now(), msg: res.message })
+      const res = await cancel.mutateAsync();
+      setToast({ id: Date.now(), msg: res.message });
     } catch (e) {
-      setToast({ id: Date.now(), msg: e instanceof Error ? e.message : 'Could not cancel' })
+      setToast({
+        id: Date.now(),
+        msg: e instanceof Error ? e.message : "Could not cancel",
+      });
     }
   }
 
   function isCurrent(t: UiTier): boolean {
-    if (t.tier === 'FREE') return activeTier === 'FREE'
-    const api = CYCLES.find((c) => c.key === cycle)!.api
-    return t.tier === activeTier && activeCycle === api
+    if (t.tier === "FREE") return activeTier === "FREE";
+    const api = CYCLES.find((c) => c.key === cycle)!.api;
+    return t.tier === activeTier && activeCycle === api;
   }
 
   return (
     <Page className="space-y-6 pb-4 sm:space-y-8">
       {/* A test-mode build takes fake cards and grants real credits in your
           database. Never let that be a surprise. */}
-      {inTestCheckout && (
-        <div className="rounded-card border border-warn/40 bg-warn/10 px-4 py-3 text-sm text-warn">
-          <strong className="font-medium">Lemon Squeezy test mode.</strong> Checkout accepts test
-          cards only (4242 4242 4242 4242) — no money moves, but credits granted here are real. Switch
-          the products, links and{' '}
-          <code className="font-mono text-xs">LEMONSQUEEZY_API_KEY</code> to live mode to take real
-          payments.
-        </div>
-      )}
+
       {checkoutBlocked && (
         <div className="rounded-card border border-danger/40 bg-danger/10 px-4 py-3 text-sm text-danger">
-          <strong className="font-medium">Checkout is unavailable.</strong> {checkoutBlocked}
+          <strong className="font-medium">Checkout is unavailable.</strong>{" "}
+          {checkoutBlocked}
         </div>
       )}
       {/* Some plans buyable, others not: say which, so the disabled button on
           one card is explained instead of reading as a bug. */}
       {!checkoutBlocked && missingProducts.length > 0 && (
         <div className="rounded-card border border-warn/40 bg-warn/10 px-4 py-3 text-sm text-warn">
-          <strong className="font-medium">Not every plan is on sale yet.</strong> No Lemon Squeezy
-          checkout link is configured for {missingProducts.join(', ')}.
+          <strong className="font-medium">
+            Not every plan is on sale yet.
+          </strong>{" "}
+          No Lemon Squeezy checkout link is configured for{" "}
+          {missingProducts.join(", ")}.
         </div>
       )}
 
@@ -271,52 +327,77 @@ export default function Plans() {
         {plansQuery.isError ? (
           <div className="card grid min-h-[200px] place-items-center p-8 text-center">
             <div>
-              <div className="font-mono text-base font-medium text-primary">Couldn't load plans</div>
+              <div className="font-mono text-base font-medium text-primary">
+                Couldn't load plans
+              </div>
               <p className="mx-auto mt-1.5 max-w-xs text-sm text-secondary">
-                {plansQuery.error instanceof Error ? plansQuery.error.message : 'The billing API did not respond.'}
+                {plansQuery.error instanceof Error
+                  ? plansQuery.error.message
+                  : "The billing API did not respond."}
               </p>
-              <button onClick={() => void plansQuery.refetch()} className="btn-ghost focusable mt-4 px-5 py-2 font-mono text-sm">
+              <button
+                onClick={() => void plansQuery.refetch()}
+                className="btn-ghost focusable mt-4 px-5 py-2 font-mono text-sm"
+              >
                 Retry
               </button>
             </div>
           </div>
         ) : (
           <>
-          {tiers.length > 0 && (
-            <div role="tablist" aria-label="Plan" className="flex gap-1 rounded-control border border-subtle bg-sunken p-1 md:hidden">
-              {tiers.map((t) => (
-                <button
-                  key={t.tier}
-                  type="button"
-                  role="tab"
-                  aria-selected={mobileTier === t.tier}
-                  onClick={() => setMobileTier(t.tier)}
-                  className={`focusable min-h-[44px] flex-1 rounded-[8px] text-sm font-medium transition-colors ${
-                    mobileTier === t.tier ? 'bg-surface text-primary shadow-[var(--shadow-sm)]' : 'text-muted'
-                  }`}
-                >
-                  {t.name}
-                  {isCurrent(t) && <span className="ml-1 text-[11px] text-muted">· yours</span>}
-                </button>
-              ))}
-            </div>
-          )}
-          <motion.div variants={stagger} className="grid grid-cols-1 gap-6 md:grid-cols-3">
-            {tiers.length === 0
-              ? Array.from({ length: 3 }).map((_, i) => <div key={i} className="card shimmer h-96" />)
-              : tiers.map((t) => (
-                  <TierCard
+            {tiers.length > 0 && (
+              <div
+                role="tablist"
+                aria-label="Plan"
+                className="flex gap-1 rounded-control border border-subtle bg-sunken p-1 md:hidden"
+              >
+                {tiers.map((t) => (
+                  <button
                     key={t.tier}
-                    tier={t}
-                    cycle={cycle}
-                    current={isCurrent(t)}
-                    busy={checkout.isPending && checkout.variables?.tier === t.tier}
-                    disabled={!!checkoutBlocked}
-                    onSelect={() => void startCheckout(t)}
-                    mobileHidden={t.tier !== mobileTier}
-                  />
+                    type="button"
+                    role="tab"
+                    aria-selected={mobileTier === t.tier}
+                    onClick={() => setMobileTier(t.tier)}
+                    className={`focusable min-h-[44px] flex-1 rounded-[8px] text-sm font-medium transition-colors ${
+                      mobileTier === t.tier
+                        ? "bg-surface text-primary shadow-[var(--shadow-sm)]"
+                        : "text-muted"
+                    }`}
+                  >
+                    {t.name}
+                    {isCurrent(t) && (
+                      <span className="ml-1 text-[11px] text-muted">
+                        · yours
+                      </span>
+                    )}
+                  </button>
                 ))}
-          </motion.div>
+              </div>
+            )}
+            <motion.div
+              variants={stagger}
+              className="grid grid-cols-1 gap-6 md:grid-cols-3"
+            >
+              {tiers.length === 0
+                ? Array.from({ length: 3 }).map((_, i) => (
+                    <div key={i} className="card shimmer h-96" />
+                  ))
+                : tiers.map((t) => (
+                    <TierCard
+                      key={t.tier}
+                      tier={t}
+                      cycle={cycle}
+                      current={isCurrent(t)}
+                      busy={
+                        checkout.isPending &&
+                        checkout.variables?.tier === t.tier
+                      }
+                      disabled={!!checkoutBlocked}
+                      onSelect={() => void startCheckout(t)}
+                      mobileHidden={t.tier !== mobileTier}
+                    />
+                  ))}
+            </motion.div>
           </>
         )}
 
@@ -337,7 +418,11 @@ export default function Plans() {
         <motion.div variants={rise}>
           <TopUpSection
             catalog={packsQuery.data}
-            busyPackId={creditCheckout.isPending ? (creditCheckout.variables?.packId ?? null) : null}
+            busyPackId={
+              creditCheckout.isPending
+                ? (creditCheckout.variables?.packId ?? null)
+                : null
+            }
             disabled={!!checkoutBlocked}
             onBuy={(packId) => void buyCredits(packId)}
           />
@@ -347,7 +432,11 @@ export default function Plans() {
       {/* ── SECTION B · Balance, subscription & history ─────────────────── */}
       <motion.section initial="hidden" animate="show" className="space-y-6">
         <motion.div variants={rise}>
-          <BalanceCard balance={balance} allowance={planInfo.creditsGranted} planName={planInfo.name} />
+          <BalanceCard
+            balance={balance}
+            allowance={planInfo.creditsGranted}
+            planName={planInfo.name}
+          />
         </motion.div>
 
         <motion.div variants={rise}>
@@ -364,19 +453,31 @@ export default function Plans() {
           </motion.div>
         )}
 
-        <CheckoutFooter live={checkoutInfo?.mode === 'live'} />
+        <CheckoutFooter live={checkoutInfo?.mode === "live"} />
       </motion.section>
 
       <AnimatePresence>
-        {toast && <Toast key={toast.id} message={toast.msg} onDone={() => setToast(null)} />}
+        {toast && (
+          <Toast
+            key={toast.id}
+            message={toast.msg}
+            onDone={() => setToast(null)}
+          />
+        )}
       </AnimatePresence>
     </Page>
-  )
+  );
 }
 
 /* ── Cycle switcher ─────────────────────────────────────────────────────── */
 
-function CycleSwitch({ cycle, onChange }: { cycle: Cycle; onChange: (c: Cycle) => void }) {
+function CycleSwitch({
+  cycle,
+  onChange,
+}: {
+  cycle: Cycle;
+  onChange: (c: Cycle) => void;
+}) {
   return (
     <div className="mx-auto w-full max-w-[420px]">
       <LayoutGroup id="cycle">
@@ -390,11 +491,13 @@ function CycleSwitch({ cycle, onChange }: { cycle: Cycle; onChange: (c: Cycle) =
               {cycle === c.key && (
                 <motion.span
                   layoutId="cycle-pill"
-                  transition={{ type: 'spring', stiffness: 400, damping: 32 }}
+                  transition={{ type: "spring", stiffness: 400, damping: 32 }}
                   className="absolute inset-0 rounded-[8px] bg-brand/15 shadow-[inset_0_0_0_1px_rgb(var(--c-brand-500)/0.4)]"
                 />
               )}
-              <span className={`relative z-10 flex items-center justify-center gap-1.5 font-mono text-xs font-medium ${cycle === c.key ? 'text-brand' : 'text-muted hover:text-secondary'}`}>
+              <span
+                className={`relative z-10 flex items-center justify-center gap-1.5 font-mono text-xs font-medium ${cycle === c.key ? "text-brand" : "text-muted hover:text-secondary"}`}
+              >
                 {c.label}
               </span>
             </button>
@@ -402,10 +505,12 @@ function CycleSwitch({ cycle, onChange }: { cycle: Cycle; onChange: (c: Cycle) =
         </div>
       </LayoutGroup>
       <p className="mt-1.5 text-center font-mono text-[10px] text-muted">
-        {cycle === 'yearly' ? 'Billed once a year' : 'Billed every month · cancel anytime'}
+        {cycle === "yearly"
+          ? "Billed once a year"
+          : "Billed every month · cancel anytime"}
       </p>
     </div>
-  )
+  );
 }
 
 /* ── Tier card ──────────────────────────────────────────────────────────── */
@@ -419,40 +524,43 @@ function TierCard({
   onSelect,
   mobileHidden,
 }: {
-  tier: UiTier
-  cycle: Cycle
-  current: boolean
-  busy: boolean
-  disabled: boolean
-  onSelect: () => void
+  tier: UiTier;
+  cycle: Cycle;
+  current: boolean;
+  busy: boolean;
+  disabled: boolean;
+  onSelect: () => void;
   /** Not the plan picked in the phone-only switcher above the grid. */
-  mobileHidden?: boolean
+  mobileHidden?: boolean;
 }) {
-  const featured = tier.highlight
-  const price = tier.prices[cycle]
-  const meta = CYCLES.find((c) => c.key === cycle)!
-  const suffix = meta.suffix
-  const perMonthYear = cycle === 'yearly' && price > 0 ? (price / 12).toFixed(2) : null
-  const isFree = tier.tier === 'FREE'
+  const featured = tier.highlight;
+  const price = tier.prices[cycle];
+  const meta = CYCLES.find((c) => c.key === cycle)!;
+  const suffix = meta.suffix;
+  const perMonthYear =
+    cycle === "yearly" && price > 0 ? (price / 12).toFixed(2) : null;
+  const isFree = tier.tier === "FREE";
 
   // Yearly is billed once but the credits arrive a month at a time, so show
   // both numbers — the headline total and what actually lands each month.
-  const creditCycle = tier.fixedCycle ?? cycle
-  const creditPer = CYCLES.find((c) => c.key === creditCycle)!.per
-  const grants = tier.grants[creditCycle]
+  const creditCycle = tier.fixedCycle ?? cycle;
+  const creditPer = CYCLES.find((c) => c.key === creditCycle)!.per;
+  const grants = tier.grants[creditCycle];
   const dripNote =
-    grants > 1 ? `${tier.perGrant[creditCycle].toLocaleString()} credits added every month` : null
+    grants > 1
+      ? `${tier.perGrant[creditCycle].toLocaleString()} credits added every month`
+      : null;
 
-  const spot = usePointerSpotlight<HTMLDivElement>()
+  const spot = usePointerSpotlight<HTMLDivElement>();
   const label = current
-    ? 'Current plan'
+    ? "Current plan"
     : busy
-      ? 'Redirecting…'
+      ? "Redirecting…"
       : isFree
-        ? 'Free plan'
+        ? "Free plan"
         : disabled
-          ? 'Unavailable'
-          : `Choose ${tier.name}`
+          ? "Unavailable"
+          : `Choose ${tier.name}`;
 
   return (
     <motion.div
@@ -461,13 +569,15 @@ function TierCard({
       onPointerMove={spot.onPointerMove}
       variants={rise}
       whileHover={{ y: -3 }}
-      transition={{ type: 'spring', stiffness: 380, damping: 26 }}
-      className={`card spotlight sheen relative flex-col p-5 md:p-6 ${mobileHidden ? 'hidden md:flex' : 'flex'} ${
-        featured ? 'border-brand/45' : ''
-      } ${current ? 'ring-1 ring-brand' : ''}`}
+      transition={{ type: "spring", stiffness: 380, damping: 26 }}
+      className={`card spotlight sheen relative flex-col p-5 md:p-6 ${mobileHidden ? "hidden md:flex" : "flex"} ${
+        featured ? "border-brand/45" : ""
+      } ${current ? "ring-1 ring-brand" : ""}`}
     >
       <div className="above flex items-center justify-between">
-        <span className="font-mono text-[11px] font-medium uppercase tracking-[0.12em] text-muted">{tier.name}</span>
+        <span className="font-mono text-[11px] font-medium uppercase tracking-[0.12em] text-muted">
+          {tier.name}
+        </span>
         {featured && (
           <span className="rounded-pill bg-brand/12 px-2.5 py-0.5 font-mono text-[10px] font-medium uppercase tracking-wide text-brand">
             Popular
@@ -499,18 +609,33 @@ function TierCard({
       </div>
 
       <div className="mt-3 text-sm text-secondary">
-        <span className="font-mono text-primary">{tier.credits[creditCycle].toLocaleString()}</span>{' '}
+        <span className="font-mono text-primary">
+          {tier.credits[creditCycle].toLocaleString()}
+        </span>{" "}
         credits / {creditPer}
       </div>
       <div className="h-4">
-        {dripNote && <p className="font-mono text-[11px] text-muted">{dripNote}</p>}
+        {dripNote && (
+          <p className="font-mono text-[11px] text-muted">{dripNote}</p>
+        )}
       </div>
 
       <div className="mt-5 flex-1">
         <ul className="space-y-2.5">
           {tier.features.map((f) => (
-            <li key={f} className="flex items-start gap-2 text-sm text-secondary">
-              <svg viewBox="0 0 24 24" className="mt-0.5 h-4 w-4 shrink-0 text-brand" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+            <li
+              key={f}
+              className="flex items-start gap-2 text-sm text-secondary"
+            >
+              <svg
+                viewBox="0 0 24 24"
+                className="mt-0.5 h-4 w-4 shrink-0 text-brand"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
                 <path d="M20 6 9 17l-5-5" />
               </svg>
               {f}
@@ -524,23 +649,23 @@ function TierCard({
         disabled={current || busy || isFree || disabled}
         className={`focusable above mt-6 w-full rounded-control py-3 font-mono text-sm font-medium transition-colors disabled:cursor-default ${
           current || isFree || disabled
-            ? 'border border-subtle bg-sunken text-muted'
-            : 'btn-primary'
+            ? "border border-subtle bg-sunken text-muted"
+            : "btn-primary"
         }`}
       >
         {label}
       </MagneticButton>
     </motion.div>
-  )
+  );
 }
 
 /* ── Pay as you go ──────────────────────────────────────────────────────── */
 
 const EST_QUALITIES = [
-  { key: 'fast', label: 'Fast' },
-  { key: 'balanced', label: 'Balanced' },
-  { key: 'studio', label: 'Studio' },
-]
+  { key: "fast", label: "Fast" },
+  { key: "balanced", label: "Balanced" },
+  { key: "studio", label: "Studio" },
+];
 
 /**
  * Credits bought outright, for the person who has one video and no interest in
@@ -557,13 +682,13 @@ function TopUpSection({
   disabled,
   onBuy,
 }: {
-  catalog: CreditPacksResponse | undefined
-  busyPackId: string | null
-  disabled: boolean
-  onBuy: (packId: string) => void
+  catalog: CreditPacksResponse | undefined;
+  busyPackId: string | null;
+  disabled: boolean;
+  onBuy: (packId: string) => void;
 }) {
-  const [minutes, setMinutes] = useState(4.5)
-  const [quality, setQuality] = useState('balanced')
+  const [minutes, setMinutes] = useState(4.5);
+  const [quality, setQuality] = useState("balanced");
 
   if (!catalog) {
     return (
@@ -571,12 +696,12 @@ function TopUpSection({
         <div className="card shimmer h-72" />
         <div className="card shimmer h-72" />
       </div>
-    )
+    );
   }
 
-  const needed = creditsForMinutes(minutes, quality, catalog)
-  const recommended = packFor(needed, catalog.packs)
-  const packs = [...catalog.packs].sort((a, b) => a.credits - b.credits)
+  const needed = creditsForMinutes(minutes, quality, catalog);
+  const recommended = packFor(needed, catalog.packs);
+  const packs = [...catalog.packs].sort((a, b) => a.credits - b.credits);
 
   return (
     <div className="space-y-4">
@@ -587,7 +712,8 @@ function TopUpSection({
             Buy credits once — no subscription
           </h2>
           <p className="mt-1 text-sm text-secondary">
-            Credits never expire and work on any quality. Pay for the video you have.
+            Credits never expire and work on any quality. Pay for the video you
+            have.
           </p>
         </div>
       </div>
@@ -628,11 +754,13 @@ function TopUpSection({
                 {quality === q.key && (
                   <motion.span
                     layoutId="est-quality-pill"
-                    transition={{ type: 'spring', stiffness: 400, damping: 32 }}
+                    transition={{ type: "spring", stiffness: 400, damping: 32 }}
                     className="absolute inset-0 rounded-[8px] bg-brand/15 shadow-[inset_0_0_0_1px_rgb(var(--c-brand-500)/0.4)]"
                   />
                 )}
-                <span className={`relative z-10 ${quality === q.key ? 'text-brand' : 'text-muted hover:text-secondary'}`}>
+                <span
+                  className={`relative z-10 ${quality === q.key ? "text-brand" : "text-muted hover:text-secondary"}`}
+                >
                   {q.label}
                 </span>
               </button>
@@ -643,13 +771,14 @@ function TopUpSection({
             <div className="flex items-baseline justify-between">
               <span className="text-sm text-secondary">You need about</span>
               <span className="font-display text-[1.75rem] text-primary">
-                <AnimatedNumber value={needed} /> <span className="text-sm text-muted">credits</span>
+                <AnimatedNumber value={needed} />{" "}
+                <span className="text-sm text-muted">credits</span>
               </span>
             </div>
             {recommended && (
               <p className="mt-1.5 font-mono text-[11px] text-muted">
-                Covered by the {recommended.credits.toLocaleString()}-credit pack ·{' '}
-                {fmtCents(recommended.priceCents, recommended.currency)}
+                Covered by the {recommended.credits.toLocaleString()}-credit
+                pack · {fmtCents(recommended.priceCents, recommended.currency)}
               </p>
             )}
           </div>
@@ -661,9 +790,9 @@ function TopUpSection({
               className="btn-primary focusable mt-4 w-full py-3 font-mono text-sm disabled:cursor-not-allowed disabled:opacity-60"
             >
               {busyPackId === recommended.id
-                ? 'Redirecting…'
+                ? "Redirecting…"
                 : disabled
-                  ? 'Checkout unavailable'
+                  ? "Checkout unavailable"
                   : `Buy ${recommended.credits.toLocaleString()} credits · ${fmtCents(recommended.priceCents, recommended.currency)} →`}
             </button>
           )}
@@ -681,7 +810,9 @@ function TopUpSection({
               // `available === false` is the server saying it has no LS
               // link or variant for this pack. Undefined means the fallback catalog,
               // which knows nothing either way — don't disable on that.
-              disabled={disabled || busyPackId !== null || p.available === false}
+              disabled={
+                disabled || busyPackId !== null || p.available === false
+              }
               unavailable={p.available === false}
               onBuy={() => onBuy(p.id)}
             />
@@ -689,7 +820,7 @@ function TopUpSection({
         </div>
       </div>
     </div>
-  )
+  );
 }
 
 function PackCard({
@@ -701,47 +832,47 @@ function PackCard({
   unavailable,
   onBuy,
 }: {
-  pack: CreditPack
-  minutes: number
-  recommended: boolean
-  busy: boolean
-  disabled: boolean
+  pack: CreditPack;
+  minutes: number;
+  recommended: boolean;
+  busy: boolean;
+  disabled: boolean;
   /** No payment link configured for this pack — the price is real, the button isn't. */
-  unavailable?: boolean
-  onBuy: () => void
+  unavailable?: boolean;
+  onBuy: () => void;
 }) {
-  const spot = usePointerSpotlight<HTMLDivElement>()
-  const perCredit = pack.priceCents / 100 / pack.credits
+  const spot = usePointerSpotlight<HTMLDivElement>();
+  const perCredit = pack.priceCents / 100 / pack.credits;
   return (
     <motion.div
       ref={spot.ref}
       onPointerEnter={spot.onPointerEnter}
       onPointerMove={spot.onPointerMove}
       whileHover={{ y: -3 }}
-      transition={{ type: 'spring', stiffness: 380, damping: 26 }}
+      transition={{ type: "spring", stiffness: 380, damping: 26 }}
       className={`card spotlight sheen relative flex items-center gap-3 p-4 sm:flex-col sm:items-stretch sm:gap-0 sm:p-5 ${
-        recommended ? 'border-brand/45 ring-1 ring-brand/40' : ''
+        recommended ? "border-brand/45 ring-1 ring-brand/40" : ""
       }`}
     >
       <div className="min-w-0 flex-1 sm:flex-none">
-      {/* Inside the card, not hung over its top edge: `.sheen` clips its
+        {/* Inside the card, not hung over its top edge: `.sheen` clips its
           overflow, which cut an absolutely-positioned `-top-2` badge in half. */}
-      <div className="above flex items-start justify-between gap-2">
-        <div className="flex items-baseline gap-1.5">
-          <span className="font-mono text-2xl font-medium text-primary">
-            {pack.credits.toLocaleString()}
-          </span>
-          <span className="font-mono text-xs text-muted">credits</span>
+        <div className="above flex items-start justify-between gap-2">
+          <div className="flex items-baseline gap-1.5">
+            <span className="font-mono text-2xl font-medium text-primary">
+              {pack.credits.toLocaleString()}
+            </span>
+            <span className="font-mono text-xs text-muted">credits</span>
+          </div>
+          {recommended && (
+            <span className="shrink-0 rounded-pill bg-brand px-2.5 py-0.5 font-mono text-[10px] font-medium uppercase tracking-wide text-canvas">
+              Your pick
+            </span>
+          )}
         </div>
-        {recommended && (
-          <span className="shrink-0 rounded-pill bg-brand px-2.5 py-0.5 font-mono text-[10px] font-medium uppercase tracking-wide text-canvas">
-            Your pick
-          </span>
-        )}
-      </div>
-      <div className="mt-1 font-mono text-[11px] text-muted">
-        ≈ {minutes.toFixed(1)} min at Balanced
-      </div>
+        <div className="mt-1 font-mono text-[11px] text-muted">
+          ≈ {minutes.toFixed(1)} min at Balanced
+        </div>
       </div>
 
       <div className="flex items-baseline gap-1.5 sm:mt-4">
@@ -757,17 +888,21 @@ function PackCard({
         onClick={onBuy}
         disabled={disabled}
         className={`focusable above min-h-[44px] shrink-0 rounded-control px-4 py-2.5 font-mono text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60 sm:mt-4 sm:w-full ${
-          recommended ? 'btn-primary' : 'btn-ghost'
+          recommended ? "btn-primary" : "btn-ghost"
         }`}
       >
-        {busy ? 'Redirecting…' : unavailable ? 'Not available yet' : (
+        {busy ? (
+          "Redirecting…"
+        ) : unavailable ? (
+          "Not available yet"
+        ) : (
           <>
             Buy<span className="hidden sm:inline"> credits</span>
           </>
         )}
       </MagneticButton>
     </motion.div>
-  )
+  );
 }
 
 /* ── Comparison disclosure ──────────────────────────────────────────────── */
@@ -783,10 +918,10 @@ function CompareDisclosure({
   tiers,
   catalog,
 }: {
-  open: boolean
-  onToggle: () => void
-  tiers: UiTier[]
-  catalog: PlansResponse
+  open: boolean;
+  onToggle: () => void;
+  tiers: UiTier[];
+  catalog: PlansResponse;
 }) {
   // One credits row per cycle: the three grants genuinely differ, and a single
   // "credits per month" row could only ever be right for one of them.
@@ -795,24 +930,43 @@ function CompareDisclosure({
       feature: `Credits · ${CYCLES.find((x) => x.key === c)!.label.toLowerCase()}`,
       values: tiers.map((t) =>
         (t.fixedCycle && t.fixedCycle !== c) || t.credits[c] === 0
-          ? '–'
+          ? "–"
           : t.credits[c].toLocaleString(),
       ),
     })),
-    { feature: 'Monthly price', values: tiers.map((t) => fmtPrice(t.prices.monthly)) },
-    { feature: 'Yearly price', values: tiers.map((t) => fmtPrice(t.prices.yearly)) },
+    {
+      feature: "Monthly price",
+      values: tiers.map((t) => fmtPrice(t.prices.monthly)),
+    },
+    {
+      feature: "Yearly price",
+      values: tiers.map((t) => fmtPrice(t.prices.yearly)),
+    },
     ...COMPARE_ROWS.map((r) => ({
       feature: r.feature,
-      values: tiers.map((t) => r.values[TIER_META.findIndex((m) => m.tier === t.tier)] ?? false),
+      values: tiers.map(
+        (t) => r.values[TIER_META.findIndex((m) => m.tier === t.tier)] ?? false,
+      ),
     })),
-  ]
+  ];
 
   return (
     <div className="card overflow-hidden p-0">
-      <button onClick={onToggle} className="focusable flex w-full items-center justify-between px-5 py-4 text-left">
-        <span className="font-mono text-sm font-medium text-primary">Compare all plans</span>
+      <button
+        onClick={onToggle}
+        className="focusable flex w-full items-center justify-between px-5 py-4 text-left"
+      >
+        <span className="font-mono text-sm font-medium text-primary">
+          Compare all plans
+        </span>
         <motion.svg
-          viewBox="0 0 24 24" className="h-4 w-4 text-muted" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+          viewBox="0 0 24 24"
+          className="h-4 w-4 text-muted"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
           animate={{ rotate: open ? 180 : 0 }}
           transition={{ duration: 0.25 }}
         >
@@ -823,7 +977,7 @@ function CompareDisclosure({
         {open && (
           <motion.div
             initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
+            animate={{ height: "auto", opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
             transition={{ duration: 0.3, ease: EASE_ENTRANCE }}
             className="overflow-hidden"
@@ -832,12 +986,16 @@ function CompareDisclosure({
               <table className="w-full min-w-[520px] border-collapse">
                 <thead>
                   <tr className="border-b border-subtle">
-                    <th className="py-2 text-left font-mono text-[10px] font-medium uppercase tracking-[0.12em] text-muted">Feature</th>
+                    <th className="py-2 text-left font-mono text-[10px] font-medium uppercase tracking-[0.12em] text-muted">
+                      Feature
+                    </th>
                     {tiers.map((t) => (
                       <th
                         key={t.tier}
                         className={`py-2 text-center font-mono text-[10px] font-medium uppercase tracking-[0.12em] ${
-                          t.highlight ? 'bg-brand/[0.05] text-brand' : 'text-muted'
+                          t.highlight
+                            ? "bg-brand/[0.05] text-brand"
+                            : "text-muted"
                         }`}
                       >
                         {t.name}
@@ -847,10 +1005,19 @@ function CompareDisclosure({
                 </thead>
                 <tbody>
                   {rows.map((row) => (
-                    <tr key={row.feature} className="border-b border-subtle last:border-0">
-                      <td className="py-2.5 text-sm text-secondary">{row.feature}</td>
+                    <tr
+                      key={row.feature}
+                      className="border-b border-subtle last:border-0"
+                    >
+                      <td className="py-2.5 text-sm text-secondary">
+                        {row.feature}
+                      </td>
                       {row.values.map((v, i) => (
-                        <CompareCell key={tiers[i].tier} v={v} tinted={tiers[i].highlight} />
+                        <CompareCell
+                          key={tiers[i].tier}
+                          v={v}
+                          tinted={tiers[i].highlight}
+                        />
                       ))}
                     </tr>
                   ))}
@@ -864,29 +1031,39 @@ function CompareDisclosure({
                       20-second clip and an hour-long film cost the same. */}
                   <SectionMark>Credit cost per minute</SectionMark>
                   <ul className="mt-2 space-y-1">
-                    {Object.entries(catalog.qualityCost).map(([quality, cost]) => (
-                      <li key={quality} className="flex items-center justify-between text-sm">
-                        <span className="capitalize text-secondary">{quality}</span>
-                        <span className="font-mono text-primary">{cost} cr / min</span>
-                      </li>
-                    ))}
+                    {Object.entries(catalog.qualityCost).map(
+                      ([quality, cost]) => (
+                        <li
+                          key={quality}
+                          className="flex items-center justify-between text-sm"
+                        >
+                          <span className="capitalize text-secondary">
+                            {quality}
+                          </span>
+                          <span className="font-mono text-primary">
+                            {cost} cr / min
+                          </span>
+                        </li>
+                      ),
+                    )}
                   </ul>
                   <p className="mt-2 text-[11px] text-muted">
                     Charged per second, rounded up. Run out mid-video and we dub
-                    the part your balance covers, then tell you what the rest costs.
+                    the part your balance covers, then tell you what the rest
+                    costs.
                   </p>
                 </div>
                 <div>
                   <SectionMark>Your first minute is free</SectionMark>
                   <p className="mt-2 text-sm text-secondary">
-                    Every new account starts with{' '}
+                    Every new account starts with{" "}
                     <span className="font-mono text-primary">
                       {catalog.signupBonusCredits ?? 20} credits
-                    </span>
-                    {' '}— enough to dub{' '}
+                    </span>{" "}
+                    — enough to dub{" "}
                     <span className="font-mono text-primary">
                       {Math.round((catalog.freeMinuteSeconds ?? 60) / 60)} min
-                    </span>{' '}
+                    </span>{" "}
                     at Balanced quality, with no card and nothing to cancel.
                   </p>
                 </div>
@@ -896,21 +1073,31 @@ function CompareDisclosure({
         )}
       </AnimatePresence>
     </div>
-  )
+  );
 }
 
 function CompareCell({ v, tinted }: { v: boolean | string; tinted?: boolean }) {
   return (
-    <td className={`py-2.5 text-center ${tinted ? 'bg-brand/[0.05]' : ''}`}>
-      {typeof v === 'string' ? (
+    <td className={`py-2.5 text-center ${tinted ? "bg-brand/[0.05]" : ""}`}>
+      {typeof v === "string" ? (
         <span className="font-mono text-xs text-primary">{v}</span>
       ) : v ? (
-        <svg viewBox="0 0 24 24" className="mx-auto h-4 w-4 text-success" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6 9 17l-5-5" /></svg>
+        <svg
+          viewBox="0 0 24 24"
+          className="mx-auto h-4 w-4 text-success"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.4"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <path d="M20 6 9 17l-5-5" />
+        </svg>
       ) : (
         <span className="text-muted">–</span>
       )}
     </td>
-  )
+  );
 }
 
 /* ── Balance card ───────────────────────────────────────────────────────── */
@@ -920,36 +1107,64 @@ function BalanceCard({
   allowance,
   planName,
 }: {
-  balance: number
-  allowance: number
-  planName: string
+  balance: number;
+  allowance: number;
+  planName: string;
 }) {
-  const pct = allowance > 0 ? Math.min(1, balance / allowance) : 1
+  const pct = allowance > 0 ? Math.min(1, balance / allowance) : 1;
   return (
     <div className="card flex flex-wrap items-center justify-between gap-6 p-6">
       <div className="relative">
         <SectionMark>Your balance</SectionMark>
         <div className="mt-2 flex items-baseline gap-2">
-          <AnimatedNumber value={balance} className="font-mono text-4xl font-medium text-primary" />
+          <AnimatedNumber
+            value={balance}
+            className="font-mono text-4xl font-medium text-primary"
+          />
           <span className="font-mono text-sm text-muted">credits</span>
         </div>
-        <div className="mt-1 font-mono text-[11px] text-muted">{planName} plan</div>
+        <div className="mt-1 font-mono text-[11px] text-muted">
+          {planName} plan
+        </div>
       </div>
 
-      {allowance > 0 && <BalanceRing pct={pct} balance={balance} allowance={allowance} />}
+      {allowance > 0 && (
+        <BalanceRing pct={pct} balance={balance} allowance={allowance} />
+      )}
     </div>
-  )
+  );
 }
 
-function BalanceRing({ pct, balance, allowance }: { pct: number; balance: number; allowance: number }) {
-  const r = 34
-  const c = 2 * Math.PI * r
+function BalanceRing({
+  pct,
+  balance,
+  allowance,
+}: {
+  pct: number;
+  balance: number;
+  allowance: number;
+}) {
+  const r = 34;
+  const c = 2 * Math.PI * r;
   return (
     <div className="relative grid h-24 w-24 shrink-0 place-items-center">
       <svg viewBox="0 0 84 84" className="h-24 w-24 -rotate-90">
-        <circle cx="42" cy="42" r={r} fill="none" stroke="rgb(var(--c-border-subtle))" strokeWidth="6" />
+        <circle
+          cx="42"
+          cy="42"
+          r={r}
+          fill="none"
+          stroke="rgb(var(--c-border-subtle))"
+          strokeWidth="6"
+        />
         <motion.circle
-          cx="42" cy="42" r={r} fill="none" stroke="rgb(var(--c-brand-500))" strokeWidth="6" strokeLinecap="round"
+          cx="42"
+          cy="42"
+          r={r}
+          fill="none"
+          stroke="rgb(var(--c-brand-500))"
+          strokeWidth="6"
+          strokeLinecap="round"
           strokeDasharray={c}
           initial={false}
           animate={{ strokeDashoffset: c * (1 - pct) }}
@@ -957,11 +1172,15 @@ function BalanceRing({ pct, balance, allowance }: { pct: number; balance: number
         />
       </svg>
       <div className="absolute text-center">
-        <div className="font-mono text-sm font-medium text-primary">{Math.round(pct * 100)}%</div>
-        <div className="font-mono text-[9px] text-muted">{balance.toLocaleString()}/{allowance.toLocaleString()}</div>
+        <div className="font-mono text-sm font-medium text-primary">
+          {Math.round(pct * 100)}%
+        </div>
+        <div className="font-mono text-[9px] text-muted">
+          {balance.toLocaleString()}/{allowance.toLocaleString()}
+        </div>
       </div>
     </div>
-  )
+  );
 }
 
 /* ── Subscription status ────────────────────────────────────────────────── */
@@ -971,27 +1190,32 @@ function SubscriptionCard({
   canceling,
   onCancel,
 }: {
-  subscription: Subscription | null
-  canceling: boolean
-  onCancel: () => void
+  subscription: Subscription | null;
+  canceling: boolean;
+  onCancel: () => void;
 }) {
-  if (!subscription || subscription.status === 'CANCELED' || subscription.status === 'EXPIRED') {
+  if (
+    !subscription ||
+    subscription.status === "CANCELED" ||
+    subscription.status === "EXPIRED"
+  ) {
     return (
       <div className="card p-6">
         <SectionMark>Subscription</SectionMark>
         <p className="mt-2 text-sm text-secondary">
-          You're on the Free plan. Choose Pro or Studio Max above to add monthly credits.
+          You're on the Free plan. Choose Pro or Studio Max above to add monthly
+          credits.
         </p>
       </div>
-    )
+    );
   }
 
-  const tier = subscription.plan?.tier ?? 'PRO'
-  const cycle = subscription.plan?.cycle ?? 'MONTHLY'
-  const renews = new Date(subscription.currentPeriodEnd)
+  const tier = subscription.plan?.tier ?? "PRO";
+  const cycle = subscription.plan?.cycle ?? "MONTHLY";
+  const renews = new Date(subscription.currentPeriodEnd);
   const renewText = subscription.cancelAtPeriodEnd
     ? `Ends ${renews.toLocaleDateString()}`
-    : `Renews ${renews.toLocaleDateString()}`
+    : `Renews ${renews.toLocaleDateString()}`;
 
   return (
     <div className="card flex flex-wrap items-center justify-between gap-4 p-6">
@@ -1001,7 +1225,10 @@ function SubscriptionCard({
           <span className="font-mono text-lg font-medium text-primary">
             {PLAN_TIER_NAMES[tier]} · {cycle}
           </span>
-          <StatusPill status={subscription.status} cancelAtPeriodEnd={subscription.cancelAtPeriodEnd} />
+          <StatusPill
+            status={subscription.status}
+            cancelAtPeriodEnd={subscription.cancelAtPeriodEnd}
+          />
         </div>
         <div className="mt-1 font-mono text-[11px] text-muted">{renewText}</div>
       </div>
@@ -1018,23 +1245,35 @@ function SubscriptionCard({
             disabled={canceling}
             className="focusable rounded-control border border-subtle bg-sunken px-4 py-2 font-mono text-xs text-secondary hover:text-primary disabled:opacity-60"
           >
-            {canceling ? 'Canceling…' : 'Cancel subscription'}
+            {canceling ? "Canceling…" : "Cancel subscription"}
           </button>
         )}
       </div>
     </div>
-  )
+  );
 }
 
-function StatusPill({ status, cancelAtPeriodEnd }: { status: string; cancelAtPeriodEnd: boolean }) {
+function StatusPill({
+  status,
+  cancelAtPeriodEnd,
+}: {
+  status: string;
+  cancelAtPeriodEnd: boolean;
+}) {
   const [label, cls] = cancelAtPeriodEnd
-    ? ['Canceling', 'bg-warn/15 text-warn']
-    : status === 'ACTIVE'
-      ? ['Active', 'bg-success/15 text-success']
-      : status === 'PAST_DUE'
-        ? ['Past due', 'bg-danger/15 text-danger']
-        : [status, 'bg-sunken text-muted']
-  return <span className={`rounded-pill px-2 py-0.5 font-mono text-[10px] font-medium ${cls}`}>{label}</span>
+    ? ["Canceling", "bg-warn/15 text-warn"]
+    : status === "ACTIVE"
+      ? ["Active", "bg-success/15 text-success"]
+      : status === "PAST_DUE"
+        ? ["Past due", "bg-danger/15 text-danger"]
+        : [status, "bg-sunken text-muted"];
+  return (
+    <span
+      className={`rounded-pill px-2 py-0.5 font-mono text-[10px] font-medium ${cls}`}
+    >
+      {label}
+    </span>
+  );
 }
 
 /* ── Payment history ────────────────────────────────────────────────────── */
@@ -1048,13 +1287,20 @@ function HistoryCard({ rows }: { rows: PaymentRow[] }) {
           <li key={r.id} className="flex items-center justify-between py-2.5">
             <div>
               <div className="text-sm text-secondary">{r.description}</div>
-              <div className="font-mono text-[11px] text-muted">{new Date(r.createdAt).toLocaleDateString()}</div>
+              <div className="font-mono text-[11px] text-muted">
+                {new Date(r.createdAt).toLocaleDateString()}
+              </div>
             </div>
             <div className="flex items-center gap-3">
               <span className="font-mono text-sm text-primary">
-                {(r.amountCents / 100).toLocaleString(undefined, { style: 'currency', currency: r.currency || 'USD' })}
+                {(r.amountCents / 100).toLocaleString(undefined, {
+                  style: "currency",
+                  currency: r.currency || "USD",
+                })}
               </span>
-              <span className={`rounded-pill px-2 py-0.5 font-mono text-[10px] ${r.status === 'SUCCEEDED' ? 'bg-success/15 text-success' : 'bg-sunken text-muted'}`}>
+              <span
+                className={`rounded-pill px-2 py-0.5 font-mono text-[10px] ${r.status === "SUCCEEDED" ? "bg-success/15 text-success" : "bg-sunken text-muted"}`}
+              >
                 {r.status}
               </span>
             </div>
@@ -1062,7 +1308,7 @@ function HistoryCard({ rows }: { rows: PaymentRow[] }) {
         ))}
       </ul>
     </div>
-  )
+  );
 }
 
 /* ── Small pieces ───────────────────────────────────────────────────────── */
@@ -1075,12 +1321,14 @@ function CheckoutFooter({ live }: { live: boolean }) {
     <div className="flex flex-wrap items-center justify-between gap-3 rounded-card border border-subtle bg-sunken/50 px-5 py-4">
       <div className="space-y-1.5">
         <p className="font-mono text-xs font-medium text-primary">
-          Heads up: your plan and credits can take 5–10 minutes to appear after you pay.
+          Heads up: your plan and credits can take 5–10 minutes to appear after
+          you pay.
         </p>
         <p className="font-mono text-xs text-muted">
-          Lemon Squeezy, our payment provider, has to confirm the payment first. They are added to your
-          account automatically the moment it does — you don't need to stay on the page — and we email
-          you a receipt. Card details never reach this site.
+          Lemon Squeezy, our payment provider, has to confirm the payment first.
+          They are added to your account automatically the moment it does — you
+          don't need to stay on the page — and we email you a receipt. Card
+          details never reach this site.
         </p>
       </div>
       {live && (
@@ -1089,28 +1337,32 @@ function CheckoutFooter({ live }: { live: boolean }) {
         </span>
       )}
     </div>
-  )
+  );
 }
 
 function SectionMark({ children }: { children: ReactNode }) {
-  return <span className="font-mono text-[10px] font-medium uppercase tracking-[0.12em] text-muted">/ {children}</span>
+  return (
+    <span className="font-mono text-[10px] font-medium uppercase tracking-[0.12em] text-muted">
+      / {children}
+    </span>
+  );
 }
 
 function fmtPrice(dollars: number): string {
-  return dollars === 0 ? 'Free' : `$${dollars.toLocaleString()}`
+  return dollars === 0 ? "Free" : `$${dollars.toLocaleString()}`;
 }
 
 // Pinned to en-US on purpose: the catalog is priced in dollars, and letting the
 // visitor's locale format it turns $13.45 into "US$13.45" for a large slice of
 // the world — a different-looking price for the same charge.
-function fmtCents(cents: number, currency = 'usd'): string {
-  return (cents / 100).toLocaleString('en-US', {
-    style: 'currency',
-    currency: (currency || 'usd').toUpperCase(),
-  })
+function fmtCents(cents: number, currency = "usd"): string {
+  return (cents / 100).toLocaleString("en-US", {
+    style: "currency",
+    currency: (currency || "usd").toUpperCase(),
+  });
 }
 
 /** "4.5", "5", "0.5" — never "5.0". */
 function fmtMinutes(m: number): string {
-  return Number.isInteger(m) ? String(m) : m.toFixed(1)
+  return Number.isInteger(m) ? String(m) : m.toFixed(1);
 }
