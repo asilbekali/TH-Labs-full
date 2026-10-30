@@ -1,92 +1,42 @@
-// HTML email templates — 8-bit / pixel-art styling.
+// HTML email templates — the shared shell for every non-receipt email.
 //
-// Two constraints shape everything here:
+// Same look as th-labs.uz and the receipt email (receipt.template.ts): warm
+// paper page, one white card with a hairline border, the logo and wordmark
+// above it, a serif headline, sans-serif body, one dark button, and the brand
+// violet used only for links. Quiet and editorial, like a product email from a
+// company you trust, so it reads the same whether it is a welcome, a reply to
+// feedback, or a warning about an account.
 //
-//   1. Email clients strip <style> blocks, ignore flexbox/grid, and Outlook
-//      drops border-radius and box-shadow. So: tables, inline styles, square
-//      corners, and a "shadow" faked with an offset background cell.
-//   2. No external assets. Gmail blocks @font-face, so the retro look comes
-//      from the one monospace stack every machine already has, and the logo is
-//      real pixel art built from table cells — one <td> per pixel. Nothing to
-//      download, nothing to block, sharp at any zoom.
+// Email-client rules shape the markup:
+//
+//   1. Clients strip <style> blocks and ignore flexbox/grid, and Outlook drops
+//      border-radius. So: tables and inline styles only; rounded corners are a
+//      nice-to-have that degrades to square.
+//   2. No web fonts (Gmail blocks @font-face). Georgia and the system sans
+//      stack stand in for the site's serif display face and Inter.
+//   3. The logo is the PNG hosted on the site. If images are blocked, its alt
+//      text and the wordmark beside it still say who this is from.
 //
 // Keep it that way when editing.
 
-const BRAND = {
-  name: 'TH LABS',
-  accent: '#7c5cff',
-  accentSoft: '#a78bfa',
-  screen: '#05050a',
-  bg: '#0b0b12',
-  card: '#14141f',
-  shadow: '#000000',
-  text: '#e9e9f0',
-  muted: '#9a9ab0',
-  cyan: '#5ce1ff',
+export const DEFAULT_APP_URL = 'https://th-labs.uz';
+
+const C = {
+  page: '#f5f4ef',
+  card: '#ffffff',
+  border: '#e6e3da',
+  ink: '#1a1a1f',
+  body: '#3d3d45',
+  muted: '#7a7a85',
+  brand: '#6d28d9',
+  button: '#1a1a1f',
 };
 
-// The only font stack that is both universally installed and unmistakably
-// retro. A pixel webfont would be nicer and would not load in Gmail.
-const MONO = "'Courier New', Courier, 'Lucida Console', Monaco, monospace";
+const SERIF = "Georgia, 'Times New Roman', Times, serif";
+const SANS =
+  "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
 
-// ── Pixel art ──────────────────────────────────────────────────────────────
-
-/** A tiny CRT with a play button on it. One character per pixel. */
-const LOGO_PIXELS = [
-  '.FFFFFFFFFFF.',
-  'FSSSSSSSSSSSF',
-  'FSSSSSSSSSSSF',
-  'FSSSPPSSSSSSF',
-  'FSSSPPPSSSSSF',
-  'FSSSPPPPSSSSF',
-  'FSSSPPPSSSSSF',
-  'FSSSPPSSSSSSF',
-  'FSSSSSSSSSSSF',
-  'FFFFFFFFFFFFF',
-  '..FF.....FF..',
-];
-
-const PIXEL_COLORS: Record<string, string | null> = {
-  F: BRAND.accent, // frame
-  S: BRAND.screen, // screen
-  P: BRAND.cyan, // play triangle
-  '.': null, // transparent — falls through to the card colour
-};
-
-/**
- * Render a character grid as a table of coloured cells.
- *
- * `font-size:0;line-height:0` on every cell is load-bearing: without it clients
- * reserve space for the (empty) text node and the pixels stop being square.
- */
-function renderPixelArt(rows: string[], size: number): string {
-  const cells = rows
-    .map((row) => {
-      const tds = [...row]
-        .map((char) => {
-          const color = PIXEL_COLORS[char];
-          const bg = color ? ` bgcolor="${color}"` : '';
-          return `<td${bg} width="${size}" height="${size}" style="width:${size}px;height:${size}px;font-size:0;line-height:0;padding:0;${color ? `background-color:${color};` : ''}">&nbsp;</td>`;
-        })
-        .join('');
-      return `<tr>${tds}</tr>`;
-    })
-    .join('');
-
-  return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;mso-table-lspace:0;mso-table-rspace:0;">${cells}</table>`;
-}
-
-/** A dithered checkerboard strip, used as a divider. */
-function renderDitherBar(width: number, size: number): string {
-  const tds = Array.from({ length: width }, (_, i) => {
-    const color = i % 2 === 0 ? BRAND.accent : BRAND.card;
-    return `<td bgcolor="${color}" width="${size}" height="${size}" style="width:${size}px;height:${size}px;font-size:0;line-height:0;padding:0;background-color:${color};">&nbsp;</td>`;
-  }).join('');
-
-  return `<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;"><tr>${tds}</tr></table>`;
-}
-
-// ── Rendering ──────────────────────────────────────────────────────────────
+const SIGNOFF = 'The TH Labs team';
 
 /** Escape user-supplied values before they go anywhere near the markup. */
 function escapeHtml(value: string): string {
@@ -98,17 +48,22 @@ function escapeHtml(value: string): string {
     .replace(/'/g, '&#39;');
 }
 
+const paragraph = (html: string, margin = '0 0 16px') =>
+  `<p style="margin:${margin};font-family:${SANS};font-size:16px;line-height:1.6;color:${C.body};">${html}</p>`;
+
 /** Turn plain text into paragraphs, preserving blank-line breaks. */
 function toParagraphs(text: string): string {
   return text
     .split(/\n{2,}/)
     .map((block) => escapeHtml(block.trim()).replace(/\n/g, '<br />'))
     .filter(Boolean)
-    .map(
-      (block) =>
-        `<p style="margin:0 0 18px;font-family:${MONO};font-size:15px;line-height:1.8;color:${BRAND.text};">${block}</p>`,
-    )
+    .map((block) => paragraph(block))
     .join('');
+}
+
+/** The site's origin without a trailing slash, falling back when unset. */
+function baseUrl(appUrl: string | undefined): string {
+  return (appUrl || DEFAULT_APP_URL).replace(/\/+$/, '');
 }
 
 export interface TemplateOptions {
@@ -116,47 +71,45 @@ export interface TemplateOptions {
   name: string;
   /** Body copy. Blank lines become separate paragraphs. */
   text: string;
-  /** Big line above the body. Defaults to a greeting built from `name`. */
+  /** Serif headline above the greeting. Omitted, the email opens on "Hi name,". */
   heading?: string;
   /** Optional call-to-action button. */
   cta?: { label: string; url: string };
-  /** Small print under the divider. */
+  /** Small print under the card. */
   footnote?: string;
+  /** Where the logo and footer link point. Defaults to th-labs.uz. */
+  appUrl?: string;
 }
 
 /**
- * The shared 8-bit shell every outgoing email uses. Pass any heading/body and
- * you get a consistent TH Labs-looking message back.
+ * The shared shell every outgoing email uses. Pass any heading/body and you
+ * get a consistent TH Labs message back: greeting, body, optional button,
+ * sign-off.
  */
 export function renderEmail(options: TemplateOptions): string {
-  const { name, text, cta, footnote } = options;
-  const heading = options.heading ?? `HEY ${name.toUpperCase()}`;
+  const { name, text, heading, cta, footnote } = options;
+  const base = baseUrl(options.appUrl);
+  const host = base.replace(/^https?:\/\//, '');
   const year = new Date().getFullYear();
+  const title = heading ?? `A message from TH Labs`;
 
-  // Square, thick-bordered, and typed in caps — a button from a 1992 menu
-  // screen. Built as a table so Outlook renders the border at all.
-  const button = cta
-    ? `
-        <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:10px 0 2px;">
-          <tr>
-            <td bgcolor="${BRAND.shadow}" style="padding:0 4px 4px 0;background-color:${BRAND.shadow};">
-              <table role="presentation" cellpadding="0" cellspacing="0" border="0">
-                <tr>
-                  <td bgcolor="${BRAND.accent}" style="background-color:${BRAND.accent};border:3px solid ${BRAND.text};">
-                    <a href="${escapeHtml(cta.url)}"
-                       style="display:inline-block;padding:13px 26px;font-family:${MONO};font-size:14px;font-weight:bold;letter-spacing:1.5px;text-transform:uppercase;color:#ffffff;text-decoration:none;">
-                      &#9658;&nbsp; ${escapeHtml(cta.label)}
-                    </a>
-                  </td>
-                </tr>
-              </table>
-            </td>
-          </tr>
-        </table>`
+  const headline = heading
+    ? `<h1 style="margin:0 0 24px;font-family:${SERIF};font-size:28px;line-height:1.25;font-weight:normal;color:${C.ink};">${escapeHtml(heading)}</h1>`
     : '';
 
-  const footer = footnote
-    ? `<p style="margin:0 0 12px;font-family:${MONO};font-size:12px;line-height:1.7;color:${BRAND.muted};">${escapeHtml(footnote)}</p>`
+  const button = cta
+    ? `
+                <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:12px 0 28px;">
+                  <tr>
+                    <td bgcolor="${C.button}" style="background-color:${C.button};border-radius:8px;">
+                      <a href="${escapeHtml(cta.url)}" style="display:inline-block;padding:13px 24px;font-family:${SANS};font-size:15px;font-weight:600;color:#ffffff;text-decoration:none;border-radius:8px;">${escapeHtml(cta.label)}</a>
+                    </td>
+                  </tr>
+                </table>`
+    : '';
+
+  const smallPrint = footnote
+    ? `<p style="margin:0 0 12px;">${escapeHtml(footnote)}</p>`
     : '';
 
   return `<!DOCTYPE html>
@@ -164,68 +117,51 @@ export function renderEmail(options: TemplateOptions): string {
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <meta name="color-scheme" content="dark light" />
-    <title>${escapeHtml(heading)}</title>
+    <meta name="color-scheme" content="light" />
+    <meta name="supported-color-schemes" content="light" />
+    <title>${escapeHtml(title)}</title>
   </head>
-  <body style="margin:0;padding:0;background-color:${BRAND.bg};">
+  <body style="margin:0;padding:0;background-color:${C.page};">
     <!-- Preview text shown in the inbox list, hidden in the body itself. -->
-    <div style="display:none;max-height:0;overflow:hidden;opacity:0;">
-      ${escapeHtml(text.slice(0, 120))}
-    </div>
+    <div style="display:none;max-height:0;overflow:hidden;opacity:0;">${escapeHtml(text.slice(0, 140))}</div>
 
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
-           style="background-color:${BRAND.bg};padding:36px 12px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" bgcolor="${C.page}" style="background-color:${C.page};">
       <tr>
-        <td align="center">
-          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
-                 style="max-width:560px;width:100%;">
+        <td align="center" style="padding:40px 16px;">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:560px;width:100%;">
 
-            <!-- Pixel logo + wordmark -->
+            <!-- Logo + wordmark -->
             <tr>
-              <td align="center" style="padding-bottom:14px;">
-                ${renderPixelArt(LOGO_PIXELS, 7)}
+              <td style="padding:0 4px 24px;">
+                <a href="${escapeHtml(base)}" style="text-decoration:none;">
+                  <table role="presentation" cellpadding="0" cellspacing="0" border="0">
+                    <tr>
+                      <td style="padding-right:10px;vertical-align:middle;">
+                        <img src="${escapeHtml(base)}/logo.png" width="28" height="28" alt="TH Labs" style="display:block;width:28px;height:28px;border:0;" />
+                      </td>
+                      <td style="vertical-align:middle;font-family:${SANS};font-size:16px;font-weight:600;letter-spacing:-0.2px;color:${C.ink};">TH Labs</td>
+                    </tr>
+                  </table>
+                </a>
               </td>
             </tr>
+
+            <!-- Card -->
             <tr>
-              <td align="center" style="padding-bottom:22px;">
-                <span style="font-family:${MONO};font-size:17px;font-weight:bold;letter-spacing:5px;color:${BRAND.text};">
-                  TH&nbsp;<span style="color:${BRAND.accentSoft};">LABS</span>
-                </span>
-              </td>
-            </tr>
-
-            <!-- Card, with a hard offset shadow instead of a soft one -->
-            <tr>
-              <td bgcolor="${BRAND.shadow}" style="padding:0 6px 6px 0;background-color:${BRAND.shadow};">
-                <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
-                       style="background-color:${BRAND.card};border:3px solid ${BRAND.accent};">
-                  <tr>
-                    <td style="padding:34px 32px 30px;">
-
-                      <h1 style="margin:0 0 8px;font-family:${MONO};font-size:21px;line-height:1.45;font-weight:bold;letter-spacing:1px;text-transform:uppercase;color:#ffffff;">
-                        ${escapeHtml(heading)}
-                      </h1>
-
-                      <!-- Dither strip under the headline -->
-                      <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 22px;">
-                        <tr><td>${renderDitherBar(24, 5)}</td></tr>
-                      </table>
-
-                      ${toParagraphs(text)}
-                      ${button}
-                    </td>
-                  </tr>
-                </table>
+              <td bgcolor="${C.card}" style="background-color:${C.card};border:1px solid ${C.border};border-radius:12px;padding:40px 40px 36px;">
+                ${headline}
+                ${paragraph(`Hi ${escapeHtml(name)},`)}
+                ${toParagraphs(text)}
+                ${button}
+                ${paragraph(`Best,<br />${SIGNOFF}`, '8px 0 0')}
               </td>
             </tr>
 
             <!-- Footer -->
             <tr>
-              <td align="center" style="padding:28px 20px 0;">
-                ${footer}
-                <p style="margin:0;font-family:${MONO};font-size:11px;line-height:1.7;letter-spacing:0.5px;color:${BRAND.muted};">
-                  &copy; ${year} ${BRAND.name} &nbsp;&#9642;&nbsp; YOU SIGNED UP AT TH LABS
-                </p>
+              <td style="padding:28px 4px 0;font-family:${SANS};font-size:13px;line-height:1.6;color:${C.muted};">
+                ${smallPrint}
+                <p style="margin:0;">&copy; ${year} TH Labs &middot; AI video dubbing &middot; <a href="${escapeHtml(base)}" style="color:${C.muted};text-decoration:underline;">${escapeHtml(host)}</a></p>
               </td>
             </tr>
 
@@ -239,12 +175,21 @@ export function renderEmail(options: TemplateOptions): string {
 
 /** Plain-text fallback for clients that refuse HTML. */
 export function renderText(options: TemplateOptions): string {
-  const heading = options.heading ?? `Hey ${options.name}`;
-  const cta = options.cta ? `\n\n> ${options.cta.label}: ${options.cta.url}` : '';
-  const footnote = options.footnote ? `\n\n${options.footnote}` : '';
-  const rule = '='.repeat(46);
-
-  return `${rule}\n  ${heading.toUpperCase()}\n${rule}\n\n${options.text}${cta}${footnote}\n\n-- ${BRAND.name} --`;
+  const base = baseUrl(options.appUrl);
+  return [
+    ...(options.heading ? [options.heading, ''] : []),
+    `Hi ${options.name},`,
+    '',
+    options.text,
+    ...(options.cta ? ['', `${options.cta.label}: ${options.cta.url}`] : []),
+    '',
+    'Best,',
+    SIGNOFF,
+    '',
+    '--',
+    ...(options.footnote ? [options.footnote] : []),
+    `TH Labs · ${base.replace(/^https?:\/\//, '')}`,
+  ].join('\n');
 }
 
 // ── The automatic emails ──────────────────────────────────────────────────
@@ -258,14 +203,14 @@ export function communityWelcomeTemplate(
 ): TemplateOptions {
   return {
     name,
-    heading: `Player 2 has entered, ${name}`,
+    heading: 'Welcome to the TH Labs community',
     text:
-      `You're in — welcome to the TH Labs community.\n\n` +
-      `We're building the fastest way to dub and localise video with AI: upload once, ` +
-      `ship in every language your audience speaks, with voices that actually sound like you.\n\n` +
-      `We'll email you the moment your access is ready. No spam, no noise — just the good stuff.`,
+      `Thanks for joining. We're building the fastest way to dub and localise video ` +
+      `with AI: upload once, publish in every language your audience speaks, with ` +
+      `voices that still sound like you.\n\n` +
+      `We'll email you as soon as your access is ready. Only updates that matter — no spam.`,
     cta: { label: 'Explore TH Labs', url: appUrl },
-    footnote: 'Questions? Just reply to this email — a real person reads it.',
+    footnote: 'Questions? Reply to this email and a real person will answer.',
   };
 }
 
@@ -276,15 +221,17 @@ export function signupWelcomeTemplate(
 ): TemplateOptions {
   return {
     name,
-    heading: `Insert coin — you're in, ${name}`,
+    heading: 'Your TH Labs account is ready',
     text:
-      `Your TH Labs account is set up and you can start dubbing right now.\n\n` +
-      `You've got free credits waiting. Upload a video, pick your target languages, ` +
-      `and get back a dub that keeps your own voice.\n\n` +
-      `Sign in and the Studio is yours.`,
+      `Your account is set up and you can start dubbing right away.\n\n` +
+      `There are free credits waiting for you. Upload a video, choose your target ` +
+      `languages, and get back a dub that keeps your own voice.`,
     // Straight to /studio, not the root: they have an account, and the route
     // asks them to sign in if the session has since expired.
-    cta: { label: 'Open the Studio', url: `${appUrl.replace(/\/+$/, '')}/studio` },
+    cta: {
+      label: 'Open the Studio',
+      url: `${appUrl.replace(/\/+$/, '')}/studio`,
+    },
     footnote:
       "If you didn't create this account, just reply to this email and we'll sort it out.",
   };
@@ -302,9 +249,9 @@ export function feedbackReceiptTemplate(
 ): TemplateOptions {
   return {
     name,
-    heading: `Got it, ${name}`,
+    heading: 'We received your feedback',
     text:
-      `Your feedback landed — thank you. A real person on the team reads every one of these.\n\n` +
+      `Thank you for writing to us. A real person on the team reads every message.\n\n` +
       `If it was a bug, we may reply from this address to ask which clip and which ` +
       `settings you used. If it was an idea, it goes on the list we actually build from.`,
     cta: { label: 'Back to TH Labs', url: appUrl },
