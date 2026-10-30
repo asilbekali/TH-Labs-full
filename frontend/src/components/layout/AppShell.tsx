@@ -125,21 +125,14 @@ export default function AppShell({ children }: { children: ReactNode }) {
       <Sidebar compact={collapsed} className="hidden h-full lg:flex" />
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <TopBar onToggleSidebar={() => setCollapsed((v) => !v)} sidebarLabel={sidebarLabel} />
-
-        {/* Mobile: the drawer opener. The tab bar carries five destinations;
-            Docs and Developers are not among them, so there has to be a way to
-            reach the full sidebar on a phone. */}
-        <button
-          type="button"
-          onClick={() => setDrawer(true)}
-          className="focusable flex shrink-0 items-center gap-2 border-b border-subtle px-4 py-2 text-sm text-secondary lg:hidden"
-        >
-          <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M4 7h16M4 12h16M4 17h10" />
-          </svg>
-          Menu
-        </button>
+        {/* Below lg the bar's menu button opens the drawer. The tab bar carries
+            five destinations; Docs, Developers and Settings are not among them,
+            so a phone needs another way to the full sidebar. */}
+        <TopBar
+          onToggleSidebar={() => setCollapsed((v) => !v)}
+          onOpenMenu={() => setDrawer(true)}
+          sidebarLabel={sidebarLabel}
+        />
 
         <main
           className={
@@ -151,10 +144,10 @@ export default function AppShell({ children }: { children: ReactNode }) {
           {workbench ? (
             children
           ) : (
-            // `pb-28` on the inner box rather than on <main>: padding on a
+            // `pb-32` on the inner box rather than on <main>: padding on a
             // scroll container is not always honoured at the end of the scroll
             // range, and the mobile tab bar would sit on top of the last card.
-            <div className="mx-auto w-full max-w-[1180px] px-4 py-6 pb-28 sm:px-7 lg:pb-10">
+            <div className="mx-auto w-full max-w-[1180px] px-4 py-5 pb-32 sm:px-7 sm:py-6 lg:pb-10">
               {children}
             </div>
           )}
@@ -178,7 +171,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
               animate={{ opacity: 1 }}
               exit={{ opacity: 0 }}
               onClick={() => setDrawer(false)}
-              className="fixed inset-0 z-50 bg-black/35 lg:hidden"
+              className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm lg:hidden"
             />
             <motion.div
               initial={{ x: '-100%' }}
@@ -187,7 +180,11 @@ export default function AppShell({ children }: { children: ReactNode }) {
               transition={{ type: 'spring', stiffness: 420, damping: 38 }}
               className="fixed inset-y-0 left-0 z-50 lg:hidden"
             >
-              <Sidebar compact={false} className="flex h-full" onNavigate={() => setDrawer(false)} />
+              <Sidebar
+                compact={false}
+                className="flex h-full pt-[calc(env(safe-area-inset-top)+1rem)] shadow-[var(--shadow-lg)]"
+                onNavigate={() => setDrawer(false)}
+              />
             </motion.div>
           </>
         )}

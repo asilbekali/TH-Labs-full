@@ -19,9 +19,12 @@ import { BELL, PAGE_TITLES, RailSvg } from './nav-items'
  */
 export default function TopBar({
   onToggleSidebar,
+  onOpenMenu,
   sidebarLabel,
 }: {
   onToggleSidebar: () => void
+  /** Opens the drawer below lg — the way to Docs, Developers and Settings on a phone. */
+  onOpenMenu: () => void
   sidebarLabel: string
 }) {
   const { pathname } = useLocation()
@@ -29,7 +32,18 @@ export default function TopBar({
   const isHome = pathname === '/'
 
   return (
-    <header className="flex h-14 shrink-0 items-center gap-3 border-b border-subtle bg-canvas px-3 sm:px-4">
+    <header className="relative z-30 flex h-14 shrink-0 items-center gap-2 border-b border-[var(--card-edge)] bg-[var(--rail-bg)] px-3 backdrop-blur-xl sm:gap-3 sm:px-4">
+      <button
+        type="button"
+        onClick={onOpenMenu}
+        aria-label="Open menu"
+        className="bar-icon focusable shrink-0 lg:hidden"
+      >
+        <svg viewBox="0 0 24 24" className="h-[19px] w-[19px]" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+          <path d="M4 7h16M4 12h16M4 17h10" />
+        </svg>
+      </button>
+
       <button
         type="button"
         onClick={onToggleSidebar}

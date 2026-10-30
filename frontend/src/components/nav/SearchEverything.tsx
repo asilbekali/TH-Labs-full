@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import { NAV_ALL, RailSvg, type NavItem } from './nav-items'
 import { useLanguages } from '../../lib/queries'
+import LangIcon from '../LangIcon'
 
 interface Hit {
   id: string
@@ -85,7 +86,7 @@ export default function SearchEverything() {
         id: `lang:${l.code}`,
         label: `Dub into ${l.name}`,
         hint: `${l.native} · ${l.code.toUpperCase()}`,
-        icon: <span className="text-base leading-none">{l.flag}</span>,
+        icon: <LangIcon code={l.code} flag={l.flag} size={18} />,
         go: () => navigate('/studio', { state: { targetLang: l.code } }),
       })
     }

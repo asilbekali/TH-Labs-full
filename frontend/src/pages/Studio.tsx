@@ -21,6 +21,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import Uploader from "../components/Uploader";
 import LinkInput, { readLink } from "../components/LinkInput";
 import LanguageSelect from "../components/LanguageSelect";
+import LangIcon from "../components/LangIcon";
 import OptionToggle from "../components/OptionToggle";
 import StageTimeline from "../components/StageTimeline";
 import VideoCompare from "../components/VideoCompare";
@@ -1005,6 +1006,9 @@ export default function Studio() {
         open={openStep === "source"}
         onToggle={() => toggleStep("source")}
         tour="tour-source"
+        onNext={() => setOpenStep("languages")}
+        nextLabel="Next: languages"
+        nextDisabled={!sourceReady}
       >
         {/* Two ways in, as tabs rather than two always-visible fields: only one
             can be sent, and showing both filled-in invites the question of which
@@ -1080,10 +1084,10 @@ export default function Studio() {
         title="Languages"
         summary={
           <span className="flex items-center gap-1.5">
-            <span aria-hidden>{langFlag(sourceLang)}</span>
+            <LangIcon code={sourceLang} flag={langFlag(sourceLang)} size={16} />
             {langName(sourceLang)}
             <span className="text-brand">→</span>
-            <span aria-hidden>{langFlag(targetLang)}</span>
+            <LangIcon code={targetLang} flag={langFlag(targetLang)} size={16} />
             {langName(targetLang)}
           </span>
         }
@@ -1091,6 +1095,12 @@ export default function Studio() {
         open={openStep === "languages"}
         onToggle={() => toggleStep("languages")}
         tour="tour-languages"
+        // Moving on is a choice too: the defaults the user kept count as set.
+        onNext={() => {
+          markTouched("languages");
+          setOpenStep("options");
+        }}
+        nextLabel="Next: voice & mix"
       >
         <div className="relative space-y-3">
           <LanguageSelect
@@ -1185,6 +1195,11 @@ export default function Studio() {
         open={openStep === "options"}
         onToggle={() => toggleStep("options")}
         tour="tour-options"
+        onNext={() => {
+          markTouched("options");
+          setOpenStep("quality");
+        }}
+        nextLabel="Next: quality"
       >
         <VoicePicker
           mode={voiceMode}
@@ -1659,6 +1674,7 @@ export default function Studio() {
                 <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2">
                   <LangBadge
                     key={sourceLang}
+                    code={sourceLang}
                     flag={langFlag(sourceLang)}
                     label={langName(sourceLang)}
                   />
@@ -1681,6 +1697,7 @@ export default function Studio() {
                   </motion.svg>
                   <LangBadge
                     key={targetLang}
+                    code={targetLang}
                     flag={langFlag(targetLang)}
                     label={langName(targetLang)}
                     accent
@@ -2235,10 +2252,12 @@ function MonitorCard({
 // badge re-mounts on a language change (it is keyed by code), which is what
 // gives the flag its little pop when you pick a different language.
 function LangBadge({
+  code,
   flag,
   label,
   accent,
 }: {
+  code: string;
   flag: string;
   label: string;
   accent?: boolean;
@@ -2251,12 +2270,12 @@ function LangBadge({
       className="inline-flex items-center gap-2"
     >
       <span
-        className={`grid h-9 w-9 place-items-center rounded-control text-lg ${
-          accent ? "bg-brand/12 ring-1 ring-brand/25" : "bg-sunken"
+        className={`grid h-10 w-10 place-items-center rounded-full ${
+          accent ? "bg-brand/12 ring-1 ring-brand/30" : "bg-[var(--well)] ring-1 ring-[var(--card-edge)]"
         }`}
         aria-hidden
       >
-        {flag}
+        <LangIcon code={code} flag={flag} size={28} />
       </span>
       <span
         className={`font-mono text-sm font-medium ${accent ? "text-brand" : "text-primary"}`}

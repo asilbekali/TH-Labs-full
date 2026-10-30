@@ -61,7 +61,7 @@ export default function Sidebar({
 
   return (
     <aside
-      className={`shrink-0 flex-col border-r border-subtle bg-surface ${
+      className={`shrink-0 flex-col border-r border-[var(--card-edge)] bg-[var(--rail-bg)] backdrop-blur-xl ${
         compact ? 'w-[68px] px-3.5' : 'w-[248px] px-3'
       } py-4 ${className}`}
     >
@@ -73,7 +73,7 @@ export default function Sidebar({
         className={`focusable mb-4 flex items-center gap-2 rounded-lg ${compact ? 'justify-center' : 'px-1.5'}`}
       >
         <LogoMark className="h-[22px] w-[22px] text-primary" title="TH-Labs" />
-        {!compact && <span className="text-[15px] font-semibold tracking-tight text-primary">TH-Labs</span>}
+        {!compact && <span className="text-[17px] font-semibold tracking-[-0.02em] text-primary">TH-Labs</span>}
       </Link>
 
       {/* The workspace card. There is one workspace per account, so it is an
@@ -88,7 +88,7 @@ export default function Sidebar({
           style={{ background: workspace.gradient }}
         />
       ) : (
-        <div className="mb-5 flex items-center gap-2.5 rounded-xl border border-subtle px-3 py-2.5">
+        <div className="mb-5 flex items-center gap-2.5 rounded-full border border-[var(--card-edge)] bg-[var(--well)] px-3 py-2">
           <span
             aria-hidden
             className="h-5 w-5 shrink-0 rounded-full"
@@ -101,7 +101,7 @@ export default function Sidebar({
       <nav className="flex flex-col gap-0.5">{NAV_MAIN.map(row)}</nav>
 
       {/* `mt-auto` is what pins this group to the bottom edge of the column. */}
-      <nav className="mt-auto flex flex-col gap-0.5 border-t border-subtle pt-3">
+      <nav className="mt-auto flex flex-col gap-0.5 border-t border-[var(--card-edge)] pt-3">
         {NAV_BOTTOM.map(row)}
       </nav>
     </aside>

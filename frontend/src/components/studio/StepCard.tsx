@@ -24,6 +24,9 @@ export default function StepCard({
   onToggle,
   tour,
   disabled,
+  onNext,
+  nextLabel = 'Next step',
+  nextDisabled,
   children,
 }: {
   n: string
@@ -36,6 +39,10 @@ export default function StepCard({
   /** `data-tour` anchor so the walkthrough can spotlight this step. */
   tour?: string
   disabled?: boolean
+  /** Shows a button under the controls that hands the user to the next step. */
+  onNext?: () => void
+  nextLabel?: string
+  nextDisabled?: boolean
   children: ReactNode
 }) {
   // The body clips while it animates (that is what makes the height tween
@@ -51,10 +58,14 @@ export default function StepCard({
       data-tour={tour}
       animate={{ scale: open ? 1 : 0.995 }}
       transition={{ type: 'spring', stiffness: 340, damping: 30 }}
+      // Every card is its own stacking context (the frosted backdrop-filter and
+      // the scale both make one), so a dropdown's z-index only counts inside its
+      // own card. Lifting the open card is what puts the language list OVER
+      // the steps below it instead of under them.
       className={`card relative transition-[border-color,box-shadow] duration-300 ${
         open
-          ? 'border-brand/40 shadow-[var(--shadow-md)]'
-          : 'sheen hover:border-strong'
+          ? 'z-20 border-brand/40 shadow-[var(--shadow-md)]'
+          : 'z-0 sheen hover:border-strong'
       }`}
     >
       <span className="spine" data-on={open} aria-hidden />
@@ -174,6 +185,21 @@ export default function StepCard({
             >
               <div className="rule-signature mb-3" />
               {children}
+              {onNext && (
+                <div className="flex justify-end pt-1">
+                  <button
+                    type="button"
+                    onClick={onNext}
+                    disabled={nextDisabled}
+                    className="btn-ghost focusable inline-flex h-10 items-center gap-1.5 px-4 text-[13px] disabled:cursor-not-allowed disabled:opacity-45"
+                  >
+                    {nextLabel}
+                    <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                      <path d="M5 12h14M13 6l6 6-6 6" />
+                    </svg>
+                  </button>
+                </div>
+              )}
             </motion.div>
           </motion.div>
         )}

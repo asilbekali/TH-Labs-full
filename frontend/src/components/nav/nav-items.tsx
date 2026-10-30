@@ -4,6 +4,8 @@ export interface NavItem {
   to: string
   label: string
   icon: ReactNode
+  /** A shorter label for the phone tab bar, where a tab is ~70px wide. */
+  short?: string
   /**
    * Marks a destination that exists but has nothing behind it yet, so the nav
    * can badge it instead of letting someone click through expecting a feature.
@@ -58,7 +60,7 @@ const ICON = {
 export const NAV_MAIN: NavItem[] = [
   { to: '/', label: 'Home', icon: ICON.home },
   { to: '/studio', label: 'Studio', icon: ICON.studio },
-  { to: '/tts', label: 'Text to speech', icon: ICON.tts },
+  { to: '/tts', label: 'Text to speech', short: 'Speech', icon: ICON.tts },
   { to: '/works', label: 'My works', icon: ICON.works },
 ]
 
@@ -71,7 +73,7 @@ export const NAV_MAIN: NavItem[] = [
 export const NAV_BOTTOM: NavItem[] = [
   { to: '/docs', label: 'Docs', icon: ICON.docs },
   { to: '/developers', label: 'Developers', icon: ICON.developers, soon: true },
-  { to: '/plans', label: 'Plans & billing', icon: ICON.billing },
+  { to: '/plans', label: 'Plans & billing', short: 'Plans', icon: ICON.billing },
   { to: '/account', label: 'Settings', icon: ICON.settings },
 ]
 
@@ -79,16 +81,11 @@ export const NAV_BOTTOM: NavItem[] = [
 export const NAV_ALL: NavItem[] = [...NAV_MAIN, ...NAV_BOTTOM]
 
 /**
- * The five destinations the mobile tab bar shows. A phone has no room for the
- * full bottom group, so Docs and Developers live in the drawer there.
+ * The five destinations the mobile tab bar shows: the four places there is
+ * something to do, plus billing. A phone has no room for the rest, so Docs,
+ * Developers and Settings live in the drawer (Settings also in the account menu).
  */
-export const NAV: NavItem[] = [
-  NAV_MAIN[0],
-  NAV_MAIN[1],
-  NAV_MAIN[3],
-  NAV_BOTTOM[2],
-  NAV_BOTTOM[3],
-]
+export const NAV: NavItem[] = [...NAV_MAIN, NAV_BOTTOM[2]]
 
 /** Breadcrumb titles, so the top bar names the page without each page telling it. */
 export const PAGE_TITLES: Record<string, string> = {
