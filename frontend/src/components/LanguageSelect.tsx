@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Language } from '../lib/types'
+import LangIcon from './LangIcon'
 
 export default function LanguageSelect({
   languages,
@@ -45,7 +46,7 @@ export default function LanguageSelect({
   }, [])
 
   const selected = useMemo(() => {
-    if (value === 'auto') return { flag: '🌐', name: 'Auto-detect', code: 'auto' }
+    if (value === 'auto') return { flag: '', name: 'Auto-detect', code: 'auto' }
     return languages.find((l) => l.code === value)
   }, [value, languages])
 
@@ -70,21 +71,21 @@ export default function LanguageSelect({
         disabled={loading}
         aria-busy={loading}
         onClick={() => !loading && setOpen((o) => !o)}
-        className={`focusable flex w-full items-center justify-between rounded-2xl border border-subtle bg-sunken px-4 py-3 text-left text-sm transition-colors ${
+        className={`focusable flex min-h-12 w-full items-center justify-between gap-2 rounded-[var(--radius-control)] border border-[var(--well-edge)] bg-[var(--well)] px-3.5 py-2.5 text-left text-sm transition-[border-color,box-shadow] ${
           loading ? 'cursor-default' : 'hover:border-brand/50'
-        }`}
+        } ${open ? 'border-brand/60 shadow-[0_0_0_3px_rgb(var(--c-brand-500)/0.16)]' : ''}`}
       >
         {loading ? (
           <span className="flex items-center gap-2.5">
-            <span className="shimmer h-4 w-4 shrink-0 rounded-full bg-strong/50" />
+            <span className="shimmer h-[22px] w-[22px] shrink-0 rounded-full bg-strong/50" />
             <span className="shimmer h-3 w-24 rounded bg-strong/50" />
           </span>
         ) : (
-          <span className="flex items-center gap-2.5">
-            <span className="text-base">{selected?.flag ?? '🌐'}</span>
-            <span className="font-medium text-primary">{selected?.name ?? 'Select…'}</span>
+          <span className="flex min-w-0 items-center gap-2.5">
+            <LangIcon code={value} flag={selected?.flag} size={22} />
+            <span className="truncate font-medium text-primary">{selected?.name ?? 'Select…'}</span>
             {selected && 'native' in selected && (
-              <span className="text-muted">· {(selected as Language).native}</span>
+              <span className="hidden truncate text-muted min-[380px]:inline">· {(selected as Language).native}</span>
             )}
           </span>
         )}
@@ -94,20 +95,22 @@ export default function LanguageSelect({
       </button>
 
       {open && !loading && (
-        <div className="card absolute z-30 mt-2 w-full overflow-hidden p-0">
-          <div className="border-b border-subtle p-2">
+        // Solid, not the glass `.card`: this list floats over the next step,
+        // and a translucent panel lets that step show through it.
+        <div className="absolute z-50 mt-2 w-full overflow-hidden rounded-[var(--radius-card)] border border-[var(--card-edge)] bg-raised shadow-[var(--shadow-lg),0_0_0_1px_rgb(0_0_0/0.2)]">
+          <div className="border-b border-[var(--card-edge)] p-2">
             <input
               autoFocus
               value={q}
               onChange={(e) => setQ(e.target.value)}
               placeholder="Search languages…"
-              className="w-full rounded-lg bg-sunken px-3 py-2 text-sm text-primary outline-none placeholder:text-muted"
+              className="field py-2"
             />
           </div>
-          <div className="max-h-64 overflow-y-auto p-1.5">
+          <div className="max-h-64 overflow-y-auto overscroll-contain p-1.5">
             {allowAuto && (
               <Row
-                flag="🌐"
+                code="auto"
                 name="Auto-detect"
                 native="identify source language"
                 active={value === 'auto'}
@@ -121,6 +124,7 @@ export default function LanguageSelect({
             {available.map((l) => (
               <Row
                 key={l.code}
+                code={l.code}
                 flag={l.flag}
                 name={l.name}
                 native={l.native}
@@ -140,6 +144,7 @@ export default function LanguageSelect({
             {locked.map((l) => (
               <Row
                 key={l.code}
+                code={l.code}
                 flag={l.flag}
                 name={l.name}
                 native={l.native}
@@ -159,6 +164,7 @@ export default function LanguageSelect({
 }
 
 function Row({
+  code,
   flag,
   name,
   native,
@@ -166,7 +172,8 @@ function Row({
   onClick,
   locked = false,
 }: {
-  flag: string
+  code: string
+  flag?: string
   name: string
   native: string
   active: boolean
@@ -178,7 +185,7 @@ function Row({
       type="button"
       onClick={onClick}
       disabled={locked}
-      className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-sm transition-colors ${
+      className={`flex min-h-11 w-full items-center gap-3 rounded-lg px-3 py-2 text-left text-sm transition-colors ${
         locked
           ? 'cursor-not-allowed text-muted opacity-55'
           : active
@@ -186,7 +193,7 @@ function Row({
             : 'text-secondary hover:bg-sunken'
       }`}
     >
-      <span className="text-base">{flag}</span>
+      <LangIcon code={code} flag={flag} size={20} className={locked ? 'grayscale' : ''} />
       <span className="font-medium">{name}</span>
       <span className="ml-auto flex items-center gap-1.5 text-xs text-muted">
         {native}

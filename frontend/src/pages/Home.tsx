@@ -33,6 +33,7 @@ import { useAuth } from '../lib/auth'
 import { useWorks, workPair, workTitle } from '../lib/works'
 import { affordableSeconds, useWallet } from '../lib/wallet'
 import type { Language } from '../lib/types'
+import LangIcon from '../components/LangIcon'
 
 // Two columns on a phone; on wider screens as many 190px columns as fit.
 const LANG_GRID = 'grid grid-cols-2 gap-2 sm:gap-3 sm:[grid-template-columns:repeat(auto-fill,minmax(190px,1fr))]'
@@ -281,7 +282,7 @@ export default function Home() {
                 onClick={() => dubInto(l.code)}
                 className="chip focusable inline-flex items-center gap-1.5 px-3 py-1.5 text-xs text-secondary transition-colors hover:text-primary"
               >
-                <span aria-hidden>{l.flag}</span>
+                <LangIcon code={l.code} flag={l.flag} size={16} />
                 {l.name}
               </button>
             ))}
@@ -683,7 +684,7 @@ function TargetPicker({
         aria-expanded={open}
         className="focusable inline-flex items-center gap-2 rounded-full border border-subtle bg-surface px-3 py-2 text-sm text-primary transition-colors hover:border-strong"
       >
-        <span aria-hidden>{selected?.flag ?? '🌐'}</span>
+        <LangIcon code={selected?.code ?? value} flag={selected?.flag} size={18} />
         <span className="max-w-[9rem] truncate">{selected?.name ?? 'Loading…'}</span>
         <svg viewBox="0 0 24 24" className="h-4 w-4 text-muted" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
           <path d="M6 9.5 12 15l6-5.5" />
@@ -725,7 +726,7 @@ function TargetPicker({
                     l.code === value ? 'bg-sunken text-primary' : 'text-secondary'
                   }`}
                 >
-                  <span aria-hidden>{l.flag}</span>
+                  <LangIcon code={l.code} flag={l.flag} size={18} />
                   <span className="min-w-0 flex-1 truncate">{l.name}</span>
                   <span className="shrink-0 text-[11px] uppercase text-muted">{l.code}</span>
                 </button>
@@ -858,9 +859,7 @@ function LanguageCard({
         featured ? 'bg-sunken/60' : ''
       }`}
     >
-      <span className="grid h-8 w-8 shrink-0 place-items-center rounded-control bg-sunken text-lg sm:h-10 sm:w-10 sm:text-xl" aria-hidden>
-        {lang.flag}
-      </span>
+      <LangIcon code={lang.code} flag={lang.flag} size={34} />
       <span className="min-w-0 flex-1">
         <span className="block truncate text-sm font-medium text-primary">{lang.native}</span>
         <span className="block truncate text-[12px] text-muted">{lang.name}</span>

@@ -960,169 +960,292 @@ body[data-shell='fixed'] {
 }
 
 /* ═════════════════════════════════════════════════════════════════════════
-   THE PANEL SKIN
+   THE TH-LABS.UZ SKIN
    ─────────────────────────────────────────────────────────────────────────
-   Everything above this line built a violet, glazed, mono-typed identity.
-   This block re-skins it into the quiet monochrome console the product is
-   meant to look like: white paper, hairline rules, near-black ink for every
-   accent and every primary button, sans type end to end, and exactly one
-   saturated surface (the promo band on Home).
+   The panel now wears the landing site's clothes, so walking in from
+   th-labs.uz does not feel like changing buildings: a black canvas lit by slow
+   pools of warm light (orange and amber, with a green counter-glow), Onest for
+   every line, frosted panels with a hairline top highlight, and pill buttons —
+   the bright one orange and glowing, the quiet one smoked glass.
 
-   It is written as an OVERRIDE rather than an edit for one reason: the whole
-   app — Studio's run card, the step deck, Plans, Works — is already wired to
-   these token and class names. Re-pointing the names re-skins every screen at
-   once, and nothing has to be hunted down twice.
+   Like the skins above, it is an override of the token and class NAMES the
+   whole app is already wired to, not an edit at call sites: `bg-brand` is now
+   orange, `.card` is a frosted panel, `.btn-primary` is the orange pill.
 
-   Two rules the rest of the app now inherits:
-     · There is no brand colour. `--c-brand-*` IS the ink, so `text-brand`,
-       `bg-brand/12` and the focus ring all resolve monochrome.
-     · `font-mono` is the sans face. Real code opts back in with `.font-code`.
+   Dark is the native mode (the landing has no other). Light is kept for
+   people who chose it, as warm paper with the same light pooled faintly in it.
    ═════════════════════════════════════════════════════════════════════════ */
 
+/* Onest — the landing's face. One variable file per subset, so every weight
+   the app asks for comes from the same download. Cyrillic is included because
+   the product speaks Russian and Uzbek Cyrillic. */
+@font-face {
+  font-family: 'Onest';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('/fonts/onest-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Onest';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('/fonts/onest-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF,
+    U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020,
+    U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: 'Onest';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('/fonts/onest-cyrillic.woff2') format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+
+/* ── Dark · the landing's night (default) ──────────────────────────────── */
 :root,
-:root[data-theme='light'] {
-  /* Type. The mono face stays loaded and reachable (`.font-code`), but the
-     `font-mono` utility — which every heading, label and chip in this app
-     already uses — now resolves to the body sans. One token, and the whole
-     product stops looking like a terminal. */
-  --font-mono: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+:root[data-theme='dark'] {
+  color-scheme: dark;
+
+  --font-sans: 'Onest', 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'Onest', 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
   --font-code: 'JetBrains Mono', ui-monospace, 'SF Mono', 'Fira Code', monospace;
 
-  /* Ink replaces violet wholesale. Every `*-brand` utility in the codebase now
-     lands on near-black, which is what makes the accents read as this style
-     instead of the old one. */
-  --c-brand-500: 11 11 12;
-  --c-brand-400: 60 60 66;
+  --c-canvas: 0 0 0;
+  --c-surface: 15 13 12;          /* #0F0D0C — the landing's panel floor */
+  --c-raised: 24 21 20;           /* menus and popovers */
+  --c-sunken: 30 27 25;           /* wells read LIGHTER than the panel here, as on the landing */
 
-  /* Paper, and a slightly cooler well so fields read as recessed on white. */
-  --c-sunken: 246 246 247;
-  --c-border-subtle: 229 229 231;
-  --c-border-strong: 212 212 216;
+  --c-border-subtle: 40 36 34;
+  --c-border-strong: 68 62 58;
 
-  /* No coloured pools in the corners. */
-  --ambient: none;
+  --c-text-primary: 245 243 240;  /* #F5F3F0 */
+  --c-text-secondary: 170 164 158;
+  --c-text-muted: 128 122 117;
 
-  /* Ink ramps, so anything still painting a gradient paints graphite. */
-  --grad-brand: linear-gradient(120deg, rgb(24 24 27) 0%, rgb(63 63 70) 100%);
-  --grad-brand-deep: linear-gradient(140deg, rgb(11 11 12) 0%, rgb(45 45 52) 100%);
-  --grad-signature: linear-gradient(90deg, rgb(11 11 12), rgb(82 82 91));
+  --c-brand-500: 255 122 26;      /* #FF7A1A — the landing orange */
+  --c-brand-400: 255 154 60;
+  --c-accent-magenta: 255 90 60;  /* the red end of the CTA ring */
+  --c-accent-gold: 255 193 40;    /* #FFC128 — its amber middle */
 
-  /* The ink card — the surface that carries pale type. Flat, not glazed. */
-  --deep: linear-gradient(160deg, #17171a 0%, #0b0b0c 100%);
-  --deep-edge: rgb(255 255 255 / 0.10);
-  --on-deep: 255 255 255;
-  --on-deep-dim: 163 163 174;
+  --c-success: 25 195 125;        /* #19C37D — the landing green */
+  --c-warn: 255 193 40;
+  --c-danger: 255 107 107;
+  --c-info: 255 154 60;
 
-  /* The one saturated surface left in the product: the promo band on Home. */
-  --promo: radial-gradient(120% 140% at 18% 12%, #8a3b22 0%, #5d2415 46%, #2c100a 100%);
+  --grad-brand: linear-gradient(100deg, #ffb24a 0%, #ff7a1a 100%);
+  /* Carries white type (the avatar, the balance card), so it stays deep. */
+  --grad-brand-deep: linear-gradient(135deg, #ea580c 0%, #9a3412 100%);
+  /* The colours that travel round the landing's "Get started" ring. */
+  --grad-signature: linear-gradient(100deg, #19c37d 0%, #ffc128 50%, #ff5a3c 100%);
 
-  /* Cards are hairline-defined, not shadow-defined. */
-  --card-shadow: none;
-  --card-sheen: 0 0 rgb(0 0 0 / 0);
-  --shadow-sm: 0 1px 2px rgb(11 11 12 / 0.04);
-  --shadow-md: 0 4px 14px -6px rgb(11 11 12 / 0.10);
-  --shadow-lg: 0 18px 44px -20px rgb(11 11 12 / 0.16);
+  /* The page light: a darkened middle so text always sits on near-black, then
+     three pools — orange high left, amber right, green low. Drawn by
+     body::before, which drifts it slowly. */
+  --ambient:
+    radial-gradient(55% 50% at 50% 42%, rgb(0 0 0 / 0.62), transparent 100%),
+    radial-gradient(38% 42% at 14% 18%, rgb(255 140 30 / 0.30), transparent 70%),
+    radial-gradient(36% 44% at 92% 48%, rgb(255 190 40 / 0.20), transparent 72%),
+    radial-gradient(40% 40% at 34% 96%, rgb(25 195 125 / 0.20), transparent 72%);
 
-  --radius-card: 0.875rem;     /* 14px */
-  --radius-control: 0.625rem;  /* 10px */
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.5);
+  --shadow-md: 0 10px 28px -14px rgb(0 0 0 / 0.75);
+  --shadow-lg: 0 30px 80px -30px rgb(0 0 0 / 0.9);
 
-  /* The decorative light is gone; these keep their names so the classes that
-     read them degrade to "barely there" rather than to broken. */
-  --sheen-tint: rgb(11 11 12 / 0.05);
-  --spot-tint: rgb(11 11 12 / 0.035);
-  --run-halo: 0 0 0 1px rgb(11 11 12 / 0.16);
+  /* The landing's `.panel`: smoked glass with a lit top edge. */
+  --card-bg: linear-gradient(180deg, rgb(30 26 24 / 0.72), rgb(14 12 11 / 0.72));
+  --card-edge: rgb(255 255 255 / 0.09);
+  --card-edge-hover: rgb(255 255 255 / 0.18);
+  --card-sheen: inset 0 1px 0 rgb(255 255 255 / 0.06);
+  --card-shadow: 0 20px 50px -30px rgb(0 0 0 / 0.8);
+  --rail-bg: rgb(8 7 6 / 0.62);
+  --well: rgb(255 255 255 / 0.045);
+  --well-edge: rgb(255 255 255 / 0.10);
+  --hover-wash: rgb(255 255 255 / 0.06);
+  --active-wash: rgb(255 255 255 / 0.09);
 
-  /* `.text-mesh` and the live dot burn in these; both go monochrome. */
-  --mesh-a: 255 255 255;
-  --mesh-b: 214 214 220;
-  --mesh-c: 250 204 21;
+  /* The deep card — dark in both themes, because pale type sits on it. Warm
+     light pooled into one corner and green into the other. */
+  --deep:
+    radial-gradient(90% 120% at 0% 0%, rgb(255 122 26 / 0.34), transparent 60%),
+    radial-gradient(70% 90% at 100% 100%, rgb(25 195 125 / 0.18), transparent 62%),
+    linear-gradient(160deg, #1b1613 0%, #0b0908 100%);
+  --deep-edge: rgb(255 200 150 / 0.16);
+  --on-deep: 255 250 245;
+  --on-deep-dim: 208 198 188;
 
-  --rail-bg: rgb(255 255 255 / 0.9);
+  --mesh-a: 255 150 30;   /* orange */
+  --mesh-b: 255 196 40;   /* amber */
+  --mesh-c: 25 195 125;   /* green */
+
+  --promo: radial-gradient(120% 140% at 18% 12%, #ff8a2a 0%, #c2410c 42%, #2c0f05 100%);
+
+  --sheen-tint: rgb(255 255 255 / 0.07);
+  --spot-tint: rgb(255 140 40 / 0.10);
+  --run-halo: 0 0 0 1px rgb(255 122 26 / 0.45), 0 18px 50px -18px rgb(255 110 20 / 0.55);
+
+  /* The orange pill, and the glow under it. */
+  --pill-hot: linear-gradient(180deg, #ff9a3c 0%, #ff6a0d 100%);
+  --pill-hot-edge: rgb(255 200 150 / 0.6);
+  --pill-hot-glow: inset 0 1px 0 rgb(255 255 255 / 0.35), 0 0 0 3px rgb(255 122 26 / 0.18), 0 8px 30px -6px rgb(255 110 20 / 0.7);
+  /* The smoked pill. */
+  --pill-dark: linear-gradient(180deg, #2a2421 0%, #151211 100%);
+  --pill-dark-edge: rgb(255 255 255 / 0.16);
+  --pill-dark-glow: inset 0 1px 0 rgb(255 255 255 / 0.12), 0 0 0 3px rgb(255 255 255 / 0.04);
+  --pill-dark-fg: #fff;
+
+  --radius-card: 1.125rem;     /* 18px — the landing's rounded-2xl panels */
+  --radius-control: 0.75rem;   /* 12px */
 }
 
-:root[data-theme='dark'] {
-  --c-brand-500: 244 244 246;
-  --c-brand-400: 200 200 208;
+/* ── Light · warm paper ────────────────────────────────────────────────── */
+:root[data-theme='light'] {
+  color-scheme: light;
 
-  --c-canvas: 9 9 11;
-  --c-surface: 17 17 20;
-  --c-raised: 24 24 28;
-  --c-sunken: 28 28 33;
-  --c-border-subtle: 39 39 45;
-  --c-border-strong: 56 56 64;
+  --c-canvas: 250 248 245;
+  --c-surface: 255 255 255;
+  --c-raised: 255 255 255;
+  --c-sunken: 244 241 237;
 
-  --ambient: none;
+  --c-border-subtle: 232 227 221;
+  --c-border-strong: 212 205 197;
 
-  --grad-brand: linear-gradient(120deg, rgb(244 244 246) 0%, rgb(190 190 200) 100%);
-  --grad-brand-deep: linear-gradient(140deg, rgb(63 63 70) 0%, rgb(24 24 27) 100%);
-  --grad-signature: linear-gradient(90deg, rgb(244 244 246), rgb(140 140 152));
+  --c-text-primary: 22 18 16;
+  --c-text-secondary: 98 90 84;
+  --c-text-muted: 120 112 105;
 
-  --deep: linear-gradient(160deg, #1d1d21 0%, #121215 100%);
-  --deep-edge: rgb(255 255 255 / 0.09);
+  /* Deepened so white type on it, and it as type on paper, both hold AA. */
+  --c-brand-500: 194 65 12;       /* #C2410C */
+  --c-brand-400: 234 88 12;
+  --c-accent-magenta: 190 40 30;
+  --c-accent-gold: 180 83 9;
 
-  --card-shadow: none;
-  --card-sheen: 0 0 rgb(0 0 0 / 0);
+  --c-success: 21 128 61;
+  --c-warn: 180 83 9;
+  --c-danger: 185 28 28;
+  --c-info: 194 65 12;
 
-  --sheen-tint: rgb(255 255 255 / 0.05);
-  --spot-tint: rgb(255 255 255 / 0.04);
-  --run-halo: 0 0 0 1px rgb(255 255 255 / 0.16);
+  --grad-brand: linear-gradient(100deg, #ea580c 0%, #c2410c 100%);
+  --grad-signature: linear-gradient(100deg, #15a46a 0%, #e0a10a 50%, #e5431f 100%);
 
-  --rail-bg: rgb(17 17 20 / 0.88);
+  --ambient:
+    radial-gradient(38% 42% at 12% 14%, rgb(255 140 30 / 0.16), transparent 70%),
+    radial-gradient(36% 44% at 94% 46%, rgb(255 190 40 / 0.14), transparent 72%),
+    radial-gradient(40% 40% at 34% 98%, rgb(25 195 125 / 0.11), transparent 72%);
+
+  --shadow-sm: 0 1px 2px rgb(60 30 10 / 0.06);
+  --shadow-md: 0 10px 26px -14px rgb(60 30 10 / 0.18);
+  --shadow-lg: 0 30px 70px -30px rgb(60 30 10 / 0.25);
+
+  --card-bg: rgb(255 255 255 / 0.78);
+  --card-edge: rgb(var(--c-border-subtle));
+  --card-edge-hover: rgb(var(--c-border-strong));
+  --card-sheen: inset 0 1px 0 rgb(255 255 255 / 0.9);
+  --card-shadow: 0 1px 2px rgb(60 30 10 / 0.04), 0 14px 34px -22px rgb(60 30 10 / 0.18);
+  --rail-bg: rgb(255 253 250 / 0.72);
+  --well: rgb(var(--c-sunken));
+  --well-edge: rgb(var(--c-border-subtle));
+  --hover-wash: rgb(22 18 16 / 0.05);
+  --active-wash: rgb(194 65 12 / 0.09);
+
+  --sheen-tint: rgb(255 255 255 / 0.55);
+  --spot-tint: rgb(234 88 12 / 0.07);
+  --run-halo: 0 0 0 1px rgb(194 65 12 / 0.35), 0 18px 44px -20px rgb(234 88 12 / 0.4);
+
+  --pill-hot-glow: inset 0 1px 0 rgb(255 255 255 / 0.35), 0 0 0 3px rgb(255 122 26 / 0.14), 0 8px 24px -8px rgb(234 88 12 / 0.55);
+  --pill-dark: linear-gradient(180deg, #ffffff 0%, #f6f3ef 100%);
+  --pill-dark-edge: rgb(var(--c-border-strong));
+  --pill-dark-glow: inset 0 1px 0 rgb(255 255 255 / 1), 0 1px 2px rgb(60 30 10 / 0.06);
+  --pill-dark-fg: rgb(22 18 16);
 }
 
-/* The ambient wash is now `none`; drop the element entirely so it cannot
-   intercept anything or cost a paint. */
-body::before { content: none; }
+/* No pale rubber-band edge above or below the black page. The colour lives on
+   <html> and the body goes clear: a body with its own background paints over
+   the z-index -2 light below, which only shows through to the root canvas. */
+html { background: rgb(var(--c-canvas)); }
 
-::selection { background: rgb(11 11 12 / 0.14); }
-:root[data-theme='dark'] ::selection { background: rgb(255 255 255 / 0.18); }
+body {
+  background: transparent;
+  font-family: var(--font-sans);
+  font-feature-settings: 'ss01';
+}
+
+/* The light. Larger than the viewport so its slow drift never shows an edge;
+   only `transform` animates, so it stays on the compositor. */
+body::before {
+  content: '';
+  inset: -12%;
+  background: var(--ambient);
+  animation: th-light 28s ease-in-out infinite;
+  will-change: transform;
+}
+@keyframes th-light {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  33%      { transform: translate3d(4%, 3%, 0) scale(1.06); }
+  66%      { transform: translate3d(-3%, -2%, 0) scale(0.98); }
+}
+
+h1, h2, h3 { letter-spacing: -0.03em; }
+
+::selection { background: rgb(255 122 26 / 0.32); color: rgb(var(--c-text-primary)); }
 
 @layer components {
-  /* Real code opts back into the mono face. */
   .font-code { font-family: var(--font-code); }
 
   /* ── Surfaces ─────────────────────────────────────────────────────────── */
-  .card {
-    background: var(--card-bg);
-    border: 1px solid rgb(var(--c-border-subtle));
-    border-radius: var(--radius-card);
-    box-shadow: none;
-  }
-  .card-hover:hover {
-    transform: none;
-    border-color: rgb(var(--c-border-strong));
-    box-shadow: none;
-  }
+  .card,
   .tile {
-    box-shadow: none;
+    background: var(--card-bg);
+    border: 1px solid var(--card-edge);
     border-radius: var(--radius-card);
+    box-shadow: var(--card-shadow), var(--card-sheen);
   }
+  /* Frosting costs a blur per card; phones get the translucent fill alone,
+     which over this dark light reads almost the same. */
+  @media (min-width: 640px) {
+    .card,
+    .tile {
+      -webkit-backdrop-filter: blur(18px) saturate(1.15);
+      backdrop-filter: blur(18px) saturate(1.15);
+    }
+  }
+  .card-hover {
+    transition: transform 0.3s var(--ease-entrance), border-color 0.2s, box-shadow 0.3s;
+  }
+  .card-hover:hover,
   .tile:hover {
-    border-color: rgb(var(--c-border-strong));
-    box-shadow: none;
-  }
-  .chip {
-    border: 1px solid rgb(var(--c-border-subtle));
-    background: rgb(var(--c-surface));
-    box-shadow: none;
-  }
-  .glass {
-    background: var(--rail-bg);
-    border-top: 1px solid rgb(var(--c-border-subtle));
-    border-inline: 0;
-    border-bottom: 0;
-    backdrop-filter: blur(18px);
+    transform: translateY(-2px);
+    border-color: var(--card-edge-hover);
+    box-shadow: var(--shadow-md), var(--card-sheen);
   }
 
-  /* The ink card. Flat fill, hairline edge, pale type — the same in both
-     themes, which is why the classes inside it hard-code white. */
+  .chip {
+    border: 1px solid var(--card-edge);
+    background: var(--well);
+    border-radius: var(--radius-pill);
+    box-shadow: none;
+  }
+
+  .glass {
+    background: var(--rail-bg);
+    border: 1px solid var(--card-edge);
+    -webkit-backdrop-filter: blur(20px) saturate(1.2);
+    backdrop-filter: blur(20px) saturate(1.2);
+  }
+
   .deep-card {
     background: var(--deep);
     border: 1px solid var(--deep-edge);
-    box-shadow: none;
+    box-shadow: var(--shadow-lg), inset 0 1px 0 rgb(255 255 255 / 0.08), 0 30px 80px -40px rgb(255 120 30 / 0.35);
   }
+  .aurora::before { opacity: 0.7; }
 
-  /* The promo band on Home — the single place colour is still allowed. */
   .promo {
     position: relative;
     isolation: isolate;
@@ -1130,47 +1253,67 @@ body::before { content: none; }
     border-radius: var(--radius-card);
     background: var(--promo);
     color: #fff;
-    border: 0;
+    border: 1px solid rgb(255 200 150 / 0.25);
+    box-shadow: 0 30px 70px -30px rgb(255 110 20 / 0.5);
   }
+
+  .grain::after { opacity: 0.16; }
 
   /* ── Controls ─────────────────────────────────────────────────────────── */
-  /* Ink fill, canvas label, no lift and no shadow. This is the product's one
-     primary button, and it looks the same everywhere it appears. */
+  /* The orange pill. The label rides a 1px shadow so white holds on the
+     brighter top of the gradient. */
   .btn-primary {
-    background: rgb(var(--c-text-primary));
-    color: rgb(var(--c-canvas));
+    position: relative;
+    background: var(--pill-hot);
+    color: #fff;
     font-weight: 500;
-    border-radius: var(--radius-control);
+    text-shadow: 0 1px 0 rgb(120 40 0 / 0.25);
+    border: 1px solid var(--pill-hot-edge);
+    border-radius: var(--radius-pill);
+    box-shadow: var(--pill-hot-glow);
+    transition: filter 0.2s var(--ease-exit), transform 0.2s var(--ease-entrance), box-shadow 0.2s;
+  }
+  .btn-primary:hover:not(:disabled) { filter: brightness(1.08); transform: translateY(-1px); }
+  .btn-primary:active:not(:disabled) { transform: scale(0.98); }
+  .btn-primary:disabled {
+    opacity: 0.45;
+    filter: saturate(0.6);
     box-shadow: none;
-    transition: opacity 0.15s var(--ease-exit), background-color 0.15s;
+    cursor: not-allowed;
   }
-  .btn-primary:hover { background: rgb(var(--c-text-primary) / 0.86); transform: none; box-shadow: none; }
-  .btn-primary:active { transform: none; box-shadow: none; opacity: 0.9; }
-  .btn-primary:disabled { opacity: 0.35; cursor: not-allowed; }
 
-  /* The quiet button: white, hairline, grey wash on hover. */
+  /* The smoked pill. */
   .btn-ghost {
-    border: 1px solid rgb(var(--c-border-subtle));
-    border-radius: var(--radius-control);
-    color: rgb(var(--c-text-primary));
-    background: rgb(var(--c-surface));
+    background: var(--pill-dark);
+    color: var(--pill-dark-fg);
     font-weight: 500;
+    border: 1px solid var(--pill-dark-edge);
+    border-radius: var(--radius-pill);
+    box-shadow: var(--pill-dark-glow);
+    transition: filter 0.2s var(--ease-exit), transform 0.2s var(--ease-entrance);
   }
-  .btn-ghost:hover {
-    border-color: rgb(var(--c-border-strong));
-    background: rgb(var(--c-sunken));
-    color: rgb(var(--c-text-primary));
+  .btn-ghost:hover:not(:disabled) {
+    filter: brightness(1.15);
+    color: var(--pill-dark-fg);
+    border-color: var(--pill-dark-edge);
+    background: var(--pill-dark);
   }
+  :root[data-theme='light'] .btn-ghost:hover:not(:disabled) { filter: brightness(0.97); }
+  .btn-ghost:active:not(:disabled) { transform: scale(0.98); }
 
-  /* The button that sits on the ink card: its inverse — white fill, ink label. */
   .btn-on-deep {
     background: #fff;
-    color: #0b0b0c;
-    font-weight: 500;
-    border-radius: var(--radius-control);
-    box-shadow: none;
+    color: #120c08;
+    font-weight: 600;
+    border-radius: var(--radius-pill);
+    box-shadow: 0 8px 26px -10px rgb(255 140 40 / 0.6), inset 0 -1px 0 rgb(0 0 0 / 0.08);
+    transition: transform 0.2s var(--ease-entrance), box-shadow 0.25s, background-color 0.2s;
   }
-  .btn-on-deep:hover:not(:disabled) { background: rgb(255 255 255 / 0.9); box-shadow: none; }
+  .btn-on-deep:hover:not(:disabled) {
+    background: #fff7ef;
+    transform: translateY(-1px);
+    box-shadow: 0 14px 34px -12px rgb(255 140 40 / 0.75);
+  }
   .btn-on-deep:disabled {
     background: rgb(255 255 255 / 0.14);
     color: rgb(255 255 255 / 0.45);
@@ -1179,142 +1322,177 @@ body::before { content: none; }
 
   .chip-deep {
     background: rgb(255 255 255 / 0.08);
-    border: 1px solid rgb(255 255 255 / 0.12);
-    backdrop-filter: none;
+    border: 1px solid rgb(255 255 255 / 0.14);
+    -webkit-backdrop-filter: blur(6px);
+    backdrop-filter: blur(6px);
   }
   .chip-deep:hover { background: rgb(255 255 255 / 0.14); }
 
   .focusable:focus-visible {
-    outline: 2px solid rgb(var(--c-text-primary) / 0.45);
+    outline: 2px solid rgb(var(--c-brand-400) / 0.8);
     outline-offset: 2px;
   }
 
-  /* ── The decoration, switched off ─────────────────────────────────────── */
-  /* The aurora and the hover sheen were the old identity. They are removed
-     here rather than at ~30 call sites, so the markup keeps reading as
-     "this card used to glow" without anything glowing. */
-  .aurora::before { content: none; }
-  .sheen::after { content: none; }
-  .spotlight::before { content: none; }
-  /* Grain survives, at a fraction of its old strength: it is the one thing
-     keeping the large ink and promo fills from banding. */
-  .grain::after { opacity: 0.10; }
-  .running-halo { box-shadow: var(--run-halo); }
-  .rule-signature { background: rgb(var(--c-border-subtle)); }
-  .text-mesh { background: none; -webkit-background-clip: border-box; background-clip: border-box; color: #fff; }
-
-  .beam::after {
-    background: linear-gradient(90deg, transparent, rgb(var(--c-text-primary) / 0.55), transparent);
+  /* ── The travelling ring ────────────────────────────────────────────────
+     The landing's "Get started" light: green → amber → red running round the
+     pill's edge with a soft glow of the same colours under it. Reserved for
+     the one action a screen exists for. */
+  .btn-ring { isolation: isolate; }
+  .btn-ring::before,
+  .btn-ring::after {
+    content: '';
+    position: absolute;
+    border-radius: inherit;
+    background: conic-gradient(
+      from var(--ring),
+      transparent 0deg 120deg,
+      #19c37d 170deg,
+      #ffc128 215deg,
+      #ff5a3c 260deg,
+      transparent 300deg 360deg
+    );
+    animation: ring-spin 3.2s linear infinite;
+    pointer-events: none;
   }
-  .deep-card .beam::after {
-    background: linear-gradient(90deg, transparent, rgb(255 255 255 / 0.8), transparent);
+  .btn-ring::before {
+    inset: -1px;
+    padding: 1.5px;
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
   }
-  .deep-card .orbs { color: #fff; }
-  .deep-card .orbs::after {
-    background: radial-gradient(circle at 50% 50%, rgb(255 255 255 / 0.22), transparent 70%);
+  .btn-ring::after {
+    inset: 30% 8% -6px;
+    z-index: -1;
+    filter: blur(10px);
+    opacity: 0.55;
   }
+  .btn-ring:disabled::before,
+  .btn-ring:disabled::after { content: none; }
 
   /* ── The shell ────────────────────────────────────────────────────────── */
-  /* A sidebar row: flush left, label beside the glyph, a grey pill when it is
-     the page you are on. Nothing slides, nothing glows. */
   .side-link {
     display: flex;
     align-items: center;
     gap: 0.75rem;
     width: 100%;
-    border-radius: 0.625rem;
-    padding: 0.5rem 0.625rem;
+    border-radius: var(--radius-pill);
+    padding: 0.55rem 0.8rem;
     font-size: 0.9375rem;
     line-height: 1.2;
     color: rgb(var(--c-text-secondary));
-    transition: background-color 0.12s var(--ease-exit), color 0.12s var(--ease-exit);
+    transition: background-color 0.15s var(--ease-exit), color 0.15s var(--ease-exit);
   }
-  .side-link:hover { background: rgb(var(--c-sunken)); color: rgb(var(--c-text-primary)); }
+  .side-link:hover { background: var(--hover-wash); color: rgb(var(--c-text-primary)); }
   .side-link[data-active='true'] {
-    background: rgb(var(--c-sunken));
+    background: var(--active-wash);
     color: rgb(var(--c-text-primary));
     font-weight: 500;
+    box-shadow: inset 0 0 0 1px var(--card-edge);
   }
-  /* Collapsed rail: the label is gone, the row is a square. */
+  .side-link[data-active='true'] svg { color: rgb(var(--c-brand-500)); }
   .side-link[data-compact='true'] {
     justify-content: center;
-    padding: 0.5rem;
+    padding: 0.55rem;
     width: 2.5rem;
   }
 
   .side-group {
-    padding: 0 0.625rem;
-    font-size: 0.75rem;
+    padding: 0 0.8rem;
+    font-size: 0.6875rem;
     font-weight: 500;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
     color: rgb(var(--c-text-muted));
   }
 
-  /* The top bar's quiet buttons — Feedback, Docs, the bell. */
   .bar-btn {
     display: inline-flex;
     align-items: center;
     gap: 0.4rem;
-    border-radius: 999px;
-    border: 1px solid rgb(var(--c-border-subtle));
-    background: rgb(var(--c-surface));
-    padding: 0.4rem 0.85rem;
-    font-size: 0.875rem;
-    color: rgb(var(--c-text-primary));
-    transition: background-color 0.12s, border-color 0.12s;
+    border-radius: var(--radius-pill);
+    border: 1px solid var(--pill-dark-edge);
+    background: var(--pill-dark);
+    box-shadow: var(--pill-dark-glow);
+    padding: 0.4rem 0.9rem;
+    font-size: 0.8125rem;
+    font-weight: 500;
+    color: var(--pill-dark-fg);
+    transition: filter 0.15s;
   }
-  .bar-btn:hover { background: rgb(var(--c-sunken)); border-color: rgb(var(--c-border-strong)); }
+  .bar-btn:hover { filter: brightness(1.15); }
+  :root[data-theme='light'] .bar-btn:hover { filter: brightness(0.97); }
   .bar-icon {
     display: grid;
     place-items: center;
-    height: 2.125rem;
-    width: 2.125rem;
+    height: 2.25rem;
+    width: 2.25rem;
     border-radius: 999px;
     color: rgb(var(--c-text-secondary));
-    transition: background-color 0.12s, color 0.12s;
+    transition: background-color 0.15s, color 0.15s;
   }
-  .bar-icon:hover { background: rgb(var(--c-sunken)); color: rgb(var(--c-text-primary)); }
+  .bar-icon:hover { background: var(--hover-wash); color: rgb(var(--c-text-primary)); }
 
-  /* A text field, the way every field on this skin looks: sunken well, hairline
-     edge, ink border on focus. */
+  /* Fields: a lit well, and an orange edge with a soft ring on focus. 16px
+     type on phones, or iOS zooms the page every time one is tapped. */
   .field {
     width: 100%;
     border-radius: var(--radius-control);
-    border: 1px solid rgb(var(--c-border-subtle));
-    background: rgb(var(--c-sunken));
-    padding: 0.625rem 0.875rem;
-    font-size: 0.9375rem;
+    border: 1px solid var(--well-edge);
+    background: var(--well);
+    padding: 0.7rem 0.95rem;
+    font-size: 1rem;
     color: rgb(var(--c-text-primary));
     outline: none;
-    transition: border-color 0.12s, background-color 0.12s;
+    transition: border-color 0.15s, background-color 0.15s, box-shadow 0.15s;
   }
+  @media (min-width: 640px) { .field { font-size: 0.9375rem; } }
   .field::placeholder { color: rgb(var(--c-text-muted)); }
   .field:focus {
-    border-color: rgb(var(--c-text-primary) / 0.45);
-    background: rgb(var(--c-surface));
+    border-color: rgb(var(--c-brand-500) / 0.6);
+    box-shadow: 0 0 0 3px rgb(var(--c-brand-500) / 0.16);
   }
 
-  /* Segmented tabs — the row over the composer. An underline, not a pill. */
   .seg {
     display: inline-flex;
     align-items: center;
     gap: 0.45rem;
     border-radius: 999px;
-    padding: 0.4rem 0.8rem;
-    font-size: 0.875rem;
+    padding: 0.45rem 0.85rem;
+    font-size: 0.8125rem;
     color: rgb(var(--c-text-muted));
-    transition: background-color 0.12s, color 0.12s;
+    transition: background-color 0.15s, color 0.15s;
   }
   .seg:hover { color: rgb(var(--c-text-primary)); }
   .seg[data-active='true'] {
-    background: rgb(var(--c-sunken));
+    background: var(--active-wash);
     color: rgb(var(--c-text-primary));
     font-weight: 500;
   }
 
-  /* The composer — the big card Home opens with. */
+  /* The composer — the landing hero's input panel, glow and all. */
   .composer {
-    border-radius: 1.125rem;
-    border: 1px solid rgb(var(--c-border-subtle));
-    background: rgb(var(--c-surface));
+    border-radius: 1.25rem;
+    border: 1px solid var(--card-edge);
+    background: var(--card-bg);
+    box-shadow: var(--card-sheen), 0 30px 80px -30px rgb(255 120 30 / 0.35);
+    -webkit-backdrop-filter: blur(20px);
+    backdrop-filter: blur(20px);
+  }
+
+  /* Small spaced caps over a headline — the landing's eyebrow. */
+  .eyebrow {
+    font-size: 0.6875rem;
+    font-weight: 500;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: rgb(var(--c-text-muted));
   }
 }
+
+@property --ring {
+  syntax: '<angle>';
+  initial-value: 0deg;
+  inherits: false;
+}
+@keyframes ring-spin { to { --ring: 360deg; } }

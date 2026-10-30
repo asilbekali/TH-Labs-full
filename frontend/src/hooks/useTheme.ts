@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useState } from 'react'
 
 export type Theme = 'light' | 'dark'
 
@@ -11,13 +11,15 @@ function currentTheme(): Theme {
     const attr = document.documentElement.getAttribute('data-theme')
     if (attr === 'dark' || attr === 'light') return attr
   }
-  return 'light'
+  return 'dark'
 }
 
 /**
- * Theme state, persistence, and system-preference sync.
+ * Theme state and persistence.
  * The initial value is set before paint by the inline script in index.html;
- * this hook only reflects and mutates it.
+ * this hook only reflects and mutates it. Dark is the default rather than the
+ * OS preference: it is the landing site's only mode, so the panel matches the
+ * page people arrive from until they choose otherwise.
  */
 export function useTheme() {
   const [theme, setThemeState] = useState<Theme>(currentTheme)
@@ -36,26 +38,6 @@ export function useTheme() {
   const toggle = useCallback(() => {
     apply(theme === 'dark' ? 'light' : 'dark')
   }, [theme, apply])
-
-  // If the user has not made an explicit choice, follow the OS preference live.
-  useEffect(() => {
-    const stored = (() => {
-      try {
-        return localStorage.getItem(STORAGE_KEY)
-      } catch {
-        return null
-      }
-    })()
-    if (stored === 'light' || stored === 'dark') return
-
-    const mq = window.matchMedia('(prefers-color-scheme: dark)')
-    const onChange = (e: MediaQueryListEvent) => {
-      document.documentElement.setAttribute('data-theme', e.matches ? 'dark' : 'light')
-      setThemeState(e.matches ? 'dark' : 'light')
-    }
-    mq.addEventListener('change', onChange)
-    return () => mq.removeEventListener('change', onChange)
-  }, [])
 
   return { theme, setTheme: apply, toggle }
 }
