@@ -1,11 +1,13 @@
 import {
   ConflictException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { CreditReason, Prisma, Role } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
+import type { AuthenticatedUser } from '../common/decorators/current-user.decorator';
 import { MailService } from '../mail/mail.service';
 import {
   FREE_MINUTE_SECONDS,
@@ -130,8 +132,28 @@ export class UsersService {
     return { message: `User #${id} removed` };
   }
 
-  async updateRole(id: number, role: Role) {
-    await this.findOne(id);
+  /**
+   * SUPERADMIN can set any role on anyone. ADMIN can move accounts between
+   * USER and ADMIN, and nothing more: it cannot hand out SUPERADMIN, touch a
+   * SUPERADMIN's account, or change its own role. Without those three limits
+   * an ADMIN could promote itself and erase the boundary entirely.
+   */
+  async updateRole(id: number, role: Role, actor: AuthenticatedUser) {
+    const target = await this.findOne(id);
+
+    if (actor.role !== Role.SUPERADMIN) {
+      if (actor.id === id) {
+        throw new ForbiddenException('You cannot change your own role');
+      }
+      if (role === Role.SUPERADMIN) {
+        throw new ForbiddenException('Only a SUPERADMIN can grant SUPERADMIN');
+      }
+      if (target.role === Role.SUPERADMIN) {
+        throw new ForbiddenException(
+          "Only a SUPERADMIN can change a SUPERADMIN's role",
+        );
+      }
+    }
 
     return this.prisma.user.update({
       where: { id },
