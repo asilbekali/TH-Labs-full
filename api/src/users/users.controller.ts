@@ -114,15 +114,22 @@ export class UsersController {
     return this.usersService.remove(+id);
   }
 
-  // Role changes are SUPERADMIN-only: an ADMIN who could hand out roles could
-  // promote itself to SUPERADMIN and erase the level-2 boundary entirely.
+  // ADMIN and SUPERADMIN may change roles. The limits on what an ADMIN may do
+  // (USER <-> ADMIN only, never its own role, never a SUPERADMIN's) live in
+  // UsersService.updateRole so no other caller can skip them.
   @Patch(':id/role')
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Change a user role (SUPERADMIN only)' })
+  @ApiOperation({
+    summary: 'Change a user role (ADMIN: USER <-> ADMIN only; SUPERADMIN: any)',
+  })
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(Role.SUPERADMIN)
-  updateRole(@Param('id') id: string, @Body() updateRoleDto: UpdateRoleDto) {
-    return this.usersService.updateRole(+id, updateRoleDto.role);
+  @Roles(Role.ADMIN, Role.SUPERADMIN)
+  updateRole(
+    @Param('id') id: string,
+    @Body() updateRoleDto: UpdateRoleDto,
+    @CurrentUser() currentUser: AuthenticatedUser,
+  ) {
+    return this.usersService.updateRole(+id, updateRoleDto.role, currentUser);
   }
 
   // Read/update: ADMIN and SUPERADMIN reach any account, everyone else only
