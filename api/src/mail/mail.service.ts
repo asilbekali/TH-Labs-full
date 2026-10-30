@@ -19,6 +19,7 @@ import type { Transporter } from 'nodemailer';
 import {
   communityWelcomeTemplate,
   feedbackReceiptTemplate,
+  DEFAULT_APP_URL,
   renderEmail,
   renderText,
   signupWelcomeTemplate,
@@ -66,7 +67,9 @@ export class MailService implements OnModuleInit {
     const user = this.config.get<string>('MAIL_USER');
     const pass = this.config.get<string>('MAIL_PASS');
 
-    this.appUrl = this.config.get<string>('APP_URL') ?? 'https://thlabs.io';
+    // `||`, not `??`: the server's compose file passes APP_URL through as an
+    // empty string when it is unset.
+    this.appUrl = this.config.get<string>('APP_URL') || DEFAULT_APP_URL;
     this.from =
       this.config.get<string>('MAIL_FROM') ?? `"TH Labs" <${user ?? ''}>`;
 
@@ -112,7 +115,7 @@ export class MailService implements OnModuleInit {
    *   name: 'John',
    *   text: 'Your dub is ready to download.',
    *   subject: 'Your dub is ready',
-   *   cta: { label: 'Open Studio', url: 'https://thlabs.io/studio' },
+   *   cta: { label: 'Open Studio', url: 'https://th-labs.uz/studio' },
    * });
    * ```
    */
@@ -126,6 +129,7 @@ export class MailService implements OnModuleInit {
       heading: options.heading,
       cta: options.cta,
       footnote: options.footnote,
+      appUrl: this.appUrl,
     };
 
     if (!this.transporter) {
@@ -161,7 +165,7 @@ export class MailService implements OnModuleInit {
   sendCommunityWelcome(email: string, name: string): Promise<SendMailResult> {
     return this.sendMail({
       email,
-      subject: `▶ Player 2 has entered — welcome to TH Labs, ${name}`,
+      subject: 'Welcome to the TH Labs community',
       ...communityWelcomeTemplate(name, this.appUrl),
     });
   }
@@ -170,7 +174,7 @@ export class MailService implements OnModuleInit {
   sendSignupWelcome(email: string, name: string): Promise<SendMailResult> {
     return this.sendMail({
       email,
-      subject: `▶ Insert coin — your TH Labs account is ready, ${name}`,
+      subject: 'Your TH Labs account is ready',
       ...signupWelcomeTemplate(name, this.appUrl),
     });
   }
@@ -179,7 +183,7 @@ export class MailService implements OnModuleInit {
   sendFeedbackReceipt(email: string, name: string): Promise<SendMailResult> {
     return this.sendMail({
       email,
-      subject: `▶ Message received — thanks, ${name}`,
+      subject: 'We received your feedback',
       ...feedbackReceiptTemplate(name, this.appUrl),
     });
   }
@@ -190,7 +194,11 @@ export class MailService implements OnModuleInit {
     name: string,
     payment: PaymentReceipt,
   ): Promise<SendMailResult> {
-    const { subject, html, text } = renderPaymentReceipt(name, this.appUrl, payment);
+    const { subject, html, text } = renderPaymentReceipt(
+      name,
+      this.appUrl,
+      payment,
+    );
     return this.sendMail({ email, name, subject, text, html, plain: text });
   }
 

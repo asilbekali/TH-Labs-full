@@ -44,6 +44,7 @@ export class AdminMailService {
         // A blank heading would render an empty headline instead of the
         // template's greeting, which only kicks in on undefined.
         heading: dto.heading?.trim() || undefined,
+        footnote: 'You can reply to this email directly. It reaches our team.',
       });
 
       // No credentials on this deploy — every send would be skipped the same

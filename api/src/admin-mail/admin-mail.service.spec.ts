@@ -34,6 +34,7 @@ describe('AdminMailService', () => {
       subject: 'Re: Dub drifts',
       text: 'Thanks!\n\nIt is fixed now.',
       heading: 'It is fixed',
+      footnote: 'You can reply to this email directly. It reaches our team.',
     });
     expect(result).toEqual({ total: 1, sent: 1, failed: [] });
   });
