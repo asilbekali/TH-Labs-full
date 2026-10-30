@@ -8,9 +8,11 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { AdminMailService } from './admin-mail.service';
 import { SendAdminMailDto } from './dto/send-admin-mail.dto';
 
-// Staff writing to users from the admin panel — replies to feedback, or a
-// note to a hand-picked group. Both ADMIN and SUPERADMIN: replying to people
-// is everyday support work, not a privileged action.
+// Staff writing to users from the admin panel: answering their feedback or
+// question, or warning them about something on their account. Support mail
+// only, never marketing. Both ADMIN and SUPERADMIN: replying to people is
+// everyday support work, not a privileged action. Sent from MAIL_USER
+// (thethlabs.io@gmail.com).
 @ApiTags('admin-mail')
 @Controller('admin/mail')
 export class AdminMailController {
