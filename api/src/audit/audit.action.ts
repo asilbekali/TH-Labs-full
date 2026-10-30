@@ -231,6 +231,13 @@ const RULES: ActionRule[] = [
     summary: 'Deleted the feedback from :target',
     target: (p) => ({ type: 'feedback', id: p.id }),
   },
+  // ── Staff email ─────────────────────────────────────────────────────────
+  {
+    method: 'POST',
+    pattern: '/admin/mail',
+    action: 'mail.send',
+    summary: 'Emailed users from the admin panel',
+  },
 ];
 
 export interface ResolvedAction {
