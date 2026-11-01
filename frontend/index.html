@@ -6,12 +6,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <!-- Must track --c-canvas in src/index.css, or the mobile browser chrome
          reads as a different colour to the page behind it. -->
-    <meta name="theme-color" content="#000000" />
+    <meta name="theme-color" content="#0a0908" />
     <meta name="description" content="TH-Labs — identity-preserving AI video dubbing. Whisper ASR, NLLB translation, OmniVoice voice cloning, optional lip sync." />
 
     <!-- Apply the theme before first paint to avoid a flash. Uses the stored
-         choice, else dark — the landing site's only mode, so arriving from
-         th-labs.uz does not flash white. -->
+         choice, else dark. -->
     <script>
       (function () {
         try {
@@ -25,10 +24,10 @@
       })()
     </script>
 
-    <!-- TH-Labs brand typography: Onest (everything) + JetBrains Mono (code),
-         self-hosted from th-labs.uz. @font-face lives in src/index.css; no
-         runtime web-font request is made. Preload the primary Latin subset. -->
-    <link rel="preload" as="font" type="font/woff2" href="/fonts/onest-latin.woff2" crossorigin />
+    <!-- TH-Labs typography: Geist (everything), Geist Mono (eyebrows, code)
+         and Outfit (figures), self-hosted. @font-face lives in src/index.css;
+         no runtime web-font request is made. Preload the primary Latin subset. -->
+    <link rel="preload" as="font" type="font/woff2" href="/fonts/geist-latin.woff2" crossorigin />
 
     <title>TH-Labs · AI Dubbing with Voice Preservation</title>
   </head>

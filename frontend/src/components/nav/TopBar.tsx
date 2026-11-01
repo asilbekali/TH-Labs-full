@@ -3,19 +3,21 @@ import { Link, useLocation } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import AccountMenu from '../AccountMenu'
 import CreditsPill from '../CreditsPill'
-import ThemeToggle from '../ThemeToggle'
+import LogoMark from '../brand/LogoMark'
 import SearchEverything from './SearchEverything'
 import FeedbackPopover from './FeedbackPopover'
 import { BELL, PAGE_TITLES, RailSvg } from './nav-items'
 
 /**
- * The bar across the top of every page.
+ * The row across the top of every page. It sits on the canvas, not on a bar of
+ * its own: the cards below it are the surfaces, this is just where you are and
+ * what you can reach from anywhere.
  *
- * Left: the sidebar toggle and a breadcrumb, so the page names itself in one
- * fixed place instead of each page opening with its own title block.
- * Middle: search.
- * Right: the things you reach for from anywhere — feedback, docs, tips, theme,
- * credits and the account.
+ * Desktop: the sidebar toggle and a breadcrumb, so the page names itself in one
+ * fixed place instead of each page opening with its own title block; then
+ * search, feedback, tips and the account. Credits and the theme live in the
+ * sidebar.
+ * Phones: the mark, then credits (the way to billing), tips and the account.
  */
 export default function TopBar({
   onToggleSidebar,
@@ -23,33 +25,35 @@ export default function TopBar({
   sidebarLabel,
 }: {
   onToggleSidebar: () => void
-  /** Opens the drawer below lg — the way to Docs, Developers and Settings on a phone. */
+  /** Opens the drawer below lg — the way to Docs, Developers and the theme on a phone. */
   onOpenMenu: () => void
   sidebarLabel: string
 }) {
   const { pathname } = useLocation()
   const title = PAGE_TITLES[pathname]
-  const isHome = pathname === '/'
 
   return (
-    <header className="relative z-30 flex h-14 shrink-0 items-center gap-2 border-b border-[var(--card-edge)] bg-[var(--rail-bg)] px-3 backdrop-blur-xl sm:gap-3 sm:px-4">
+    <header className="relative z-30 flex shrink-0 flex-wrap items-center gap-2.5 px-4 pb-2 pt-[calc(env(safe-area-inset-top)+1rem)] lg:px-0 lg:pb-4 lg:pt-1">
       <button
         type="button"
         onClick={onOpenMenu}
         aria-label="Open menu"
-        className="bar-icon focusable shrink-0 lg:hidden"
+        className="bar-icon focusable lg:hidden"
       >
         <svg viewBox="0 0 24 24" className="h-[19px] w-[19px]" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
           <path d="M4 7h16M4 12h16M4 17h10" />
         </svg>
       </button>
+      <Link to="/" aria-label="TH-Labs home" className="focusable rounded-xl lg:hidden">
+        <LogoMark className="h-10 w-10 text-primary" />
+      </Link>
 
       <button
         type="button"
         onClick={onToggleSidebar}
         aria-label={sidebarLabel}
         title={sidebarLabel}
-        className="bar-icon focusable hidden shrink-0 lg:grid"
+        className="bar-icon focusable hidden lg:grid"
       >
         <svg viewBox="0 0 24 24" className="h-[18px] w-[18px]" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
           <rect x="3" y="4.5" width="18" height="15" rx="2.5" />
@@ -57,38 +61,35 @@ export default function TopBar({
         </svg>
       </button>
 
-      {/* Breadcrumb. Home is always the root and is always a link; the current
-          page is plain text, because a link to where you already are is noise. */}
-      <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-1.5 text-[15px]">
-        {isHome ? (
+      {/* Breadcrumb. The workspace is always the root and Home is always a
+          link back; the current page is plain text, because a link to where
+          you already are is noise. */}
+      <nav aria-label="Breadcrumb" className="hidden min-w-0 flex-1 items-center gap-2 text-[15px] lg:flex">
+        <span className="text-muted">Workspace</span>
+        <span className="text-muted">/</span>
+        {pathname === '/' ? (
           <span className="font-medium text-primary">Home</span>
         ) : (
           <>
-            <Link to="/" className="focusable rounded px-0.5 text-secondary transition-colors hover:text-primary">
+            <Link to="/" className="focusable rounded px-0.5 text-muted transition-colors hover:text-primary">
               Home
             </Link>
-            <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0 text-muted" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M9 6l6 6-6 6" />
-            </svg>
+            <span className="text-muted">/</span>
             <span className="truncate font-medium text-primary">{title ?? 'Page'}</span>
           </>
         )}
       </nav>
 
-      <div className="mx-auto hidden w-full max-w-sm md:block">
+      <div className="hidden w-full max-w-[380px] min-w-[200px] shrink md:block lg:w-[380px]">
         <SearchEverything />
       </div>
 
-      <div className="ml-auto flex shrink-0 items-center gap-1.5 md:ml-0">
+      <div className="ml-auto flex shrink-0 items-center gap-2.5 lg:ml-0">
         <FeedbackPopover />
-        <Link to="/docs" className="bar-btn focusable hidden lg:inline-flex">
-          Docs
-        </Link>
-        <TipsButton />
-        <ThemeToggle className="bar-icon h-[2.125rem] w-[2.125rem] bg-transparent hover:bg-sunken" />
-        <span className="hidden sm:inline-flex">
+        <span className="lg:hidden">
           <CreditsPill />
         </span>
+        <TipsButton />
         <AccountMenu variant="bar" />
       </div>
     </header>
@@ -117,7 +118,7 @@ function TipsButton() {
         onClick={() => setOpen((v) => !v)}
         className="bar-icon focusable"
       >
-        <RailSvg icon={BELL} className="h-[18px] w-[18px]" />
+        <RailSvg icon={BELL} className="h-5 w-5" />
       </button>
 
       <AnimatePresence>
@@ -135,7 +136,7 @@ function TipsButton() {
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -6 }}
               transition={{ duration: 0.14 }}
-              className="absolute right-0 top-[calc(100%+0.5rem)] z-50 w-72 overflow-hidden rounded-xl border border-subtle bg-raised p-1.5 shadow-[var(--shadow-lg)]"
+              className="absolute right-0 top-[calc(100%+0.5rem)] z-50 w-72 overflow-hidden rounded-[20px] border border-[var(--card-edge)] bg-raised p-1.5 shadow-[var(--shadow-lg)]"
             >
               <div className="px-2.5 py-2 text-sm font-medium text-primary">Tips</div>
               {TIPS.map((t) => (

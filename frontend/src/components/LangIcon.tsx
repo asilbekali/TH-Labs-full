@@ -55,7 +55,7 @@ export default function LangIcon({
       <span
         aria-hidden
         style={{ ...box, background: 'var(--grad-brand)' }}
-        className={`relative inline-grid shrink-0 place-items-center rounded-full text-white shadow-[0_0_0_1px_rgb(255_255_255/0.18),0_4px_12px_-4px_rgb(255_122_26/0.6)] ${className}`}
+        className={`relative inline-grid shrink-0 place-items-center rounded-full text-[#140b05] shadow-[0_0_0_1px_rgb(255_255_255/0.18),0_4px_12px_-4px_rgb(217_134_79/0.6)] ${className}`}
       >
         <svg
           viewBox="0 0 24 24"

@@ -19,6 +19,7 @@ import { mediaUrl } from '../lib/api'
 import WorkThumb from '../components/WorkThumb'
 import { usePointerSpotlight } from '../hooks/usePointerSpotlight'
 import {
+  relTime,
   useWorks,
   workPair,
   workTitle,
@@ -1101,17 +1102,6 @@ function fmtTime(ms: number): string {
   const d = new Date(ms)
   const p = (n: number) => n.toString().padStart(2, '0')
   return `${p(d.getHours())}:${p(d.getMinutes())}`
-}
-
-function relTime(ms: number): string {
-  const days = Math.floor((Date.now() - ms) / 86_400_000)
-  if (days <= 0) return 'today'
-  if (days === 1) return 'yesterday'
-  if (days < 30) return `${days} days ago`
-  const months = Math.floor(days / 30)
-  if (months < 12) return `${months} month${months === 1 ? '' : 's'} ago`
-  const years = Math.floor(months / 12)
-  return `${years} year${years === 1 ? '' : 's'} ago`
 }
 
 function cap(s: string): string {

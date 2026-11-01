@@ -41,7 +41,7 @@ export default function Docs() {
         </p>
       </header>
 
-      <div className="flex flex-wrap items-center gap-1 border-b border-subtle pb-3">
+      <div className="seg-track no-scrollbar max-w-full overflow-x-auto">
         {TABS.map((t) => (
           <button
             key={t.id}

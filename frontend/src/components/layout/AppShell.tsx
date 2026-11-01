@@ -137,7 +137,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
         <main
           className={
             workbench
-              ? 'min-h-0 flex-1 overflow-hidden px-4 py-4 xl:px-6'
+              ? 'min-h-0 flex-1 overflow-hidden'
               : 'min-h-0 flex-1 overflow-y-auto'
           }
         >
@@ -147,7 +147,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
             // `pb-32` on the inner box rather than on <main>: padding on a
             // scroll container is not always honoured at the end of the scroll
             // range, and the mobile tab bar would sit on top of the last card.
-            <div className="mx-auto w-full max-w-[1180px] px-4 py-5 pb-32 sm:px-7 sm:py-6 lg:pb-10">
+            <div className="mx-auto w-full max-w-[1400px] px-4 pb-32 pt-2 sm:px-6 lg:px-0 lg:pb-2 lg:pt-0">
               {children}
             </div>
           )}
@@ -158,7 +158,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <>
-      <div className="flex h-dvh overflow-hidden">{page}</div>
+      <div className="flex h-dvh gap-4 overflow-hidden lg:p-4">{page}</div>
 
       {/* Mobile drawer — the same sidebar, slid in over the page. */}
       <AnimatePresence>
@@ -178,11 +178,11 @@ export default function AppShell({ children }: { children: ReactNode }) {
               animate={{ x: 0 }}
               exit={{ x: '-100%' }}
               transition={{ type: 'spring', stiffness: 420, damping: 38 }}
-              className="fixed inset-y-0 left-0 z-50 lg:hidden"
+              className="fixed inset-y-0 left-0 z-50 p-3 pt-[calc(env(safe-area-inset-top)+0.75rem)] lg:hidden"
             >
               <Sidebar
                 compact={false}
-                className="flex h-full pt-[calc(env(safe-area-inset-top)+1rem)] shadow-[var(--shadow-lg)]"
+                className="flex h-full shadow-[var(--shadow-lg)]"
                 onNavigate={() => setDrawer(false)}
               />
             </motion.div>

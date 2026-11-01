@@ -60,7 +60,7 @@ export default function AccountMenu({ variant = 'bar' }: { variant?: 'bar' | 'ra
     }
   }
 
-  const size = variant === 'rail' ? 'h-10 w-10' : 'h-9 w-9'
+  const size = 'h-11 w-11'
 
   if (!user) {
     return (
@@ -90,7 +90,8 @@ export default function AccountMenu({ variant = 'bar' }: { variant?: 'bar' | 'ra
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label="Account menu"
-        className={`focusable grid ${size} place-items-center rounded-full bg-[rgb(var(--c-text-primary))] text-xs font-semibold text-[rgb(var(--c-canvas))] transition-opacity hover:opacity-85`}
+        className={`focusable grid ${size} place-items-center rounded-full border-2 border-surface text-sm font-bold text-[#140b05] shadow-[0_0_0_1px_var(--well-edge)] transition-opacity hover:opacity-90`}
+        style={{ background: 'linear-gradient(135deg, #f0b48c, #b85a26)' }}
       >
         {initials(user.name, user.email)}
       </button>
@@ -103,10 +104,13 @@ export default function AccountMenu({ variant = 'bar' }: { variant?: 'bar' | 'ra
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -6 }}
             transition={{ duration: 0.14 }}
-            className={`absolute z-50 w-72 overflow-hidden rounded-xl border border-subtle bg-raised p-1.5 shadow-[var(--shadow-lg)] ${menuPos}`}
+            className={`absolute z-50 w-72 overflow-hidden rounded-[24px] border border-[var(--card-edge)] bg-raised p-1.5 shadow-[var(--shadow-lg)] ${menuPos}`}
           >
-            <div className="flex items-center gap-3 rounded-lg px-2.5 py-2.5">
-              <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[rgb(var(--c-text-primary))] text-xs font-semibold text-[rgb(var(--c-canvas))]">
+            <div className="flex items-center gap-3 rounded-full px-3 py-2.5">
+              <span
+                className="grid h-9 w-9 shrink-0 place-items-center rounded-full text-xs font-bold text-[#140b05]"
+                style={{ background: 'linear-gradient(135deg, #f0b48c, #b85a26)' }}
+              >
                 {initials(user.name, user.email)}
               </span>
               <span className="min-w-0">
@@ -117,20 +121,20 @@ export default function AccountMenu({ variant = 'bar' }: { variant?: 'bar' | 'ra
               </span>
             </div>
 
-            <div className="my-1.5 rounded-lg border border-subtle p-3">
+            <div className="inner my-1.5 p-3">
               <div className="flex items-center justify-between gap-3">
                 <span className="text-sm font-medium text-primary">Balance</span>
                 <Link
                   to="/plans"
                   onClick={() => setOpen(false)}
-                  className="btn-primary focusable rounded-full px-3 py-1.5 text-xs"
+                  className="btn-primary focusable px-3 py-1.5 text-xs"
                 >
                   Top up
                 </Link>
               </div>
               <div className="mt-2.5 flex items-baseline justify-between text-sm">
                 <span className="text-secondary">Remaining</span>
-                <span className="font-medium text-primary">
+                <span className="num text-primary">
                   {balance.toLocaleString()} credits
                 </span>
               </div>
@@ -140,7 +144,7 @@ export default function AccountMenu({ variant = 'bar' }: { variant?: 'bar' | 'ra
               Settings
             </MenuLink>
             <MenuLink to="/plans" onClick={() => setOpen(false)}>
-              Plans &amp; billing
+              Plans and billing
             </MenuLink>
             <MenuLink to="/developers" onClick={() => setOpen(false)}>
               Developers
@@ -150,7 +154,7 @@ export default function AccountMenu({ variant = 'bar' }: { variant?: 'bar' | 'ra
               type="button"
               role="menuitem"
               onClick={toggle}
-              className="flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-sm text-secondary transition-colors hover:bg-sunken hover:text-primary"
+              className="flex w-full items-center justify-between gap-2 rounded-full px-3 py-2 text-left text-sm text-secondary transition-colors hover:bg-sunken hover:text-primary"
             >
               Theme
               <span className="text-xs text-muted">{theme === 'dark' ? 'Dark' : 'Light'}</span>
@@ -162,7 +166,7 @@ export default function AccountMenu({ variant = 'bar' }: { variant?: 'bar' | 'ra
                 onClick={handleLogout}
                 disabled={loggingOut}
                 role="menuitem"
-                className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm text-secondary transition-colors hover:bg-sunken hover:text-primary disabled:opacity-60"
+                className="flex w-full items-center gap-2.5 rounded-full px-3 py-2 text-left text-sm text-secondary transition-colors hover:bg-sunken hover:text-primary disabled:opacity-60"
               >
                 <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9" />
@@ -191,7 +195,7 @@ function MenuLink({
       to={to}
       role="menuitem"
       onClick={onClick}
-      className="flex w-full items-center rounded-lg px-2.5 py-2 text-left text-sm text-secondary transition-colors hover:bg-sunken hover:text-primary"
+      className="flex w-full items-center rounded-full px-3 py-2 text-left text-sm text-secondary transition-colors hover:bg-sunken hover:text-primary"
     >
       {children}
     </Link>
