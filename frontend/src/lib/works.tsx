@@ -348,3 +348,15 @@ export function workTitle(w: Work): string {
 export function workPair(w: Work): string {
   return `${w.sourceLang.toUpperCase()}→${w.targetLang.toUpperCase()}`
 }
+
+/** "today", "yesterday", "18 days ago", "1 month ago". */
+export function relTime(ms: number): string {
+  const days = Math.floor((Date.now() - ms) / 86_400_000)
+  if (days <= 0) return 'today'
+  if (days === 1) return 'yesterday'
+  if (days < 30) return `${days} days ago`
+  const months = Math.floor(days / 30)
+  if (months < 12) return `${months} month${months === 1 ? '' : 's'} ago`
+  const years = Math.floor(months / 12)
+  return `${years} year${years === 1 ? '' : 's'} ago`
+}

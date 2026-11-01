@@ -109,7 +109,7 @@ export default function SearchEverything() {
       <svg
         viewBox="0 0 24 24"
         aria-hidden
-        className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted"
+        className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-muted"
         fill="none"
         stroke="currentColor"
         strokeWidth="1.8"
@@ -137,16 +137,15 @@ export default function SearchEverything() {
             choose(hits[cursor])
           }
         }}
-        placeholder="Search everything…"
+        placeholder="Search dubs, languages, settings"
         aria-label="Search everything"
-        className="focusable w-full rounded-full border border-subtle bg-surface py-2 pl-9 pr-16 text-sm text-primary outline-none transition-colors placeholder:text-muted hover:border-strong focus:border-strong"
+        className="glass focusable h-[46px] w-full rounded-full pl-10 pr-14 text-sm text-primary outline-none transition-colors placeholder:text-muted hover:border-[var(--glass-hi)] focus:border-[var(--glass-hi)]"
       />
       <span
         aria-hidden
-        className="pointer-events-none absolute right-2.5 top-1/2 flex -translate-y-1/2 items-center gap-1 text-[11px] text-muted"
+        className="pointer-events-none absolute right-3.5 top-1/2 flex -translate-y-1/2 items-center text-[11px] text-muted"
       >
-        <kbd className="rounded border border-subtle px-1.5 py-0.5">⌘</kbd>
-        <kbd className="rounded border border-subtle px-1.5 py-0.5">K</kbd>
+        <kbd className="rounded-lg border border-[var(--well-edge)] px-1.5 py-0.5 font-mono">⌘K</kbd>
       </span>
 
       <AnimatePresence>
@@ -156,7 +155,7 @@ export default function SearchEverything() {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -4 }}
             transition={{ duration: 0.12 }}
-            className="absolute inset-x-0 top-[calc(100%+0.4rem)] z-50 overflow-hidden rounded-xl border border-subtle bg-raised p-1.5 shadow-[var(--shadow-lg)]"
+            className="absolute inset-x-0 top-[calc(100%+0.4rem)] z-50 overflow-hidden rounded-[20px] border border-[var(--card-edge)] bg-raised p-1.5 shadow-[var(--shadow-lg)]"
           >
             {hits.length === 0 ? (
               <div className="px-3 py-3 text-sm text-muted">

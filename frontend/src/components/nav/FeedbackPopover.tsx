@@ -83,7 +83,7 @@ export default function FeedbackPopover() {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -6 }}
             transition={{ duration: 0.14 }}
-            className="absolute right-0 top-[calc(100%+0.5rem)] z-50 w-80 overflow-hidden rounded-xl border border-subtle bg-raised p-3 shadow-[var(--shadow-lg)]"
+            className="absolute right-0 top-[calc(100%+0.5rem)] z-50 w-80 overflow-hidden rounded-[24px] border border-[var(--card-edge)] bg-raised p-3 shadow-[var(--shadow-lg)]"
           >
             {state === 'done' ? (
               <p className="px-1 py-6 text-center text-sm text-secondary">
