@@ -474,7 +474,7 @@ export default function Studio() {
     // A refusal here now means only one thing: the balance buys no dubbing at
     // all. A balance that covers PART of the clip is allowed through, and the
     // server trims the source to what was paid for — so the job still runs and
-    // the user gets the first minute of their video rather than an error.
+    // the user gets the part of their video they can afford rather than an error.
     //
     // A link has no duration to probe: the media is on someone else's server and
     // the browser never sees it, so this falls back to the same 60s default the
@@ -493,7 +493,7 @@ export default function Studio() {
       if (!gate.allowed) {
         setNeedsCredits(true);
         setError(
-          `You have ${gate.balance} credits — not enough to dub any of this ` +
+          `You have ${gate.balance} tokens — not enough to dub any of this ` +
             `video. A minute costs ${gate.creditsPerMinute} at ${quality} quality.`,
         );
         return;
@@ -504,7 +504,7 @@ export default function Studio() {
           ? "Please sign in to start a dub."
           : e instanceof Error
             ? e.message
-            : "Could not verify your credits.",
+            : "Could not verify your tokens.",
       );
       return;
     }
@@ -840,7 +840,7 @@ export default function Studio() {
         prefer: "right",
         onEnter: () => setOpenStep("quality"),
         title: "04 · Quality, and what it costs",
-        body: "Fast skips the heavy stages, Studio runs all of them. This is the one setting that moves the price — the credit figure updates as you switch.",
+        body: "Fast skips the heavy stages, Studio runs all of them. This is the one setting that moves the price — the token figure updates as you switch.",
       },
       {
         id: "monitor",
@@ -1275,7 +1275,7 @@ export default function Studio() {
       <StepCard
         n="04"
         title="Quality"
-        summary={`${QUALITIES.find((q) => q.key === quality)?.label ?? quality} · ${cost} credits`}
+        summary={`${QUALITIES.find((q) => q.key === quality)?.label ?? quality} · ${cost} tokens`}
         done={!!touched.quality}
         open={openStep === "quality"}
         onToggle={() => toggleStep("quality")}
@@ -1388,7 +1388,7 @@ export default function Studio() {
         disabled={busy || running || !canStart}
         title={
           walletEmpty
-            ? "You have no credits left — buy credits or a plan to dub"
+            ? "You have no tokens left — buy tokens or a plan to dub"
             : !canStart
               ? "Choose a source and a target language first"
               : undefined
@@ -1410,7 +1410,7 @@ export default function Studio() {
               : running
                 ? `Dubbing… ${overall}%`
                 : walletEmpty
-                  ? "No credits left"
+                  ? "No tokens left"
                   : canStart
                     ? // On a trimmed run the button names the length too, so the
                       // cut is stated at the moment of committing to it and not
@@ -1499,7 +1499,7 @@ export default function Studio() {
       className="bento bento-3"
     >
       <StatTile
-        label="Credits"
+        label="Tokens"
         tint="brand"
         value={<AnimatedNumber value={balance} />}
         foot={short ? "short for this run" : `${after.toLocaleString()} after`}
@@ -1591,7 +1591,7 @@ export default function Studio() {
                     to="/plans"
                     className="btn-primary focusable px-4 py-2 font-mono text-xs"
                   >
-                    Buy credits →
+                    Buy tokens →
                   </Link>
                   <Link
                     to="/plans"
@@ -1632,18 +1632,18 @@ export default function Studio() {
               </p>
               <p className="mt-1 text-secondary">
                 {job?.billing?.notice ??
-                  `You have ${balance} credits, which covers ${formatSeconds(
+                  `You have ${balance} tokens, which covers ${formatSeconds(
                     billableSeconds,
                   )} of this ${formatSeconds(quotedSeconds)} video. ` +
                     `We'll dub the first ${formatSeconds(billableSeconds)} for ` +
-                    `${billableCost} credits — the whole thing would cost ${cost}.`}
+                    `${billableCost} tokens — the whole thing would cost ${cost}.`}
               </p>
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <Link
                   to="/plans"
                   className="btn-primary focusable px-4 py-2 font-mono text-xs"
                 >
-                  Buy credits to dub it all →
+                  Buy tokens to dub it all →
                 </Link>
               </div>
             </div>
@@ -1750,7 +1750,7 @@ export default function Studio() {
                     <div className="font-mono text-4xl font-medium text-primary">
                       <AnimatedNumber value={cost} />
                       <span className="ml-1.5 font-mono text-sm text-muted">
-                        credits
+                        tokens
                       </span>
                     </div>
                     <AnimatePresence mode="wait" initial={false}>
@@ -2045,7 +2045,7 @@ export default function Studio() {
               <div className="mt-5 flex items-center justify-between border-t border-subtle pt-4 font-mono text-[11px] text-muted">
                 <span>
                   {stageProgress.done}/{stageProgress.total} stages · {cost}{" "}
-                  credits
+                  tokens
                 </span>
                 <span>
                   <span className="text-primary">{fmtElapsed(elapsed)}</span>{" "}
@@ -2167,7 +2167,7 @@ export default function Studio() {
                 {running ? `${overall}% · ${fmtElapsed(elapsed)}` : "This run"}
               </span>
               <span className="font-mono text-sm font-medium text-white">
-                {cost} credits
+                {cost} tokens
               </span>
             </span>
             <MagneticButton

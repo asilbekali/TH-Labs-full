@@ -61,7 +61,7 @@ export interface PlansResponse {
   /** Balanced-quality tariff: credits per minute of source. */
   creditsPerMinute?: number
   qualityMultiplier?: Record<string, number>
-  /** Seconds of dubbing the signup bonus buys — the free minute. */
+  /** Seconds of dubbing the signup bonus buys — the five free minutes. */
   freeMinuteSeconds?: number
   signupBonusCredits?: number
   /** Absent on an API deployed before the payments rework. */
@@ -338,7 +338,7 @@ export async function getCreditPacks(): Promise<CreditPacksResponse> {
     const res = await authJson<Partial<CreditPacksResponse>>(
       '/payments/credit-packs',
       {},
-      'Could not load credit packs',
+      'Could not load token packs',
     )
     if (Array.isArray(res.packs) && res.packs.length > 0) {
       return {
@@ -372,7 +372,7 @@ export function getCreditCheckoutUrl(packId: string): Promise<CreditCheckoutResp
   return authJson<CreditCheckoutResponse>(
     `/payments/checkout/credits?pack=${encodeURIComponent(packId)}`,
     {},
-    'Could not start checkout for this credit pack',
+    'Could not start checkout for this token pack',
   )
 }
 
@@ -452,7 +452,7 @@ export function getCredits(page = 1, limit = 20): Promise<CreditsResponse> {
   return authJson<CreditsResponse>(
     `/payments/credits?page=${page}&limit=${limit}`,
     {},
-    'Could not load credits',
+    'Could not load tokens',
   )
 }
 
@@ -487,7 +487,7 @@ export function canDub(
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ durationSeconds, quality, ...features }),
     },
-    'Could not verify your credits',
+    'Could not verify your tokens',
   )
 }
 

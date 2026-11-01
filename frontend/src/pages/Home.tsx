@@ -496,7 +496,7 @@ function Composer({
         </svg>
         <TargetPicker languages={languages} value={target} onChange={onTarget} />
         <span className="chip hidden h-8 items-center px-3 text-[13px] text-primary sm:inline-flex">
-          Balanced · <span className="num mx-1">{CREDITS_PER_MINUTE_BY_QUALITY.balanced}</span> credits / min
+          Balanced · <span className="num mx-1">{CREDITS_PER_MINUTE_BY_QUALITY.balanced}</span> tokens / min
         </span>
         {disabled && (
           <span className="chip inline-flex h-8 items-center gap-2 px-3 text-[13px] text-danger">
@@ -535,7 +535,7 @@ function BalanceCard({ works }: { works: Work[] }) {
 
   return (
     <motion.section
-      aria-label="Credit balance"
+      aria-label="Token balance"
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4, ease: EASE_ENTRANCE, delay: 0.05 }}
@@ -543,7 +543,7 @@ function BalanceCard({ works }: { works: Work[] }) {
     >
       <span aria-hidden className="glow -right-20 -top-[90px] h-[260px] w-[280px] bg-[rgb(255_236_214/0.5)]" />
       <div className="relative flex items-center justify-between gap-3">
-        <span className="text-[15px] font-medium">Credit balance</span>
+        <span className="text-[15px] font-medium">Token balance</span>
         <span className="inline-flex h-8 items-center rounded-full border border-[rgb(20_11_5/0.2)] bg-[rgb(20_11_5/0.12)] px-3 text-[13px]">
           {planInfo.name}
         </span>
@@ -554,7 +554,7 @@ function BalanceCard({ works }: { works: Work[] }) {
           className={`num text-[80px] leading-[80px] tracking-[-0.04em] ${loading ? 'opacity-40' : ''}`}
         />
         <span className="text-sm text-[rgb(20_11_5/0.78)]">
-          credits · about <span className="num">{minutes.toLocaleString()}</span> minutes at Balanced
+          tokens · about <span className="num">{minutes.toLocaleString()}</span> minutes at Balanced
         </span>
       </div>
       <div aria-hidden className="relative flex h-16 items-end gap-1.5">

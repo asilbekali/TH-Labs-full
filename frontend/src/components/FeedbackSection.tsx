@@ -31,7 +31,7 @@ const KINDS: { id: FeedbackKind; label: string; hint: string }[] = [
   { id: 'BUG', label: 'Something broke', hint: 'What you did, and what happened instead.' },
   { id: 'QUALITY', label: 'Dub quality', hint: 'Which language pair, and what sounded wrong.' },
   { id: 'FEATURE', label: 'Feature idea', hint: 'What you wanted to do and could not.' },
-  { id: 'PRICING', label: 'Pricing', hint: 'Plans, credits, or what a dub costs.' },
+  { id: 'PRICING', label: 'Pricing', hint: 'Plans, tokens, or what a dub costs.' },
 ]
 
 // Matches the API's @MinLength(10) on `message`. Kept in sync deliberately: the

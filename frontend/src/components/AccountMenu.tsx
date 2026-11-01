@@ -135,7 +135,7 @@ export default function AccountMenu({ variant = 'bar' }: { variant?: 'bar' | 'ra
               <div className="mt-2.5 flex items-baseline justify-between text-sm">
                 <span className="text-secondary">Remaining</span>
                 <span className="num text-primary">
-                  {balance.toLocaleString()} credits
+                  {balance.toLocaleString()} tokens
                 </span>
               </div>
             </div>

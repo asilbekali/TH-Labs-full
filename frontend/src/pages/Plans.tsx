@@ -548,7 +548,7 @@ function TierCard({
   const grants = tier.grants[creditCycle];
   const dripNote =
     grants > 1
-      ? `${tier.perGrant[creditCycle].toLocaleString()} credits added every month`
+      ? `${tier.perGrant[creditCycle].toLocaleString()} tokens added every month`
       : null;
 
   const spot = usePointerSpotlight<HTMLDivElement>();
@@ -709,10 +709,10 @@ function TopUpSection({
         <div>
           <SectionMark>Pay as you go</SectionMark>
           <h2 className="mt-1.5 font-mono text-lg font-medium text-primary">
-            Buy credits once — no subscription
+            Buy tokens once — no subscription
           </h2>
           <p className="mt-1 text-sm text-secondary">
-            Credits never expire and work on any quality. Pay for the video you
+            Tokens never expire and work on any quality. Pay for the video you
             have.
           </p>
         </div>
@@ -772,12 +772,12 @@ function TopUpSection({
               <span className="text-sm text-secondary">You need about</span>
               <span className="font-display text-[1.75rem] text-primary">
                 <AnimatedNumber value={needed} />{" "}
-                <span className="text-sm text-muted">credits</span>
+                <span className="text-sm text-muted">tokens</span>
               </span>
             </div>
             {recommended && (
               <p className="mt-1.5 font-mono text-[11px] text-muted">
-                Covered by the {recommended.credits.toLocaleString()}-credit
+                Covered by the {recommended.credits.toLocaleString()}-token
                 pack · {fmtCents(recommended.priceCents, recommended.currency)}
               </p>
             )}
@@ -793,7 +793,7 @@ function TopUpSection({
                 ? "Redirecting…"
                 : disabled
                   ? "Checkout unavailable"
-                  : `Buy ${recommended.credits.toLocaleString()} credits · ${fmtCents(recommended.priceCents, recommended.currency)} →`}
+                  : `Buy ${recommended.credits.toLocaleString()} tokens · ${fmtCents(recommended.priceCents, recommended.currency)} →`}
             </button>
           )}
         </div>
@@ -862,7 +862,7 @@ function PackCard({
             <span className="font-mono text-2xl font-medium text-primary">
               {pack.credits.toLocaleString()}
             </span>
-            <span className="font-mono text-xs text-muted">credits</span>
+            <span className="font-mono text-xs text-muted">tokens</span>
           </div>
           {recommended && (
             <span className="shrink-0 rounded-pill bg-brand px-2.5 py-0.5 font-mono text-[10px] font-medium uppercase tracking-wide text-canvas">
@@ -880,7 +880,7 @@ function PackCard({
           {fmtCents(pack.priceCents, pack.currency)}
         </span>
         <span className="hidden font-mono text-[11px] text-muted sm:inline">
-          · ${perCredit.toFixed(3)} / credit
+          · ${perCredit.toFixed(3)} / token
         </span>
       </div>
 
@@ -897,7 +897,7 @@ function PackCard({
           "Not available yet"
         ) : (
           <>
-            Buy<span className="hidden sm:inline"> credits</span>
+            Buy<span className="hidden sm:inline"> tokens</span>
           </>
         )}
       </MagneticButton>
@@ -927,7 +927,7 @@ function CompareDisclosure({
   // "credits per month" row could only ever be right for one of them.
   const rows: { feature: string; values: (string | boolean)[] }[] = [
     ...CYCLE_KEYS.map((c) => ({
-      feature: `Credits · ${CYCLES.find((x) => x.key === c)!.label.toLowerCase()}`,
+      feature: `Tokens · ${CYCLES.find((x) => x.key === c)!.label.toLowerCase()}`,
       values: tiers.map((t) =>
         (t.fixedCycle && t.fixedCycle !== c) || t.credits[c] === 0
           ? "–"
@@ -1029,7 +1029,7 @@ function CompareDisclosure({
                 <div>
                   {/* Per MINUTE now, not per dub. A flat per-dub price meant a
                       20-second clip and an hour-long film cost the same. */}
-                  <SectionMark>Credit cost per minute</SectionMark>
+                  <SectionMark>Token cost per minute</SectionMark>
                   <ul className="mt-2 space-y-1">
                     {Object.entries(catalog.qualityCost).map(
                       ([quality, cost]) => (
@@ -1054,15 +1054,15 @@ function CompareDisclosure({
                   </p>
                 </div>
                 <div>
-                  <SectionMark>Your first minute is free</SectionMark>
+                  <SectionMark>Your first 5 minutes are free</SectionMark>
                   <p className="mt-2 text-sm text-secondary">
                     Every new account starts with{" "}
                     <span className="font-mono text-primary">
-                      {catalog.signupBonusCredits ?? 20} credits
+                      {catalog.signupBonusCredits ?? 100} tokens
                     </span>{" "}
                     — enough to dub{" "}
                     <span className="font-mono text-primary">
-                      {Math.round((catalog.freeMinuteSeconds ?? 60) / 60)} min
+                      {Math.round((catalog.freeMinuteSeconds ?? 300) / 60)} min
                     </span>{" "}
                     at Balanced quality, with no card and nothing to cancel.
                   </p>
@@ -1121,7 +1121,7 @@ function BalanceCard({
             value={balance}
             className="font-mono text-4xl font-medium text-primary"
           />
-          <span className="font-mono text-sm text-muted">credits</span>
+          <span className="font-mono text-sm text-muted">tokens</span>
         </div>
         <div className="mt-1 font-mono text-[11px] text-muted">
           {planName} plan
@@ -1204,7 +1204,7 @@ function SubscriptionCard({
         <SectionMark>Subscription</SectionMark>
         <p className="mt-2 text-sm text-secondary">
           You're on the Free plan. Choose Pro or Studio Max above to add monthly
-          credits.
+          tokens.
         </p>
       </div>
     );
@@ -1321,7 +1321,7 @@ function CheckoutFooter({ live }: { live: boolean }) {
     <div className="flex flex-wrap items-center justify-between gap-3 rounded-card border border-subtle bg-sunken/50 px-5 py-4">
       <div className="space-y-1.5">
         <p className="font-mono text-xs font-medium text-primary">
-          Heads up: your plan and credits can take 5–10 minutes to appear after
+          Heads up: your plan and tokens can take 5–10 minutes to appear after
           you pay.
         </p>
         <p className="font-mono text-xs text-muted">

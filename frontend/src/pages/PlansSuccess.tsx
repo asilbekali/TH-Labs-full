@@ -114,7 +114,7 @@ export default function PlansSuccess() {
               </h1>
               <p className="mt-2 text-sm text-secondary">
                 We are checking with Lemon Squeezy. Confirming a payment can take
-                them 5–10 minutes, so your plan and credits may not show up right
+                them 5–10 minutes, so your plan and tokens may not show up right
                 away.
               </p>
               <p className="mt-3 text-xs text-muted">
@@ -135,7 +135,7 @@ export default function PlansSuccess() {
                 <strong className="font-semibold text-primary">
                   {result.balance.toLocaleString()}
                 </strong>{' '}
-                credits.
+                tokens.
               </p>
               <p className="mt-5 text-xs text-muted">Taking you to the Studio…</p>
             </>
@@ -153,7 +153,7 @@ export default function PlansSuccess() {
                 <strong className="font-semibold text-primary">
                   {result.balance.toLocaleString()}
                 </strong>{' '}
-                credits.
+                tokens.
               </p>
               <Link
                 to="/studio"
@@ -202,7 +202,7 @@ export default function PlansSuccess() {
               <p className="mt-2 text-sm text-secondary">
                 Lemon Squeezy has not confirmed a paid order for your account
                 yet. That can take 5–10 minutes. You do not need to stay here:
-                we keep checking, your plan and credits are added automatically
+                we keep checking, your plan and tokens are added automatically
                 as soon as it is confirmed, and we email you a receipt.
               </p>
               <p className="mt-3 text-xs text-muted">
@@ -255,8 +255,8 @@ function Badge({ tone }: { tone: 'success' | 'warn' }) {
   )
 }
 
-/** `1200` → `1,200 credits`, or "No new credits" for a zero grant. */
+/** `1200` → `1,200 tokens`, or "No new tokens" for a zero grant. */
 function AnimatedCredits({ credits }: { credits: number }) {
-  if (credits <= 0) return <>No new credits</>
-  return <>{credits.toLocaleString()} credits</>
+  if (credits <= 0) return <>No new tokens</>
+  return <>{credits.toLocaleString()} tokens</>
 }
