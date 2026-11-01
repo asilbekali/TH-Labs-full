@@ -69,19 +69,19 @@ function copyFor(name: string, p: PaymentReceipt) {
       return {
         subject: `Your TH Labs ${p.item} is active`,
         heading: `Welcome to ${p.item.split(' plan')[0]}`,
-        lead: `Thanks for subscribing, ${name}. Your plan is active and ${num(p.creditsGranted)} credits are already in your account.`,
+        lead: `Thanks for subscribing, ${name}. Your plan is active and ${num(p.creditsGranted)} tokens are already in your account.`,
       };
     case 'renewal':
       return {
         subject: `Your TH Labs ${p.item} has renewed`,
         heading: 'Your plan has renewed',
-        lead: `Thanks for staying with us, ${name}. Your subscription renewed and ${num(p.creditsGranted)} fresh credits are in your account.`,
+        lead: `Thanks for staying with us, ${name}. Your subscription renewed and ${num(p.creditsGranted)} fresh tokens are in your account.`,
       };
     case 'pack':
       return {
-        subject: `Receipt: ${num(p.creditsGranted)} credits added to your TH Labs account`,
-        heading: 'Your credits are ready',
-        lead: `Thanks for your purchase, ${name}. ${num(p.creditsGranted)} credits have been added to your account and are ready to use.`,
+        subject: `Receipt: ${num(p.creditsGranted)} tokens added to your TH Labs account`,
+        heading: 'Your tokens are ready',
+        lead: `Thanks for your purchase, ${name}. ${num(p.creditsGranted)} tokens have been added to your account and are ready to use.`,
       };
   }
 }
@@ -97,7 +97,7 @@ export function renderPaymentReceipt(
 
   const rows: [string, string][] = [
     ['Item', p.item],
-    ['Credits added', num(p.creditsGranted)],
+    ['Tokens added', num(p.creditsGranted)],
     // LS reports epoch 0 when it omits the date.
     ['Date', day(p.paidAt.getTime() > 0 ? p.paidAt : new Date())],
     ['Reference', p.reference],

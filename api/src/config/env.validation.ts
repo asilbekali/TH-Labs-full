@@ -29,8 +29,8 @@ export interface AppEnv {
   APP_URL: string;
 
   // FREE_DUB_MAX_SECONDS is gone. The free allowance is no longer a length cap
-  // on a special "one free dub" — a new account is granted credits worth one
-  // minute (SIGNUP_BONUS_CREDITS in src/payment/quality-cost.ts) and the balance
+  // on a special "one free dub" — a new account is granted credits worth five
+  // minutes (SIGNUP_BONUS_CREDITS in src/payment/quality-cost.ts) and the balance
   // alone decides from then on. Setting it in an env file now does nothing.
 
   // Origin of the dubbing pipeline (FastAPI), probed by GET /v1/health.

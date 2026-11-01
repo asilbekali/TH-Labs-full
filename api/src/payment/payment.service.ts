@@ -706,7 +706,7 @@ export class PaymentService {
 
     const periodStart = order.createdAt;
     const periodEnd = this.periodEndFor(plan.cycle, periodStart, lsSub);
-    const description = `${TIER_DISPLAY_NAME[plan.tier]} ${plan.cycle} — ${plan.creditsGranted} credits`;
+    const description = `${TIER_DISPLAY_NAME[plan.tier]} ${plan.cycle} — ${plan.creditsGranted} tokens`;
 
     const result = await this.prisma.transaction(async (tx) => {
       // One live subscription per user. Buying a different tier retires the old
@@ -833,7 +833,7 @@ export class PaymentService {
     order: LsOrder,
   ): Promise<GrantedPurchase> {
     this.checkAmount(order, pack.priceCents, pack.slug);
-    const description = `${pack.credits} credits — one-time pack`;
+    const description = `${pack.credits} tokens — one-time pack`;
 
     const balance = await this.prisma.transaction(async (tx) => {
       await tx.payment.create({
@@ -864,7 +864,7 @@ export class PaymentService {
     await this.rememberCustomer(userId, order.customerId);
     this.emailReceipt(userId, {
       kind: 'pack',
-      item: `${pack.credits.toLocaleString('en-US')} credits`,
+      item: `${pack.credits.toLocaleString('en-US')} tokens`,
       paidAt: order.createdAt,
       creditsGranted: pack.credits,
       balance,
@@ -989,7 +989,7 @@ export class PaymentService {
   ): Promise<GrantedPurchase> {
     const periodStart = invoice.createdAt;
     const periodEnd = this.periodEndFor(plan.cycle, periodStart, lsSub);
-    const description = `${TIER_DISPLAY_NAME[plan.tier]} ${plan.cycle} renewal — ${plan.creditsGranted} credits`;
+    const description = `${TIER_DISPLAY_NAME[plan.tier]} ${plan.cycle} renewal — ${plan.creditsGranted} tokens`;
 
     const balance = await this.prisma.transaction(async (tx) => {
       await tx.payment.create({
@@ -1193,7 +1193,7 @@ export class PaymentService {
   // The important departure from the old gate is that a short balance is no
   // longer a flat refusal. Cost is per second, so a wallet that cannot pay for
   // a five-minute video can still pay for the first minute of it — and that is
-  // what a new account's one free minute is: not a special case, just a small
+  // what a new account's five free minutes are: not a special case, just a small
   // balance. The caller trims to `billableSeconds` and charges for that.
   async canDub(userId: number, dto: CanDubDto): Promise<CanDubResult> {
     const user = await this.prisma.user.findUnique({
@@ -1306,7 +1306,7 @@ export class PaymentService {
         throw new PaymentRequiredException({
           reason: 'INSUFFICIENT_CREDITS',
           message:
-            `Not enough credits — dubbing ${Math.round(duration)}s at ` +
+            `Not enough tokens — dubbing ${Math.round(duration)}s at ` +
             `${dto.quality} costs ${cost}, you have ${user.credits}.`,
           cost,
           balance: user.credits,
@@ -1454,7 +1454,7 @@ export class PaymentService {
     return {
       subscription: updated,
       message:
-        'Your plan will not renew. Access and unspent credits remain until ' +
+        'Your plan will not renew. Access and unspent tokens remain until ' +
         'the period ends.',
     };
   }

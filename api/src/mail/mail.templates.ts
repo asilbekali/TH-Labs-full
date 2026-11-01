@@ -224,7 +224,8 @@ export function signupWelcomeTemplate(
     heading: 'Your TH Labs account is ready',
     text:
       `Your account is set up and you can start dubbing right away.\n\n` +
-      `There are free credits waiting for you. Upload a video, choose your target ` +
+      `Five free minutes of dubbing (100 tokens) are waiting for you. Upload a video, ` +
+      `choose your target ` +
       `languages, and get back a dub that keeps your own voice.`,
     // Straight to /studio, not the root: they have an account, and the route
     // asks them to sign in if the session has since expired.
