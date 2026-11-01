@@ -121,7 +121,7 @@ function ProductDocs() {
         </p>
       </Article>
 
-      <Article title="Sources, credits and quality">
+      <Article title="Sources, tokens and quality">
         <p>
           A dub starts from an uploaded file or a public video link — the server fetches
           the link itself, so it has to be reachable without a login. One source per run:
@@ -129,7 +129,7 @@ function ProductDocs() {
         </p>
         <p>
           Quality is <Term>Fast</Term>, <Term>Balanced</Term> or <Term>Studio</Term>, and
-          it sets the credit cost per minute. The Studio prices the run before you start
+          it sets the token cost per minute. The Studio prices the run before you start
           it and will not begin one your balance cannot cover. Finished dubs are kept
           under <Link className="underline decoration-subtle underline-offset-4 hover:decoration-strong" to="/works">My works</Link>.
         </p>
@@ -281,7 +281,7 @@ function PolicyDocs() {
           </li>
         </ul>
         <p>
-          Accounts used for any of the above are closed, and remaining credits are not
+          Accounts used for any of the above are closed, and remaining tokens are not
           refunded.
         </p>
       </Article>
@@ -299,15 +299,15 @@ function PolicyDocs() {
         </p>
       </Article>
 
-      <Article title="Credits and billing">
+      <Article title="Tokens and billing">
         <p>
-          Credits are consumed per minute of source material at the quality you choose,
+          Tokens are consumed per minute of source material at the quality you choose,
           and the price is shown before a run starts. A run that fails on our side is not
           charged.
         </p>
         <p>
           Plans renew until cancelled; cancelling stops the next renewal and leaves the
-          current period intact. Granted credits do not convert to money and are not
+          current period intact. Granted tokens do not convert to money and are not
           refundable once spent.
         </p>
       </Article>

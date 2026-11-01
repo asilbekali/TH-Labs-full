@@ -148,7 +148,7 @@ function CreditsWell({ onNavigate }: { onNavigate?: () => void }) {
   return (
     <div className="inner flex flex-col gap-2.5 rounded-[22px] p-4">
       <div className="flex items-center justify-between gap-2">
-        <span className="text-[13px] text-muted">Credits</span>
+        <span className="text-[13px] text-muted">Tokens</span>
         <span className="chip px-2 py-0.5 text-[11px] text-primary">{planInfo.name}</span>
       </div>
       <AnimatedNumber value={balance} className={`num text-[30px] leading-8 text-primary ${loading ? 'opacity-40' : ''}`} />
@@ -165,7 +165,7 @@ function CreditsWell({ onNavigate }: { onNavigate?: () => void }) {
         onClick={onNavigate}
         className="btn-primary focusable inline-flex h-[34px] w-full items-center justify-center text-[13px]"
       >
-        Top up credits
+        Top up tokens
       </Link>
     </div>
   )

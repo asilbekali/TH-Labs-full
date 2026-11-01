@@ -34,7 +34,7 @@ export function checkoutUnavailableReason(
 ): string | null {
   if (!info) return null // catalog still loading — don't disable anything yet
   if (!info.canGrantCredits) {
-    return 'Payments are turned off: the server has no Lemon Squeezy API key, so a purchase could not be confirmed and credits could not be granted. Set LEMONSQUEEZY_API_KEY on the API.'
+    return 'Payments are turned off: the server has no Lemon Squeezy API key, so a purchase could not be confirmed and tokens could not be granted. Set LEMONSQUEEZY_API_KEY on the API.'
   }
   if (!info.configured) {
     return 'No Lemon Squeezy checkout link is configured for any paid plan yet — add the link and variant id in the admin panel.'

@@ -283,7 +283,7 @@ export default function TextToSpeech() {
             <>
               Generate speech
               <span className="rounded-full bg-black/20 px-2 py-0.5 text-[12px] tabular-nums">
-                {estCost} {estCost === 1 ? 'credit' : 'credits'}
+                {estCost} {estCost === 1 ? 'token' : 'tokens'}
               </span>
             </>
           ) : (
@@ -308,7 +308,7 @@ export default function TextToSpeech() {
               <>
                 {' '}
                 <Link to="/plans" className="font-medium text-primary underline-offset-4 hover:underline">
-                  Get credits
+                  Get tokens
                 </Link>
               </>
             )}
@@ -326,7 +326,7 @@ export default function TextToSpeech() {
             <div className="flex flex-wrap items-center justify-between gap-3 px-1 text-[12px] text-muted">
               <span className="tabular-nums">
                 {task.duration?.toFixed(1)}s
-                {task.credits_charged != null && ` · ${task.credits_charged} credits`}
+                {task.credits_charged != null && ` · ${task.credits_charged} tokens`}
               </span>
               <a
                 href={audio}
@@ -394,7 +394,7 @@ function CostLine({
                 <span className="text-muted">Type a script to see it</span>
               ) : (
                 <>
-                  ≈ {cost} {cost === 1 ? 'credit' : 'credits'}
+                  ≈ {cost} {cost === 1 ? 'token' : 'tokens'}
                   <span className="ml-1.5 text-[12px] font-normal text-muted">· ~{length} of audio</span>
                 </>
               )}
@@ -410,9 +410,9 @@ function CostLine({
       </div>
       {short ? (
         <p className="mt-2.5 text-[12px] text-secondary">
-          Not enough credits for this script. Shorten it, or{' '}
+          Not enough tokens for this script. Shorten it, or{' '}
           <Link to="/plans" className="font-medium text-brand underline-offset-4 hover:underline">
-            get more credits
+            get more tokens
           </Link>
           .
         </p>

@@ -168,13 +168,13 @@ export default function Account() {
             </div>
             <div className="above mt-3 text-4xl font-bold">{balance}</div>
             <div className="above mt-1 text-sm on-deep-dim">
-              credits · {planInfo.name} plan
+              tokens · {planInfo.name} plan
             </div>
             <Link
               to="/plans"
               className="btn-on-deep focusable above mt-5 inline-flex px-5 py-2.5 text-sm"
             >
-              Manage plan &amp; credits
+              Manage plan &amp; tokens
             </Link>
           </motion.div>
 

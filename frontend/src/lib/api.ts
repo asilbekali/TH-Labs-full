@@ -140,7 +140,7 @@ export class AuthRequiredError extends Error {
  */
 export class PaymentRequiredError extends Error {
   constructor(message: string) {
-    super(message || 'You need more credits to dub this video.')
+    super(message || 'You need more tokens to dub this video.')
     this.name = 'PaymentRequiredError'
   }
 }

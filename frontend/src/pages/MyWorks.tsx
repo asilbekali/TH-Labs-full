@@ -891,7 +891,7 @@ function DetailPanel({ work, isSheet, onClose }: { work: Work; isSheet: boolean;
               <div className="flex items-baseline gap-2">
                 <span className="font-mono text-3xl font-medium text-primary">{work.creditsSpent}</span>
                 <span className="font-mono text-xs text-muted">
-                  {work.creditsSpent === 0 ? 'credits — nothing charged' : 'credits spent'}
+                  {work.creditsSpent === 0 ? 'tokens — nothing charged' : 'tokens spent'}
                 </span>
               </div>
             )}
@@ -919,7 +919,7 @@ function DetailPanel({ work, isSheet, onClose }: { work: Work; isSheet: boolean;
                   to="/plans"
                   className="mt-2 inline-block font-mono text-xs text-brand underline-offset-2 hover:underline"
                 >
-                  Buy credits to dub it in full →
+                  Buy tokens to dub it in full →
                 </Link>
               </div>
             )}

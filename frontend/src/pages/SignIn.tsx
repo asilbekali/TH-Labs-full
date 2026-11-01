@@ -78,7 +78,7 @@ export default function SignIn() {
           </h1>
           <p className="mt-1.5 text-sm text-secondary">
             {registering
-              ? 'New accounts start with 20 credits — one free minute of dubbing.'
+              ? 'New accounts start with 100 tokens — five free minutes of dubbing.'
               : 'Local development sign-in.'}
           </p>
         </div>
