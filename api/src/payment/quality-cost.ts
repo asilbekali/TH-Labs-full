@@ -23,16 +23,22 @@ export const QUALITY_MULTIPLIER: Record<string, number> = {
 
 export const DEFAULT_QUALITY = 'balanced';
 
-/** The one free minute every new account is given. See SIGNUP_BONUS_CREDITS. */
-export const FREE_MINUTE_SECONDS = 60;
+/**
+ * The free allowance every new account is given: five minutes of Balanced
+ * dubbing. See SIGNUP_BONUS_CREDITS. (The name predates the move from one free
+ * minute to five; it is reported to clients as `freeMinuteSeconds`.)
+ */
+export const FREE_MINUTE_SECONDS = 5 * 60;
 
 /**
- * Credits granted at registration: exactly one minute of Balanced dubbing.
+ * Credits granted at registration: exactly FREE_MINUTE_SECONDS of Balanced
+ * dubbing — 100 at 20 a minute. Customers see these as "tokens"; the code and
+ * the API keep the name "credits".
  * Written to the ledger as a SIGNUP_BONUS entry so the cached balance and the
  * ledger agree from the account's first moment (see UsersService.create).
  */
 export const SIGNUP_BONUS_CREDITS =
-  CREDITS_PER_MINUTE * (60 / FREE_MINUTE_SECONDS);
+  (CREDITS_PER_MINUTE * FREE_MINUTE_SECONDS) / 60;
 
 /** Credits per minute at a given quality. `fast` 10, `balanced` 20, `studio` 40. */
 export function rateFor(quality: string | undefined): number {

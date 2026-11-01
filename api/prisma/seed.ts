@@ -66,9 +66,9 @@ const PLAN_SEED: PlanSeed[] = [
   // The FREE row is a catalog entry, not a recurring grant: the cron only pays
   // out against real Subscription rows, and a free account has none. Its
   // creditsGranted is therefore exactly the one-time welcome bonus registration
-  // hands out (SIGNUP_BONUS_CREDITS = 20 = one minute at Balanced), so the
+  // hands out (SIGNUP_BONUS_CREDITS = 100 = five minutes at Balanced), so the
   // pricing page and the wallet cannot disagree about what "free" means.
-  { tier: 'FREE', cycle: 'MONTHLY', priceCents: 0, creditsGranted: 20, grantDays: 30, grantsPerPeriod: 1 },
+  { tier: 'FREE', cycle: 'MONTHLY', priceCents: 0, creditsGranted: 100, grantDays: 30, grantsPerPeriod: 1 },
 
   { tier: 'PRO', cycle: 'MONTHLY', priceCents: 1950, creditsGranted: 1200, grantDays: 30, grantsPerPeriod: 1, checkoutUrl: `${LS}/343dabe2-695e-493b-a42b-29a64cceb8f7`, lsVariantId: '2203365' },
   { tier: 'PRO', cycle: 'YEARLY', priceCents: 19900, creditsGranted: 1200, grantDays: 30, grantsPerPeriod: 12, checkoutUrl: `${LS}/ecbd10b3-080c-4403-9b4d-3401217b4faf`, lsVariantId: '2203407' },
