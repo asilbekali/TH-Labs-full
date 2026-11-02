@@ -40,10 +40,22 @@ class FakeOmni:
         return Model()
 
 
+class FakeEdge:
+    """edge-tts, the last-resort engine; off so the tests above stay about
+    Navoiy and OmniVoice."""
+
+    def available(self) -> bool:
+        return False
+
+    def supports(self, _lang: str) -> bool:
+        return False
+
+
 class FakeOrch:
     def __init__(self, omni_real: bool) -> None:
         self.tts = FakeOmni(omni_real)
         self.navoiy = tts_navoiy.NavoiyTTS()
+        self.edge = FakeEdge()
 
 
 @pytest.fixture

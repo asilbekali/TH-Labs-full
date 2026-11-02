@@ -28,11 +28,11 @@ export interface Workspace {
 const PLAN_LOOK: Record<PlanId, { label: string; gradient: string }> = {
   free: {
     label: 'TH-Labs Free',
-    gradient: 'linear-gradient(135deg, #38bdf8 0%, #6366f1 100%)',
+    gradient: 'linear-gradient(135deg, #7dd3fc 0%, #2563eb 100%)',
   },
   pro: {
     label: 'TH-Labs Pro',
-    gradient: 'linear-gradient(135deg, #a855f7 0%, #ec4899 100%)',
+    gradient: 'linear-gradient(135deg, #fdba74 0%, #e11d48 100%)',
   },
   studio: {
     label: 'TH-Labs Studio',

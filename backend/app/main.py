@@ -7,6 +7,9 @@ Endpoints
     POST /api/jobs              → create a dubbing job (upload, source_url, or sample=1)
     GET  /api/jobs/{id}         → job snapshot                        (auth, owner)
     GET  /api/jobs/{id}/events  → SSE live pipeline progress          (auth, owner)
+    GET  /api/jobs              → this user's dubs, newest first       (auth)
+    POST /api/jobs/{id}/segments → re-dub only edited lines   (auth, owner, Max)
+    /api/editor/...             → video editor projects (app/editor.py, Max)
     GET  /api/tts/voices        → text-to-speech engines + voices     (public)
     POST /api/tts               → start a text-to-speech render       (auth)
     GET  /api/tts/{id}          → render status + audio url           (auth, owner)
@@ -31,7 +34,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
-from . import __version__, billing, languages, speech
+from . import __version__, billing, editor, languages, speech
 from .auth import StudioUser, require_user, require_user_sse
 from .config import get_settings
 from .logging_config import setup_logging
@@ -40,7 +43,7 @@ from .logging_config import setup_logging
 # actually reaches Modal's log stream.
 setup_logging()
 from .jobs import manager, new_job_id
-from .pipeline import fetch, media
+from .pipeline import fetch, media, redub
 from .schemas import (DubOptions, HealthInfo, JobBilling, JobStatus, Quality,
                       StageInfo)
 
@@ -89,6 +92,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(editor.router)
 
 # serve uploads + outputs (source and dubbed videos)
 app.mount("/media", StaticFiles(directory=str(settings.data_dir)), name="media")
@@ -279,6 +284,13 @@ async def create_job(
                                      features)
         duration_seconds = source_seconds
 
+        # Subtitles+ is a Pro feature. Checked here, from the tier can-dub just
+        # reported, and before the charge below — so a refusal costs nothing.
+        # The account API's plan table has no subtitles column, which is why
+        # this gate lives on this side.
+        if options.subtitles and not billing.tier_allows(gate.tier, "PRO"):
+            raise billing.upgrade_required("Subtitles+", "PRO")
+
         if gate.trimmed:
             # Cut to what the balance covers, then bill the cut length. Trimming
             # BEFORE the pipeline is the point: the GPU only ever processes what
@@ -347,6 +359,31 @@ def _owned_job(job_id: str, user: StudioUser):
     return job
 
 
+@app.get("/api/jobs")
+def list_jobs(user: StudioUser = Depends(require_user)) -> dict:
+    """This user's dubs, newest first, for the speech editor's video list.
+
+    Summaries only — the editor fetches the one it opens in full.
+    """
+    out = []
+    for job in manager.list_for(user.id):
+        out.append({
+            "id": job.id, "status": job.status, "filename": job.filename,
+            "created_at": job.created_at, "updated_at": job.updated_at,
+            "target_lang": job.options.target_lang,
+            "source_lang": job.result.detected_source_lang
+            or job.options.source_lang,
+            "duration": job.result.duration,
+            "segments": len(job.result.segments),
+            "output_url": job.result.output_url,
+            "issues": sum(1 for i in job.result.issues
+                          if i.severity != "info"),
+            "edit_version": job.edit.version,
+            "editable": manager.artifacts(job.id) is not None,
+        })
+    return {"jobs": out}
+
+
 @app.get("/api/jobs/{job_id}")
 def get_job(job_id: str, user: StudioUser = Depends(require_user)) -> dict:
     job = _owned_job(job_id, user)
@@ -411,6 +448,62 @@ async def revoice_job(
     new_job.result.detected_source_lang = job.result.detected_source_lang
     return {"id": new_job.id, "job": new_job.model_dump(mode="json"),
             "edited_lines": changed}
+
+
+class LineEditIn(BaseModel):
+    id: int
+    target_text: str | None = None
+    start: float | None = None
+    end: float | None = None
+
+
+class SegmentEditRequest(BaseModel):
+    """Lines to change — new text, new timing, or both — keyed by segment id."""
+    segments: list[LineEditIn]
+
+
+@app.post("/api/jobs/{job_id}/segments")
+async def edit_segments(
+    job_id: str,
+    body: SegmentEditRequest,
+    user: StudioUser = Depends(require_user),
+) -> dict:
+    """Speech editor (Studio Max): re-dub ONLY the lines that changed.
+
+    Unlike /revoice, which synthesizes the whole transcript again as a new job,
+    this patches the existing dub: the edited lines are voiced with the same
+    engine and cloned voice, spliced into the voice stem, remixed over the
+    background the first run separated and muxed onto the same video. The
+    result is a new version of this job's video. No credits are charged — it
+    is a correction, as /revoice is.
+
+    Returns at once; progress is on `job.edit` (poll GET /api/jobs/{id}).
+    """
+    job = _owned_job(job_id, user)
+    await billing.require_tier(user.token, "STUDIO", "The speech editor")
+    if job.status != JobStatus.completed:
+        raise HTTPException(409, "Wait for the dub to finish before editing it.")
+    if job.edit.status in ("queued", "running"):
+        raise HTTPException(409, "An edit is already being applied to this dub.")
+    if manager.artifacts(job_id) is None:
+        raise HTTPException(
+            410, "This dub was made before speech editing existed, so its "
+                 "voice track was not kept. Run it again to edit it.")
+    if not body.segments:
+        raise HTTPException(400, "Send at least one line to change.")
+
+    edits = [redub.LineEdit(id=e.id, target_text=e.target_text,
+                            start=e.start, end=e.end) for e in body.segments]
+    try:
+        new_segments, changed = redub.apply_edits(
+            job.result.segments, edits, job.result.duration)
+    except redub.EditError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    if not changed:
+        raise HTTPException(400, "None of the lines differ from the current "
+                                 "dub.")
+    manager.redub(job, new_segments, changed)
+    return {"job": job.model_dump(mode="json"), "changed": sorted(changed)}
 
 
 @app.get("/api/jobs/{job_id}/events")

@@ -29,6 +29,7 @@ import { readLink } from '../components/LinkInput'
 import { EASE_ENTRANCE, EASE_EXIT, rise, springLayout, stagger } from '../lib/motion'
 import { useHealth, useLanguages } from '../lib/queries'
 import { mediaUrl, pipelineDown } from '../lib/api'
+import { TOOL_INFO, usePlan } from '../lib/plan'
 import WorkThumb from '../components/WorkThumb'
 import { useAuth } from '../lib/auth'
 import { relTime, useWorks, workPair, workTitle, type Work } from '../lib/works'
@@ -76,9 +77,7 @@ export default function Home() {
   // carries into whichever door you go through.
   const [target, setTarget] = useState('uz')
   const [allLangs, setAllLangs] = useState(false)
-  // Phones show the pipeline as one status line and the feedback form behind a
-  // button; these open the full versions.
-  const [pipelineOpen, setPipelineOpen] = useState(false)
+  // Phones show the feedback form behind a button; this opens the full version.
   const [feedbackOpen, setFeedbackOpen] = useState(false)
 
   const firstName = user?.name?.trim().split(/\s+/)[0]
@@ -140,7 +139,6 @@ export default function Home() {
       <AtAGlance
         works={works}
         languages={catalog}
-        pipeline={dubbingDown ? 'down' : health.data ? 'up' : 'checking'}
       />
 
       {/* ── C · What you have dubbed, and into what ─────────────────────────
@@ -282,73 +280,6 @@ export default function Home() {
               </div>
             )}
           </div>
-        )}
-      </Reveal>
-
-      {/* ── G · Pipeline ──────────────────────────────────────────────────── */}
-      <Reveal className="space-y-3 pt-6 sm:space-y-4">
-        <SectionHead
-          title="Pipeline"
-          sub="The five stages every dub runs through, and which engine is loaded right now."
-          subDesktopOnly
-        />
-        {/* An empty `stages` means the API could not reach the pipeline, so it
-            has to render as the failure it is — an empty grid would read as a
-            pipeline with nothing in it. */}
-        {/* Phones get one status line; the stage cards open on tap. */}
-        {!dubbingDown && health.data && (
-          <button
-            type="button"
-            onClick={() => setPipelineOpen((v) => !v)}
-            aria-expanded={pipelineOpen}
-            className="card focusable flex w-full flex-row items-center gap-3 rounded-full p-4 text-left sm:hidden"
-          >
-            <span className="h-2 w-2 shrink-0 rounded-full bg-success" aria-hidden />
-            <span className="min-w-0 flex-1 text-sm text-primary">
-              {health.data.stages.filter((st) => st.mode === 'real').length} of{' '}
-              {health.data.stages.length} stages live
-            </span>
-            <span className="text-sm text-muted">{pipelineOpen ? 'Hide' : 'Details'}</span>
-          </button>
-        )}
-        {dubbingDown ? (
-          <FailedCard
-            title="Dubbing service unreachable"
-            body="Nothing can be dubbed until it comes back. Sign-in, plans and your library are unaffected."
-            onRetry={() => void health.refetch()}
-          />
-        ) : !health.data ? (
-          <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}>
-            {Array.from({ length: 5 }).map((_, i) => (
-              <div key={i} className="card shimmer h-24 bg-sunken" />
-            ))}
-          </div>
-        ) : (
-          <motion.div
-            variants={stagger}
-            initial="hidden"
-            whileInView="show"
-            viewport={{ once: true, amount: 0.05 }}
-            className={`gap-3 ${pipelineOpen ? 'grid' : 'hidden sm:grid'}`}
-            style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))' }}
-          >
-            {health.data.stages.map((s) => (
-              <motion.div key={s.key} variants={rise} className="card p-5">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="truncate text-sm font-medium text-primary">{s.label}</span>
-                  <span className="chip inline-flex shrink-0 items-center gap-1.5 px-2.5 py-0.5 text-[11px] text-primary">
-                    <span
-                      aria-hidden
-                      className={`h-1.5 w-1.5 rounded-full ${s.mode === 'real' ? 'bg-success' : 'bg-warn'}`}
-                    />
-                    {s.mode === 'real' ? 'Live' : 'Sim'}
-                  </span>
-                </div>
-                <div className="mt-1 text-[12px] text-secondary">{s.engine}</div>
-                {s.detail && <div className="mt-1 line-clamp-2 text-[11px] text-muted">{s.detail}</div>}
-              </motion.div>
-            ))}
-          </motion.div>
         )}
       </Reveal>
 
@@ -592,11 +523,9 @@ function BalanceCard({ works }: { works: Work[] }) {
 function AtAGlance({
   works,
   languages,
-  pipeline,
 }: {
   works: Work[]
   languages: Language[]
-  pipeline: 'up' | 'down' | 'checking'
 }) {
   const navigate = useNavigate()
   const { balance, loading } = useWallet()
@@ -606,11 +535,9 @@ function AtAGlance({
     .filter((l): l is Language => !!l)
     .slice(0, 4)
 
-  const pipe = {
-    up: { dot: 'bg-success', chip: 'Live', value: 'Online' },
-    down: { dot: 'bg-danger', chip: 'Down', value: 'Offline' },
-    checking: { dot: 'bg-[rgb(var(--c-text-muted))]', chip: 'Checking', value: '…' },
-  }[pipeline]
+  const plan = usePlan()
+  // What this plan includes, beyond dubbing and text to speech.
+  const extras = (['subtitles', 'speechEditor', 'videoEditor'] as const).filter(plan.has)
 
   return (
     <>
@@ -671,14 +598,19 @@ function AtAGlance({
         />
         <StatCard
           icon={ICON.pulse}
-          chip={
-            <>
-              <span aria-hidden className={`h-2 w-2 rounded-full ${pipe.dot}`} />
-              {pipe.chip}
-            </>
+          chip={<>{plan.name}</>}
+          label="Your plan"
+          value={
+            <span className="font-sans text-[32px] font-medium tracking-[-0.02em]">
+              {extras.length ? `+${extras.length} tools` : 'Dubbing + TTS'}
+            </span>
           }
-          label="Pipeline"
-          value={<span className="font-sans text-[32px] font-medium tracking-[-0.02em]">{pipe.value}</span>}
+          onClick={() => navigate(extras.length < 3 ? '/plans' : '/editor')}
+          note={
+            extras.length
+              ? extras.map((t) => TOOL_INFO[t].name).join(' · ')
+              : 'Upgrade for Subtitles+ and the editors →'
+          }
         />
       </motion.div>
     </>

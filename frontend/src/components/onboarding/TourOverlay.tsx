@@ -306,7 +306,7 @@ export default function TourOverlay({
             animate={{ x: pos.x, y: pos.y }}
             transition={{ type: 'spring', stiffness: 320, damping: 34 }}
             style={{ width: cardW, position: 'absolute', left: 0, top: 0 }}
-            className="rounded-card border border-subtle bg-raised p-5 shadow-[var(--shadow-lg)]"
+            className="rounded-card border border-subtle bg-raised p-5 shadow-(--shadow-lg)"
           >
             {caret && (
               <span

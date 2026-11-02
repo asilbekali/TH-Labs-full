@@ -16,6 +16,7 @@ import LogoMark from '../components/brand/LogoMark'
 import { useIsDesktop, useMediaQuery } from '../hooks/useMediaQuery'
 import { springLayout } from '../lib/motion'
 import { mediaUrl } from '../lib/api'
+import { SQUARED } from '../lib/shape'
 import WorkThumb from '../components/WorkThumb'
 import { usePointerSpotlight } from '../hooks/usePointerSpotlight'
 import {
@@ -668,7 +669,7 @@ function Kebab({
               exit={{ opacity: 0, scale: 0.9, y: -4 }}
               transition={{ type: 'spring', stiffness: 420, damping: 30 }}
               style={{ transformOrigin: align === 'right' ? 'top right' : 'top left' }}
-              className={`absolute z-50 mt-1 w-48 overflow-hidden rounded-control border border-subtle bg-raised py-1 shadow-[var(--shadow-lg)] ${
+              className={`absolute z-50 mt-1 w-48 overflow-hidden rounded-[12px] border border-subtle bg-raised py-1 shadow-[var(--shadow-lg)] ${
                 align === 'right' ? 'right-0' : 'left-0'
               }`}
             >
@@ -764,6 +765,8 @@ function DetailPanel({ work, isSheet, onClose }: { work: Work; isSheet: boolean;
       <motion.aside
         {...panelMotion}
         transition={{ type: 'spring', stiffness: 320, damping: 34 }}
+        // No pill or capsule shapes in the drawer — see lib/shape.ts.
+        style={SQUARED}
         className={
           isSheet
             ? 'absolute inset-x-0 bottom-0 flex max-h-[90vh] min-h-[50vh] flex-col rounded-t-[var(--radius-card)] border-t border-subtle bg-raised'
@@ -772,7 +775,7 @@ function DetailPanel({ work, isSheet, onClose }: { work: Work; isSheet: boolean;
       >
         {isSheet && (
           <div className="grid place-items-center pt-2.5">
-            <span className="h-1.5 w-10 rounded-full bg-strong" />
+            <span className="h-1.5 w-10 rounded-[2px] bg-strong" />
           </div>
         )}
         {/* Title row */}
@@ -783,7 +786,7 @@ function DetailPanel({ work, isSheet, onClose }: { work: Work; isSheet: boolean;
               {work.filename ?? 'built-in sample clip'} · {workPair(work)} · {fmtDur(duration(work))}
             </p>
           </div>
-          <button onClick={onClose} aria-label="Close" className="focusable grid h-9 w-9 shrink-0 place-items-center rounded-full text-muted hover:bg-sunken hover:text-primary">
+          <button onClick={onClose} aria-label="Close" className="focusable grid h-9 w-9 shrink-0 place-items-center rounded-[10px] text-muted hover:bg-sunken hover:text-primary">
             <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M6 6l12 12M18 6 6 18" /></svg>
           </button>
         </div>
@@ -854,7 +857,7 @@ function DetailPanel({ work, isSheet, onClose }: { work: Work; isSheet: boolean;
                       className={`relative block w-full rounded-lg py-1.5 pl-3 pr-2 text-left transition-colors hover:bg-sunken ${active ? 'bg-brand/[0.08]' : ''}`}
                     >
                       <motion.span
-                        className="absolute left-0 top-1.5 w-[3px] rounded-full bg-brand"
+                        className="absolute left-0 top-1.5 w-[3px] rounded-[1px] bg-brand"
                         initial={false}
                         animate={{ height: active ? '80%' : '0%', opacity: active ? 1 : 0 }}
                         transition={{ duration: 0.3 }}

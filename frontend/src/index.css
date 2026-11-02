@@ -1200,6 +1200,12 @@ body[data-shell='fixed'] {
   --sheen-tint: rgb(255 255 255 / 0.55);
   --spot-tint: rgb(217 134 79 / 0.08);
   --run-halo: 0 0 0 1px rgb(168 85 42 / 0.4), 0 18px 44px -20px rgb(217 134 79 / 0.45);
+
+  /* No violet in light mode. The two brand gradients were only ever set in
+     the original Violet block, so light mode inherited them; these are the
+     same copper as --c-brand-500 / -400, deepest stop first. */
+  --grad-brand: linear-gradient(120deg, rgb(150 74 36) 0%, rgb(217 134 79) 100%);
+  --grad-brand-deep: linear-gradient(120deg, rgb(122 58 26) 0%, rgb(168 85 42) 100%);
 }
 
 /* The page light: the pools the glass bends. Each theme supplies its own

@@ -23,9 +23,10 @@ import LinkInput, { readLink } from "../components/LinkInput";
 import LanguageSelect from "../components/LanguageSelect";
 import LangIcon from "../components/LangIcon";
 import OptionToggle from "../components/OptionToggle";
-import StageTimeline from "../components/StageTimeline";
 import VideoCompare from "../components/VideoCompare";
 import SegmentTable from "../components/SegmentTable";
+import IssuesPanel from "../components/IssuesPanel";
+import { PLAN_LABEL, TOOL_PLAN, usePlan } from "../lib/plan";
 import ResultMetrics from "../components/ResultMetrics";
 import AnimatedNumber from "../components/AnimatedNumber";
 import ScrollColumn from "../components/layout/ScrollColumn";
@@ -41,8 +42,6 @@ import VoicePicker, {
   type VoiceMode,
 } from "../components/studio/VoicePicker";
 import ThinkingOrbs from "../components/ThinkingOrbs";
-import PipelineFlow from "../components/studio/PipelineFlow";
-import type { FlowNode } from "../components/studio/PipelineFlow";
 import TourOverlay from "../components/onboarding/TourOverlay";
 import type { TourStep } from "../components/onboarding/TourOverlay";
 import { useIsDesktop } from "../hooks/useMediaQuery";
@@ -158,6 +157,9 @@ async function probeDurationSeconds(file: File | null): Promise<number> {
 
 export default function Studio() {
   const { balance, refresh: refreshWallet } = useWallet();
+  const plan = usePlan();
+  // Subtitles+ is Pro and up; the server refuses it below that too.
+  const canSubtitles = plan.loading || plan.has("subtitles");
   const { works, addWork, updateWork } = useWorks();
   const { user, ready: authReady } = useAuth();
 
@@ -253,7 +255,10 @@ export default function Studio() {
     if (!features.lipSync && lipSync) setLipSync(false);
     if (!features.keepBackground && keepBackground) setKeepBackground(false);
     if (!features.referenceVoice && reference) setReference(null);
+    if (!canSubtitles && subtitles) setSubtitles(false);
   }, [
+    canSubtitles,
+    subtitles,
     features,
     quality,
     targetLang,
@@ -364,21 +369,6 @@ export default function Studio() {
     return Math.round(
       (active.reduce((a, s) => a + s.progress, 0) / active.length) * 100,
     );
-  }, [job]);
-
-  // The stage the pipeline is on right now — what the orbs are thinking about.
-  const activeStage = useMemo(
-    () => job?.stages.find((s) => s.status === "running")?.label ?? null,
-    [job],
-  );
-
-  const stageProgress = useMemo(() => {
-    if (!job) return { done: 0, total: 0 };
-    const active = job.stages.filter((s) => s.status !== "skipped");
-    return {
-      done: active.filter((s) => s.status === "done").length,
-      total: active.length,
-    };
   }, [job]);
 
   // Mirror the live job into the works library. The record is created the
@@ -724,18 +714,55 @@ export default function Studio() {
     [],
   );
 
-  // Hand the user to the next decision the moment they have a source, once per
-  // upload — never yanking them somewhere else if they opened a step on purpose.
-  const advancedRef = useRef(false);
+  // Two phases, the way a video editor works: first you pick the video, then
+  // the picker goes away and the screen is the clip plus its tools. Back
+  // returns to the picker without losing the clip, so "Continue" picks up
+  // where you were; choosing a different clip moves on again by itself.
+  //
+  // Keyed on WHICH source, not on whether there is one — otherwise Back would
+  // bounce straight forward again, because the old clip is still chosen.
+  const [pickingSource, setPickingSource] = useState(true);
+  const sourceKey = file
+    ? `file:${file.name}:${file.size}:${file.lastModified}`
+    : linkUrl
+      ? `link:${linkUrl}`
+      : isSampleRun
+        ? "sample"
+        : null;
+  const goToTools = useCallback(() => {
+    setPickingSource(false);
+    setOpenStep((prev) => (prev === "source" || prev === null ? "languages" : prev));
+  }, []);
+  // Back: the picker, opened, with the chosen clip still in it.
+  const backToSource = useCallback(() => {
+    setPickingSource(true);
+    setOpenStep("source");
+  }, []);
   useEffect(() => {
-    if (!sourceReady) {
-      advancedRef.current = false;
+    if (!sourceKey) {
+      setPickingSource(true);
       return;
     }
-    if (advancedRef.current) return;
-    advancedRef.current = true;
-    setOpenStep((prev) => (prev === "source" ? "languages" : prev));
-  }, [sourceReady]);
+    // A pasted link moves on after a beat, so a link being typed out is not
+    // yanked away mid-word the moment it first parses.
+    const t = window.setTimeout(goToTools, sourceKey.startsWith("link:") ? 700 : 0);
+    return () => window.clearTimeout(t);
+  }, [sourceKey, goToTools]);
+  // While a dub runs or is on screen, the clip is fixed.
+  const inTools = !pickingSource || running || completed || failed;
+  const toolStep: StepId =
+    openStep && openStep !== "source" ? openStep : "languages";
+  // A local preview of the chosen upload for the clip card.
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!file || !file.type.startsWith("video")) {
+      setPreviewUrl(null);
+      return;
+    }
+    const url = URL.createObjectURL(file);
+    setPreviewUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [file]);
 
   const langName = useCallback(
     (code: string) =>
@@ -875,48 +902,6 @@ export default function Studio() {
     [],
   );
 
-  // ── Preview / live flow nodes ────────────────────────────────────────────
-  const previewNodes: FlowNode[] = useMemo(
-    () => [
-      { key: "asr", label: "Transcribe", sub: "Whisper", state: "idle" },
-      {
-        key: "nmt",
-        label: "Translate",
-        sub: targetLang.toUpperCase(),
-        state: "idle",
-      },
-      {
-        key: "tts",
-        label: "Clone voice",
-        sub: voiceClone ? "same speaker" : "off",
-        state: voiceClone ? "idle" : "skipped",
-      },
-      {
-        key: "lipsync",
-        label: "Sync lips",
-        sub: lipSync ? "on camera" : "off",
-        state: lipSync ? "idle" : "skipped",
-      },
-      {
-        key: "separation",
-        label: "Mix",
-        sub: keepBackground ? "keep music" : "speech only",
-        state: keepBackground ? "idle" : "skipped",
-      },
-    ],
-    [targetLang, voiceClone, lipSync, keepBackground],
-  );
-
-  const liveNodes: FlowNode[] = useMemo(
-    () =>
-      (job?.stages ?? []).map((s) => ({
-        key: s.key,
-        label: s.label,
-        state: s.status === "pending" ? "idle" : s.status,
-      })),
-    [job],
-  );
-
   const stepsDone = [
     sourceReady,
     !!touched.languages,
@@ -939,10 +924,25 @@ export default function Studio() {
   // ── Left column: header, step deck, run bar ──────────────────────────────
   const deckHeader = (
     <div className="flex items-end justify-between gap-3 px-1">
-      <div className="min-w-0">
+      {inTools && (
+        <motion.button
+          type="button"
+          onClick={backToSource}
+          disabled={running}
+          whileTap={tapScale}
+          aria-label="Back to choosing the video"
+          title="Back to choosing the video"
+          className="focusable mb-0.5 grid h-9 w-9 shrink-0 place-items-center self-center rounded-full border border-subtle bg-sunken text-primary transition-colors hover:border-strong disabled:opacity-40"
+        >
+          <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            <path d="M15 18l-6-6 6-6" />
+          </svg>
+        </motion.button>
+      )}
+      <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-2">
           <span className="text-[15px] font-semibold tracking-tight text-primary">
-            Set up your dub
+            {inTools ? "Edit your dub" : "Set up your dub"}
           </span>
           <span className="text-[12px] text-muted">
             <AnimatedNumber value={stepsDone} duration={350} />
@@ -999,8 +999,7 @@ export default function Studio() {
     </div>
   );
 
-  const stepDeck = (
-    <>
+  const sourceStep = (
       <StepCard
         n="01"
         title="Source"
@@ -1009,8 +1008,8 @@ export default function Studio() {
         open={openStep === "source"}
         onToggle={() => toggleStep("source")}
         tour="tour-source"
-        onNext={() => setOpenStep("languages")}
-        nextLabel="Next: languages"
+        onNext={goToTools}
+        nextLabel="Continue to the tools →"
         nextDisabled={!sourceReady}
       >
         {/* Two ways in, as tabs rather than two always-visible fields: only one
@@ -1081,7 +1080,9 @@ export default function Studio() {
           <SwitchTrack on={isSampleRun} />
         </button>
       </StepCard>
+  );
 
+  const languagesStep = (
       <StepCard
         n="02"
         title="Languages"
@@ -1189,7 +1190,9 @@ export default function Studio() {
           </motion.div>
         )}
       </StepCard>
+  );
 
+  const optionsStep = (
       <StepCard
         n="03"
         title="Voice & mix"
@@ -1274,19 +1277,31 @@ export default function Studio() {
           icon={<path d="M3 12c3-3 15-3 18 0-3 4-15 4-18 0zM7 12h10" />}
         />
         <OptionToggle
-          checked={subtitles}
+          checked={canSubtitles && subtitles}
+          disabled={!canSubtitles}
+          badge={
+            canSubtitles ? undefined : (
+              <PlanLockBadge tier={PLAN_LABEL[TOOL_PLAN.subtitles]} />
+            )
+          }
           onChange={(v) => {
             setSubtitles(v);
             markTouched("options");
           }}
-          title="Subtitles (bonus)"
-          description="Add subtitles in the dubbed language to the video, plus an .srt file to download. Free."
+          title="Subtitles+"
+          description={
+            canSubtitles
+              ? "Subtitles in the dubbed language, burned into the video, plus an .srt file to download."
+              : "Subtitles+ is part of the Pro plan. Upgrade to burn subtitles into the dub and download an .srt."
+          }
           icon={
             <path d="M3 5h18v14H3zM7 13h4M13 13h4M7 16h10" />
           }
         />
       </StepCard>
+  );
 
+  const qualityStep = (
       <StepCard
         n="04"
         title="Quality"
@@ -1358,7 +1373,144 @@ export default function Studio() {
           </motion.p>
         </AnimatePresence>
       </StepCard>
-    </>
+  );
+
+  const TOOLS: { id: StepId; label: string; icon: ReactNode; step: ReactNode }[] = [
+    {
+      id: "languages",
+      label: "Languages",
+      icon: <path d="M3 5h12M9 3v2m1.5 9.5L7 11m0 0c1.8-1.8 3-4 3.5-6M7 11 3.5 14.5M13 21l4-9 4 9m-7-2h6" />,
+      step: languagesStep,
+    },
+    {
+      id: "options",
+      label: "Voice & mix",
+      icon: (
+        <>
+          <rect x="9" y="2" width="6" height="12" rx="3" />
+          <path d="M5 10a7 7 0 0 0 14 0M12 17v5" />
+        </>
+      ),
+      step: optionsStep,
+    },
+    {
+      id: "quality",
+      label: "Quality",
+      icon: <path d="M12 3l2.6 5.3 5.9.9-4.3 4.1 1 5.8L12 16.4 6.8 19.1l1-5.8L3.5 9.2l5.9-.9z" />,
+      step: qualityStep,
+    },
+  ];
+
+  // The clip, the way an editor shows it: what you are working on, at the top.
+  const clipCard = (
+    <div className="card flex items-center gap-3 p-2.5">
+      <div className="relative grid h-14 w-24 shrink-0 place-items-center overflow-hidden rounded-[10px] bg-black">
+        {previewUrl ? (
+          <video src={`${previewUrl}#t=0.5`} muted playsInline preload="metadata" className="h-full w-full object-cover" />
+        ) : (
+          <svg viewBox="0 0 24 24" className="h-6 w-6 text-white/60" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            {linkUrl ? (
+              <path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7" />
+            ) : (
+              <path d="M5 4l14 8-14 8z" />
+            )}
+          </svg>
+        )}
+        {sourceSeconds != null && (
+          <span className="absolute bottom-1 right-1 rounded bg-black/70 px-1 font-mono text-[10px] text-white">
+            {formatSeconds(sourceSeconds)}
+          </span>
+        )}
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-medium text-primary" title={sourceSummary}>
+          {file ? file.name : linkUrl ? safeHost(linkUrl) : "Built-in sample clip"}
+        </p>
+        <p className="truncate font-mono text-[11px] text-muted">
+          {file
+            ? `${(file.size / 1_048_576).toFixed(1)} MB`
+            : linkUrl
+              ? "Pasted link"
+              : "25 s demo"}{" "}
+          · {cost} tokens
+        </p>
+      </div>
+      {!running && (
+        <button
+          type="button"
+          onClick={backToSource}
+          className="btn-ghost focusable h-8 shrink-0 px-3 text-[12px]"
+        >
+          Replace
+        </button>
+      )}
+    </div>
+  );
+
+  // The tool bar: one tap switches the panel under it.
+  const toolBar = (
+    <div role="tablist" aria-label="Tools" className="grid grid-cols-3 gap-1.5 rounded-[16px] border border-subtle bg-sunken p-1.5">
+      {TOOLS.map((t) => {
+        const active = toolStep === t.id;
+        return (
+          <button
+            key={t.id}
+            type="button"
+            role="tab"
+            aria-selected={active}
+            onClick={() => setOpenStep(t.id)}
+            className={`focusable relative flex flex-col items-center gap-1 rounded-[11px] px-2 py-2 text-[11px] transition-colors ${
+              active ? "text-primary" : "text-muted hover:text-secondary"
+            }`}
+          >
+            {active && (
+              <motion.span
+                layoutId="tool-active"
+                transition={{ type: "spring", stiffness: 380, damping: 32 }}
+                className="absolute inset-0 rounded-[11px] bg-surface shadow-sm dark:bg-raised"
+              />
+            )}
+            <svg viewBox="0 0 24 24" className="relative h-5 w-5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+              {t.icon}
+            </svg>
+            <span className="relative">{t.label}</span>
+            {touched[t.id] && (
+              <span aria-hidden className="absolute right-2 top-2 h-1.5 w-1.5 rounded-full bg-brand" />
+            )}
+          </button>
+        );
+      })}
+    </div>
+  );
+
+  const stepDeck = (
+    <AnimatePresence mode="wait" initial={false}>
+      {inTools ? (
+        <motion.div
+          key="tools"
+          initial={{ opacity: 0, x: 24 }}
+          animate={{ opacity: 1, x: 0 }}
+          exit={{ opacity: 0, x: 24 }}
+          transition={{ duration: 0.22, ease: EASE_ENTRANCE }}
+          className="space-y-2.5"
+        >
+          {clipCard}
+          {toolBar}
+          {TOOLS.find((t) => t.id === toolStep)?.step}
+        </motion.div>
+      ) : (
+        <motion.div
+          key="source"
+          initial={{ opacity: 0, x: -24 }}
+          animate={{ opacity: 1, x: 0 }}
+          exit={{ opacity: 0, x: -24 }}
+          transition={{ duration: 0.22, ease: EASE_ENTRANCE }}
+          className="space-y-2.5"
+        >
+          {sourceStep}
+        </motion.div>
+      )}
+    </AnimatePresence>
   );
 
   // ── The run card ─────────────────────────────────────────────────────────
@@ -1460,43 +1612,12 @@ export default function Studio() {
         )}
       </AnimatePresence>
 
-      {/* Three honest states: unreachable, running simulated stages, or live.
-          An unreachable API used to fall back to a fabricated "simulation"
-          status, which looked identical to a real simulated pipeline. */}
-      {(health || healthFailed) && (
+      {/* Only said when it matters: the user cannot dub right now. Which
+          engines are loaded is ours to know, not theirs. */}
+      {healthFailed && (
         <p className="above flex items-center justify-center gap-1.5 text-center font-mono text-[11px] on-deep-dim">
-          <span className="relative flex h-1.5 w-1.5">
-            {!healthFailed && (
-              <motion.span
-                aria-hidden
-                className={`absolute inset-0 rounded-full ${
-                  health!.stages.some((s) => s.mode === "real")
-                    ? "bg-success"
-                    : "bg-warn"
-                }`}
-                animate={{ scale: [1, 2.6, 1], opacity: [0.6, 0, 0.6] }}
-                transition={{
-                  duration: 2.4,
-                  repeat: Infinity,
-                  ease: "easeOut",
-                }}
-              />
-            )}
-            <span
-              className={`relative h-1.5 w-1.5 rounded-full ${
-                healthFailed
-                  ? "bg-danger"
-                  : health!.stages.some((s) => s.mode === "real")
-                    ? "bg-success"
-                    : "bg-warn"
-              }`}
-            />
-          </span>
-          {healthFailed
-            ? "Dubbing service unreachable"
-            : health!.stages.some((s) => s.mode === "real")
-              ? "Pipeline online"
-              : "Simulation mode — no models loaded"}
+          <span className="relative h-1.5 w-1.5 rounded-full bg-danger" />
+          Dubbing is temporarily unavailable — try again in a few minutes
         </p>
       )}
     </div>
@@ -1534,13 +1655,13 @@ export default function Studio() {
         }
       />
       <StatTile
-        label="Pipeline"
+        label="This dub"
         tint={
           failed ? "warn" : running ? "brand" : completed ? "success" : "magenta"
         }
         value={
           running
-            ? `${stageProgress.done}/${stageProgress.total} stages`
+            ? `${overall}%`
             : completed
               ? "Complete"
               : failed
@@ -1549,7 +1670,7 @@ export default function Studio() {
         }
         foot={
           running
-            ? `${overall}% · ${fmtElapsed(elapsed)}`
+            ? fmtElapsed(elapsed)
             : `${quality} · ${cost} cr`
         }
         icon={<Equalizer idle={!running} className="h-3.5 text-current" />}
@@ -1720,10 +1841,6 @@ export default function Studio() {
                   <span className="ml-auto truncate font-mono text-[11px] text-muted">
                     {sourceSummary}
                   </span>
-                </div>
-
-                <div className="mt-6">
-                  <PipelineFlow nodes={previewNodes} />
                 </div>
 
                 <div className="rule-signature mt-5" />
@@ -2022,30 +2139,25 @@ export default function Studio() {
                       <ThinkingOrbs
                         size={64}
                         speed={11}
-                        label={
-                          activeStage
-                            ? `Working on ${activeStage}`
-                            : "Pipeline working"
-                        }
+                        label="Dubbing your video"
                       />
                       <div className="min-w-0 flex-1">
                         <AnimatePresence mode="wait" initial={false}>
                           <motion.div
-                            key={activeStage ?? "queued"}
+                            key={overall > 0 ? "working" : "queued"}
                             initial={{ opacity: 0, y: 6 }}
                             animate={{ opacity: 1, y: 0 }}
                             exit={{ opacity: 0, y: -6 }}
                             transition={{ duration: 0.22 }}
                             className="truncate text-sm font-medium text-primary"
                           >
-                            {activeStage ?? "Queued — waiting for a worker"}
+                            {overall > 0
+                              ? "Dubbing your video…"
+                              : "Queued — starting shortly"}
                           </motion.div>
                         </AnimatePresence>
                         <div className="mt-1 font-mono text-[11px] text-muted">
-                          {overall}% · stage{" "}
-                          {Math.min(stageProgress.done + 1, stageProgress.total)}{" "}
-                          of{" "}
-                          {stageProgress.total} · {fmtElapsed(elapsed)}
+                          {overall}% · {fmtElapsed(elapsed)}
                         </div>
                       </div>
                     </div>
@@ -2053,15 +2165,8 @@ export default function Studio() {
                 )}
               </AnimatePresence>
 
-              <div className="mt-5">
-                <PipelineFlow nodes={liveNodes} />
-              </div>
-
               <div className="mt-5 flex items-center justify-between border-t border-subtle pt-4 font-mono text-[11px] text-muted">
-                <span>
-                  {stageProgress.done}/{stageProgress.total} stages · {cost}{" "}
-                  tokens
-                </span>
+                <span>{cost} tokens</span>
                 <span>
                   <span className="text-primary">{fmtElapsed(elapsed)}</span>{" "}
                   elapsed
@@ -2126,6 +2231,27 @@ export default function Studio() {
                     ↓ Download subtitles (.srt)
                   </motion.a>
                 )}
+                {job.result.issues && (
+                  <motion.div variants={rise}>
+                    <IssuesPanel
+                      issues={job.result.issues}
+                      segments={job.result.segments}
+                      canEditLines={plan.isMax}
+                      editorHref={`/editor/${job.id}`}
+                      onRetry={() => void start()}
+                    />
+                  </motion.div>
+                )}
+                {plan.isMax && (
+                  <motion.div variants={rise}>
+                    <Link
+                      to={`/editor/${job.id}`}
+                      className="btn-ghost focusable inline-flex w-fit px-5 py-2.5 font-mono text-sm"
+                    >
+                      ✎ Open in the speech editor
+                    </Link>
+                  </motion.div>
+                )}
                 <motion.div variants={rise}>
                   <ResultMetrics m={job.result.metrics} />
                 </motion.div>
@@ -2138,13 +2264,6 @@ export default function Studio() {
                 </motion.div>
               </motion.div>
             )}
-
-            <div className="card p-5">
-              <SectionMark>Pipeline stages</SectionMark>
-              <div className="mt-3">
-                <StageTimeline stages={job.stages} />
-              </div>
-            </div>
           </motion.div>
         )}
       </AnimatePresence>
