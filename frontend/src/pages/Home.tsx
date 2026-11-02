@@ -508,7 +508,7 @@ function Composer({
           type="button"
           onClick={go}
           disabled={!ready}
-          className="btn-primary focusable ml-auto inline-flex h-12 items-center gap-2 px-6 text-[15px] lg:h-14 lg:px-7 lg:text-base"
+          className="btn-primary focusable inline-flex mt-3 h-12 w-full items-center justify-center gap-2 px-6 sm:ml-auto sm:mt-0 sm:w-auto text-[15px] lg:h-14 lg:px-7 lg:text-base"
         >
           {mode === 'upload' ? 'Choose a file' : 'Start dubbing'}
           <svg viewBox="0 0 24 24" aria-hidden className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -1130,7 +1130,7 @@ function TargetPicker({
   }, [q, languages])
 
   return (
-    <div ref={ref} className="relative">
+    <div ref={ref} className="sm:relative">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
@@ -1152,7 +1152,7 @@ function TargetPicker({
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 6 }}
             transition={{ duration: 0.13 }}
-            className="absolute bottom-[calc(100%+0.5rem)] left-0 z-50 w-72 overflow-hidden rounded-[24px] border border-[var(--card-edge)] bg-raised p-1.5 shadow-[var(--shadow-lg)]"
+            className="absolute bottom-[calc(100%+0.5rem)] left-0 right-0 z-50 overflow-hidden sm:right-auto sm:w-72 rounded-[24px] border border-[var(--card-edge)] bg-raised p-1.5 shadow-[var(--shadow-lg)]"
           >
             <input
               value={q}

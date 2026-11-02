@@ -2152,13 +2152,13 @@ export default function Studio() {
   // flow, so the deep surface moves there and the deck keeps the full width.
   return (
     <Page>
-      <div className="space-y-4 pb-36">
+      <div className="space-y-4 pb-52">
         {deckHeader}
         <div className="space-y-2.5">{stepDeck}</div>
         {rightContent}
         <div
           data-tour="tour-run"
-          className="fixed inset-x-3 bottom-[calc(env(safe-area-inset-bottom)+3.75rem)] z-30"
+          className="fixed inset-x-3 bottom-[calc(env(safe-area-inset-bottom)+6.5rem)] z-30"
         >
           <div className="deep-card grain flex items-center gap-3 px-3.5 py-2.5">
             {running && <span className="beam" aria-hidden />}

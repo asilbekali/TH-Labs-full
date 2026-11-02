@@ -4,7 +4,6 @@ import { motion } from "framer-motion";
 import Page from "../components/Page";
 import SpotlightCard from "../components/SpotlightCard";
 import MagneticButton from "../components/MagneticButton";
-import { MarkDivider } from "../components/brand/LogoMark";
 import { rise, stagger } from "../lib/motion";
 import { useAuth } from "../lib/auth";
 import { useWallet } from "../lib/wallet";
@@ -216,7 +215,6 @@ export default function Account() {
 function SectionKicker({ children }: { children: React.ReactNode }) {
   return (
     <span className="inline-flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.18em] text-brand">
-      <MarkDivider className="h-3 w-8 text-muted" />
       {children}
     </span>
   );

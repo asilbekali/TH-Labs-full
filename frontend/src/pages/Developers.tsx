@@ -17,24 +17,14 @@
 // has no `phone` column, and the API runs `forbidNonWhitelisted`, so inventing
 // a field here would fail the request outright.
 import { useState } from 'react'
-import { motion, useReducedMotion } from 'framer-motion'
-import Page from '../components/Page'
-import { EASE_ENTRANCE } from '../lib/motion'
 import { sendFeedback } from '../lib/feedback-api'
 import { useAuth } from '../lib/auth'
 
 export default function Developers() {
   return (
-    <Page className="mx-auto max-w-2xl space-y-8 py-6">
-      <motion.section
-        initial={{ opacity: 0, y: 14 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.45, ease: EASE_ENTRANCE }}
-        className="text-center"
-      >
-        <BuildingAnimation />
-
-        <h1 className="mt-7 text-[1.9rem] font-semibold tracking-tight text-primary">
+    <div className="mx-auto max-w-2xl space-y-8 py-6">
+      <section className="text-center">
+        <h1 className="text-[1.9rem] font-semibold tracking-tight text-primary">
           We're still building this
         </h1>
         <p className="mx-auto mt-3 max-w-lg text-[15px] leading-relaxed text-secondary">
@@ -47,59 +37,9 @@ export default function Developers() {
           Leave your details and we'll come to you the day it's callable — by phone or
           by email, whichever reaches you.
         </p>
-      </motion.section>
+      </section>
 
       <ContactCard />
-    </Page>
-  )
-}
-
-/* ── The animation ──────────────────────────────────────────────────────── */
-
-/**
- * Three bars rising and falling under a fixed rule — a thing being built,
- * without a percentage attached to it.
- *
- * Deliberately not a progress bar: a progress bar implies a number somebody
- * measured, and "when will the API ship" is exactly the number we do not have.
- * Under `prefers-reduced-motion` it parks as three still bars, which reads the
- * same and moves not at all.
- */
-function BuildingAnimation() {
-  const reduce = useReducedMotion()
-  const BARS = [
-    { h: 34, delay: 0 },
-    { h: 54, delay: 0.22 },
-    { h: 42, delay: 0.44 },
-  ]
-
-  return (
-    <div
-      aria-hidden
-      className="mx-auto grid h-28 w-28 place-items-end rounded-2xl border border-subtle bg-sunken/60 p-4"
-    >
-      <div className="flex w-full items-end justify-center gap-2.5">
-        {BARS.map((bar, i) => (
-          <motion.span
-            key={i}
-            className="w-3.5 rounded-t-md bg-[rgb(var(--c-text-primary))]"
-            style={{ height: bar.h }}
-            initial={{ scaleY: 0.35, originY: 1 }}
-            animate={reduce ? { scaleY: 0.7 } : { scaleY: [0.35, 1, 0.35] }}
-            transition={
-              reduce
-                ? { duration: 0 }
-                : {
-                    duration: 1.8,
-                    repeat: Infinity,
-                    ease: 'easeInOut',
-                    delay: bar.delay,
-                  }
-            }
-          />
-        ))}
-      </div>
-      <span className="mt-2 block h-px w-full bg-strong" />
     </div>
   )
 }
