@@ -1,10 +1,9 @@
 // The purchase receipt email — plans, renewals and credit packs.
 //
-// Deliberately not the 8-bit shell the welcome emails use: a receipt is the
-// one email people forward to accounting, so it reads like a quiet, editorial
-// product email. Warm paper background, one white card, a serif headline, an
-// itemised table, a single dark button, and the brand purple used only as an
-// accent.
+// Same look as the shared shell in mail.templates.ts — warm paper background,
+// one white card, a serif headline, a single dark button, and the brand purple
+// used only as an accent — plus an itemised table, since a receipt is the one
+// email people forward to accounting.
 //
 // Same email-client rules as mail.templates.ts: tables and inline styles only,
 // no <style>, no web fonts. The logo is the hosted PNG; if images are blocked
