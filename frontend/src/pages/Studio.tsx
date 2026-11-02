@@ -209,6 +209,7 @@ export default function Studio() {
   );
   const [lipSync, setLipSync] = useState(false);
   const [keepBackground, setKeepBackground] = useState(true);
+  const [subtitles, setSubtitles] = useState(false);
   const [quality, setQuality] = useState("balanced");
 
   // What this account's plan unlocks (Free: no lip sync, no Studio quality, …).
@@ -521,6 +522,7 @@ export default function Studio() {
         reference,
         lip_sync: lipSyncAvailable && lipSync,
         keep_background: keepBackground,
+        subtitles,
         quality,
         sample: isSampleRun,
         file: isSampleRun ? null : file,
@@ -762,6 +764,7 @@ export default function Studio() {
     reference ? "Custom voice" : null,
     keepBackground ? "Keep background" : "Speech only",
     lipSyncAvailable && lipSync ? "Lip sync" : null,
+    subtitles ? "Subtitles" : null,
   ]
     .filter(Boolean)
     .join(" · ");
@@ -1269,6 +1272,18 @@ export default function Studio() {
                 : "Not available on this deployment — dubs run without it."
           }
           icon={<path d="M3 12c3-3 15-3 18 0-3 4-15 4-18 0zM7 12h10" />}
+        />
+        <OptionToggle
+          checked={subtitles}
+          onChange={(v) => {
+            setSubtitles(v);
+            markTouched("options");
+          }}
+          title="Subtitles (bonus)"
+          description="Add subtitles in the dubbed language to the video, plus an .srt file to download. Free."
+          icon={
+            <path d="M3 5h18v14H3zM7 13h4M13 13h4M7 16h10" />
+          }
         />
       </StepCard>
 
@@ -2078,6 +2093,14 @@ export default function Studio() {
                     sourceUrl={mediaUrl(job.result.source_url)}
                     outputUrl={mediaUrl(job.result.output_url)}
                     simulated={job.simulated}
+                    // Burned-in subtitles are already in the picture; a track
+                    // on top would show every line twice.
+                    subtitlesUrl={
+                      job.result.subtitles_burned
+                        ? undefined
+                        : mediaUrl(job.result.subtitles_vtt_url ?? null)
+                    }
+                    subtitlesLang={job.options.target_lang}
                   />
                 </motion.div>
                 {job.result.output_url && (
@@ -2091,6 +2114,16 @@ export default function Studio() {
                     className="btn-primary focusable inline-flex w-fit px-5 py-2.5 font-mono text-sm"
                   >
                     ↓ Download dubbed video
+                  </motion.a>
+                )}
+                {job.result.subtitles_url && (
+                  <motion.a
+                    variants={rise}
+                    href={mediaUrl(job.result.subtitles_url)}
+                    download
+                    className="btn-ghost focusable inline-flex w-fit px-5 py-2.5 font-mono text-sm"
+                  >
+                    ↓ Download subtitles (.srt)
                   </motion.a>
                 )}
                 <motion.div variants={rise}>

@@ -2,15 +2,27 @@ export default function VideoCompare({
   sourceUrl,
   outputUrl,
   simulated,
+  subtitlesUrl,
+  subtitlesLang,
 }: {
   sourceUrl?: string
   outputUrl?: string
   simulated: boolean
+  /** A .vtt to show on the dubbed side, when the subtitles are not burned in. */
+  subtitlesUrl?: string
+  subtitlesLang?: string
 }) {
   return (
     <div className="grid gap-4 sm:grid-cols-2">
       <Panel label="Original" tone="neutral" url={sourceUrl} />
-      <Panel label="Dubbed" tone="brand" url={outputUrl} badge={simulated ? 'simulation' : 'live'} />
+      <Panel
+        label="Dubbed"
+        tone="brand"
+        url={outputUrl}
+        badge={simulated ? 'simulation' : 'live'}
+        subtitlesUrl={subtitlesUrl}
+        subtitlesLang={subtitlesLang}
+      />
     </div>
   )
 }
@@ -20,11 +32,15 @@ function Panel({
   url,
   tone,
   badge,
+  subtitlesUrl,
+  subtitlesLang,
 }: {
   label: string
   url?: string
   tone: 'neutral' | 'brand'
   badge?: string
+  subtitlesUrl?: string
+  subtitlesLang?: string
 }) {
   return (
     <div className="card overflow-hidden p-0">
@@ -39,11 +55,24 @@ function Panel({
           </span>
         )}
       </div>
-      <div className="aspect-video bg-sunken">
+      <div className="aspect-video bg-black">
         {url ? (
-          <video src={url} controls className="h-full w-full" preload="metadata" />
+          // crossOrigin: a <track> from the dubbing API's origin is only loaded
+          // when the video is fetched in CORS mode.
+          <video
+            src={url}
+            controls
+            playsInline
+            crossOrigin={subtitlesUrl ? 'anonymous' : undefined}
+            className="h-full w-full object-contain"
+            preload="metadata"
+          >
+            {subtitlesUrl && (
+              <track kind="subtitles" src={subtitlesUrl} srcLang={subtitlesLang} label="Subtitles" default />
+            )}
+          </video>
         ) : (
-          <div className="grid h-full place-items-center text-sm text-muted">no media</div>
+          <div className="grid h-full place-items-center bg-sunken text-sm text-muted">no media</div>
         )}
       </div>
     </div>

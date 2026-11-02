@@ -105,6 +105,8 @@ export interface CreateJobInput {
   reference?: File | null
   lip_sync?: boolean
   keep_background?: boolean
+  /** Subtitles in the target language, burned into the dub. */
+  subtitles?: boolean
   quality?: string
   sample?: boolean
   file?: File | null
@@ -157,6 +159,8 @@ export async function createJob(input: CreateJobInput): Promise<Job> {
   fd.append('lip_sync', String(input.lip_sync ?? false))
   fd.append('keep_background', String(input.keep_background ?? true))
   fd.append('quality', input.quality ?? 'balanced')
+  // Only sent when on, like voice_mode: an older backend never sees it.
+  if (input.subtitles) fd.append('subtitles', 'true')
   fd.append('sample', String(input.sample ?? false))
   if (input.file) fd.append('file', input.file)
   // Only ever one source on the request. The server rejects both together, so

@@ -142,7 +142,7 @@ export default function TextToSpeech() {
   const audio = task?.status === 'done' ? mediaUrl(task.audio_url) : undefined
 
   return (
-    <div className="mx-auto flex max-w-2xl flex-col gap-6 py-2 sm:py-6 lg:h-full lg:gap-4 lg:py-2">
+    <div className="mx-auto flex w-full min-w-0 max-w-2xl flex-col gap-6 py-2 sm:py-6 lg:min-h-full lg:gap-4 lg:py-2">
       <section className="shrink-0 text-center">
         <p className="eyebrow">Text to speech</p>
         <h1 className="mt-2 text-[clamp(1.75rem,5vw,2.4rem)] font-medium leading-[1.15] text-primary">
@@ -155,7 +155,7 @@ export default function TextToSpeech() {
       </section>
 
       <section
-        className="composer flex flex-col gap-4 p-4 sm:p-6 lg:min-h-0 lg:flex-1"
+        className="composer flex min-w-0 flex-col gap-4 p-4 sm:p-6 lg:flex-1 [&>*]:shrink-0"
         aria-label="Text to speech"
       >
         <LanguageSelect
@@ -168,7 +168,7 @@ export default function TextToSpeech() {
           label="Language"
         />
 
-        <div className="flex flex-col lg:min-h-0 lg:flex-1">
+        <div className="flex flex-col lg:flex-1">
           <div className="mb-2 flex items-center justify-between">
             <label htmlFor="tts-text" className="eyebrow">
               Script
@@ -307,7 +307,7 @@ export default function TextToSpeech() {
           <div
             className="space-y-3 rounded-[var(--radius-card)] border border-success/30 bg-success/[0.07] p-3 sm:p-4"
           >
-            <audio controls autoPlay src={audio} className="w-full" />
+            <audio controls autoPlay src={audio} className="block w-full min-w-0" />
             <div className="flex flex-wrap items-center justify-between gap-3 px-1 text-[12px] text-muted">
               <span className="tabular-nums">
                 {task.duration?.toFixed(1)}s

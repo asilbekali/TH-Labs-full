@@ -79,6 +79,11 @@ export interface JobResult {
   segments: Segment[]
   metrics: DubMetrics
   detected_source_lang: string | null
+  /** Set only when subtitles were asked for (absent on older backends). */
+  subtitles_url?: string | null
+  subtitles_vtt_url?: string | null
+  /** True when the subtitles are in the picture; false → show the .vtt track. */
+  subtitles_burned?: boolean
 }
 
 export type JobStatus = 'queued' | 'running' | 'completed' | 'failed'
@@ -91,6 +96,7 @@ export interface DubOptions {
   keep_background: boolean
   quality: string
   preserve_timing: boolean
+  subtitles?: boolean
 }
 
 /**
