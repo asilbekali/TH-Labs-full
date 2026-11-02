@@ -156,17 +156,29 @@ class SpeechService:
     def __init__(self, orchestrator) -> None:
         self._orch = orchestrator
         self._tasks: dict[str, SpeechTask] = {}
+        # The text each task voiced, for the video editor's speech clips. Not
+        # on the task itself: the /tts page already has the text it sent.
+        self._texts: dict[str, str] = {}
         self._navoiy = orchestrator.navoiy
 
     # ── what can run ───────────────────────────────────────────────────────
     def _omnivoice_ok(self) -> bool:
         return self._orch.tts.mode() == "real"
 
+    def _edge_ok(self, language: str) -> bool:
+        edge = self._orch.edge
+        return edge.available() and edge.supports(language)
+
     def engine_for(self, language: str) -> str | None:
         if language in tts_navoiy.LANGUAGES and self._navoiy.available():
             return "Navoiy"
         if self._omnivoice_ok():
             return "OmniVoice"
+        # Last resort: a stock neural voice per language. One voice, no
+        # styles, but a script still gets read out while the GPU engines are
+        # down — which is what the video editor's speech clips need.
+        if self._edge_ok(language):
+            return "edge-tts"
         return None
 
     def voices(self) -> dict:
@@ -181,6 +193,9 @@ class SpeechService:
                           "voices": [{"id": k, "label": v[0]}
                                      for k, v in OMNIVOICE_VOICES.items()],
                           "default": "female"},
+            "edge": {"available": self._orch.edge.available(),
+                     "voices": [{"id": "default", "label": "Standard"}],
+                     "default": "default"},
             "max_chars": MAX_CHARS,
         }
 
@@ -200,6 +215,9 @@ class SpeechService:
             threading.Thread(target=load, daemon=True).start()
 
     # ── tasks ──────────────────────────────────────────────────────────────
+    def text_of(self, task_id: str) -> str | None:
+        return self._texts.get(task_id)
+
     def get(self, task_id: str, owner_id: int) -> SpeechTask | None:
         task = self._tasks.get(task_id)
         return task if task and task.owner_id == owner_id else None
@@ -225,8 +243,10 @@ class SpeechService:
         # (Uzbek on fallback) falls back to that engine's default voice.
         if engine == "Navoiy":
             voice = voice if voice in NAVOIY_STYLES else "calm"
-        else:
+        elif engine == "OmniVoice":
             voice = voice if voice in OMNIVOICE_VOICES else "female"
+        else:
+            voice = "default"
 
         gate = await billing.can_dub(token, len(text) / CHARS_PER_SECOND,
                                      BILLING_QUALITY)
@@ -240,6 +260,7 @@ class SpeechService:
                           language=language, voice=voice, chars=len(text),
                           engine=engine)
         self._tasks[task.id] = task
+        self._texts[task.id] = text
         asyncio.get_running_loop().create_task(
             self._run(task, text, token))
         return task
@@ -260,9 +281,14 @@ class SpeechService:
                     log.warning("tts %s: navoiy failed (%s)", task.id, exc)
                 if audio is None and self._omnivoice_ok():
                     task.engine, task.voice = "OmniVoice", "female"
+                elif audio is None and self._edge_ok(task.language):
+                    task.engine, task.voice = "edge-tts", "default"
             if audio is None and task.engine == "OmniVoice":
                 audio = await asyncio.to_thread(
                     self._omnivoice_speak, text, task.language, task.voice)
+            if audio is None and task.engine == "edge-tts":
+                audio = await asyncio.to_thread(
+                    self._edge_speak, text, task.language)
             if audio is None or not audio.size:
                 raise RuntimeError("no audio came back")
 
@@ -307,6 +333,31 @@ class SpeechService:
         if semitones or tempo != 1:
             audio = _shape(audio, semitones, tempo)
         return _normalize(audio)
+
+    def _edge_speak(self, text: str, language: str):
+        """edge-tts reads the whole text in one call; the clip is decoded and
+        stripped of the silence edge-tts pads it with."""
+        import edge_tts
+        import numpy as np
+        import soundfile as sf
+
+        from .pipeline import media
+        from .pipeline.tts_edge import VOICES
+
+        s = get_settings()
+        stem = s.outputs_dir / f"tts_edge_{uuid.uuid4().hex[:10]}"
+        mp3, wav = stem.with_suffix(".mp3"), stem.with_suffix(".wav")
+        try:
+            asyncio.run(edge_tts.Communicate(text, VOICES[language]).save(str(mp3)))
+            if not media.tts_trim(mp3, wav, SAMPLE_RATE):
+                return None
+            data, _sr = sf.read(str(wav), dtype="float32")
+            if getattr(data, "ndim", 1) > 1:
+                data = data.mean(axis=1)
+            return _normalize(np.asarray(data, dtype=np.float32))
+        finally:
+            mp3.unlink(missing_ok=True)
+            wav.unlink(missing_ok=True)
 
     def _omnivoice_speak(self, text: str, language: str, voice: str):
         """OmniVoice chunks long text itself, and reuses the first chunk as the

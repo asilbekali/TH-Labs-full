@@ -78,8 +78,13 @@ export default function TextToSpeech() {
 
   const navoiy =
     !!voices?.navoiy.available && voices.navoiy.languages.includes(language)
-  const engine = navoiy ? voices!.navoiy : voices?.omnivoice
-  const available = navoiy || !!voices?.omnivoice.available
+  // OmniVoice when it is up; the stock edge-tts voice when it is the only one.
+  const engine = navoiy
+    ? voices!.navoiy
+    : !voices?.omnivoice.available && voices?.edge?.available
+      ? voices.edge
+      : voices?.omnivoice
+  const available = navoiy || !!voices?.omnivoice.available || !!voices?.edge?.available
   const options = engine?.voices ?? []
   const selected =
     voice && options.some((o) => o.id === voice) ? voice : (engine?.default ?? null)

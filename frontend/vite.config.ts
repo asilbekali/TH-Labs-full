@@ -18,6 +18,9 @@ import tailwindcss from '@tailwindcss/vite'
 // each call land on /docs/payments/plans, which is a 404 with no CORS headers.
 
 const DUB_HOST = '46.224.138.121'
+// Where `vite dev` sends /api and /media. To develop against a pipeline on this
+// machine: DUB_API_PROXY=http://localhost:8000 npm run dev
+const DUB_API = process.env.DUB_API_PROXY || `http://${DUB_HOST}:8000`
 // Where `vite dev` sends /v1. The deployed API by default; to develop against a
 // NestJS on this machine: ACCOUNT_API_PROXY=http://localhost:3001 npm run dev
 const ACCOUNT_API = process.env.ACCOUNT_API_PROXY || 'https://th-labs.uz'
@@ -49,8 +52,8 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      '/api': { target: `http://${DUB_HOST}:8000`, changeOrigin: true },
-      '/media': { target: `http://${DUB_HOST}:8000`, changeOrigin: true },
+      '/api': { target: DUB_API, changeOrigin: true },
+      '/media': { target: DUB_API, changeOrigin: true },
       // Proxied rather than called directly so the browser sees a same-origin
       // request: the deployed API's CORS allowlist covers the real Studio
       // origin, not localhost, so a direct fetch is refused before it is sent.

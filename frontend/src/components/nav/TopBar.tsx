@@ -30,7 +30,8 @@ export default function TopBar({
   sidebarLabel: string
 }) {
   const { pathname } = useLocation()
-  const title = PAGE_TITLES[pathname]
+  // /editor/<job> and /video-editor/<project> take their section's title.
+  const title = PAGE_TITLES[pathname] ?? PAGE_TITLES[`/${pathname.split('/')[1]}`]
 
   return (
     <header className="relative z-30 flex shrink-0 flex-wrap items-center gap-2.5 px-4 pb-2 pt-[calc(env(safe-area-inset-top)+1rem)] lg:px-0 lg:pb-4 lg:pt-1">

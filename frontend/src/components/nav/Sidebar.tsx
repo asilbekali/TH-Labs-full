@@ -8,6 +8,7 @@ import { useWorkspace } from '../../lib/workspace'
 import { useWorks } from '../../lib/works'
 import { affordableSeconds, useWallet } from '../../lib/wallet'
 import { useTheme } from '../../hooks/useTheme'
+import { PLAN_LABEL, TOOL_PLAN, usePlan } from '../../lib/plan'
 import { EASE_ENTRANCE, springLayout } from '../../lib/motion'
 
 // Labels and other expanded-only pieces fade and slide in as the pane widens.
@@ -59,6 +60,7 @@ export default function Sidebar({
   const { pathname } = useLocation()
   const workspace = useWorkspace()
   const { works } = useWorks()
+  const plan = usePlan()
   // The desktop pane stays mounted (just hidden) while the mobile drawer is
   // open, so each instance needs its own layout group or the pills collide.
   const group = useId()
@@ -72,6 +74,8 @@ export default function Sidebar({
   // A count beside My works, so the library's size is visible from anywhere.
   const badge = (item: NavItem) => {
     if (item.soon) return 'Soon'
+    // A tool this plan does not include: say which plan does.
+    if (item.tool && !plan.loading && !plan.has(item.tool)) return PLAN_LABEL[TOOL_PLAN[item.tool]]
     if (item.to === '/works' && works.length > 0) return works.length
     return null
   }

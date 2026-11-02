@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import type { Tool } from '../../lib/plan'
 
 export interface NavItem {
   to: string
@@ -11,6 +12,12 @@ export interface NavItem {
    * can badge it instead of letting someone click through expecting a feature.
    */
   soon?: boolean
+  /**
+   * The plan tool behind this row. When the account's plan does not include
+   * it, the row stays visible — so people can find what an upgrade buys — and
+   * is badged with the plan that does.
+   */
+  tool?: Tool
 }
 
 const ICON = {
@@ -44,6 +51,24 @@ const ICON = {
   settings: <path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6" />,
   tts: <path d="M2 10v3M6 6v11M10 3v18M14 8v7M18 5v13M22 10v3" />,
   developers: <path d="m16 18 6-6-6-6M8 6l-6 6 6 6" />,
+  speechEditor: (
+    <>
+      <path d="M3 10v4M7 7v10M11 10v4" />
+      <path d="m14.5 17.5 6-6a1.4 1.4 0 0 0-2-2l-6 6-.7 2.7z" />
+    </>
+  ),
+  videoEditor: (
+    <>
+      <rect x="2" y="4" width="20" height="16" rx="3" />
+      <path d="M2 14h20M7 14v6M12 14v6M17 14v6M10 7.5v3l2.5-1.5z" />
+    </>
+  ),
+  realtime: (
+    <>
+      <circle cx="12" cy="12" r="2" />
+      <path d="M8.5 15.5a5 5 0 0 1 0-7M15.5 8.5a5 5 0 0 1 0 7M5.6 18.4a9 9 0 0 1 0-12.8M18.4 5.6a9 9 0 0 1 0 12.8" />
+    </>
+  ),
   me: (
     <>
       <circle cx="12" cy="8" r="4" />
@@ -68,6 +93,9 @@ export const NAV_MAIN: NavItem[] = [
   { to: '/studio', label: 'Studio', icon: ICON.studio },
   { to: '/tts', label: 'Text to speech', short: 'Voice', icon: ICON.tts },
   { to: '/works', label: 'My works', icon: ICON.works },
+  { to: '/editor', label: 'Speech editor', short: 'Edit', icon: ICON.speechEditor, tool: 'speechEditor' },
+  { to: '/video-editor', label: 'Video editor', icon: ICON.videoEditor, tool: 'videoEditor' },
+  { to: '/realtime', label: 'Real-time dubbing', icon: ICON.realtime, soon: true, tool: 'realtime' },
 ]
 
 /**
@@ -91,7 +119,10 @@ export const NAV_ALL: NavItem[] = [...NAV_MAIN, ...NAV_BOTTOM]
  * something to do, plus you. Billing is one tap away on the credits pill in the
  * phone's top bar, and Docs and Developers live in the drawer.
  */
-export const NAV: NavItem[] = [...NAV_MAIN, { to: '/account', label: 'Settings', short: 'Me', icon: ICON.me }]
+export const NAV: NavItem[] = [
+  ...NAV_MAIN.filter((i) => !i.tool || i.tool === 'dubbing'),
+  { to: '/account', label: 'Settings', short: 'Me', icon: ICON.me },
+]
 
 /** Breadcrumb titles, so the top bar names the page without each page telling it. */
 export const PAGE_TITLES: Record<string, string> = {
@@ -99,6 +130,9 @@ export const PAGE_TITLES: Record<string, string> = {
   '/studio': 'Studio',
   '/works': 'My works',
   '/tts': 'Text to speech',
+  '/editor': 'Speech editor',
+  '/video-editor': 'Video editor',
+  '/realtime': 'Real-time dubbing',
   '/plans': 'Plans and billing',
   '/plans/success': 'Payment',
   '/plans/cancel': 'Payment',

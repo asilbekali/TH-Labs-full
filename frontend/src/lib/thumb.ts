@@ -3,10 +3,11 @@
 // A dub's thumbnail would ideally be a frame from the source video, but the
 // pipeline does not extract one, so a card falls back to a gradient derived
 // from the job id: same id → same artwork, forever, with no image request.
-// Hues stay inside the violet family — the brand itself (262°) out through
-// fuchsia (288°) to rose (345°) — so a wall of these reads as one palette in
-// both themes instead of a fruit salad. Nothing here crosses into blue.
-const HUES = [262, 275, 288, 302, 330, 345]
+// Hues stay inside the warm copper family — rose (350°) through terracotta
+// and copper (20-28°) to sand (38°) — so a wall of these reads as one palette
+// with the brand instead of a fruit salad. No violet: it was dropped from the
+// palette, and nothing here crosses into blue or purple.
+const HUES = [350, 8, 18, 24, 30, 38]
 
 function hash(id: string): number {
   let h = 2166136261

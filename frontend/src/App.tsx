@@ -11,6 +11,9 @@ import MyWorks from './pages/MyWorks'
 import Developers from './pages/Developers'
 import Docs from './pages/Docs'
 import TextToSpeech from './pages/TextToSpeech'
+import SpeechEditor from './pages/SpeechEditor'
+import VideoEditor from './pages/VideoEditor'
+import Realtime from './pages/Realtime'
 import { usePaymentsInvalidation } from './lib/queries'
 
 export default function App() {
@@ -37,6 +40,11 @@ export default function App() {
           <Route path="/plans/cancel" element={<PlansCancel />} />
           <Route path="/works" element={<MyWorks />} />
           <Route path="/tts" element={<TextToSpeech />} />
+          <Route path="/editor" element={<SpeechEditor />} />
+          <Route path="/editor/:jobId" element={<SpeechEditor />} />
+          <Route path="/video-editor" element={<VideoEditor />} />
+          <Route path="/video-editor/:projectId" element={<VideoEditor />} />
+          <Route path="/realtime" element={<Realtime />} />
           <Route path="/account" element={<Account />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

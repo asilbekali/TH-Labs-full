@@ -94,6 +94,47 @@ class DubMetrics(BaseModel):
     real_time_factor: Optional[float] = None
 
 
+class Issue(BaseModel):
+    """One thing that went wrong (or may have) in a finished dub, and how to
+    fix it. Built by pipeline/issues.py after every run and every speech edit,
+    so the Studio can show the user what to look at instead of leaving them to
+    find a silent line by watching the whole video.
+
+    `action` tells the UI which fix to offer:
+        edit_line   rewrite or re-time the line, then re-dub just that section
+        retry       run the dub again (a transient engine/network failure)
+        upgrade     the fix is a plan feature the user does not have
+        buy_tokens  the dub was cut short by the balance
+        reupload    the source itself is the problem
+        none        informational only
+    """
+    code: str
+    severity: Literal["error", "warning", "info"] = "warning"
+    title: str
+    detail: str = ""
+    fix: str = ""
+    action: Literal["edit_line", "retry", "upgrade", "buy_tokens", "reupload",
+                    "none"] = "none"
+    segment_ids: list[int] = Field(default_factory=list)
+
+
+class EditState(BaseModel):
+    """Progress of a speech edit — re-dubbing only the lines the user changed.
+
+    Lives on the job rather than as a job of its own: an edit patches this
+    dub's voice track in place and writes a new version of the same video, so
+    the editor keeps one project per video instead of a chain of copies.
+    """
+    status: Literal["idle", "queued", "running", "done", "failed"] = "idle"
+    message: str = ""
+    # Bumped by every successful edit; 0 is the dub as first rendered.
+    version: int = 0
+    # Ids of the lines the last edit re-voiced.
+    segment_ids: list[int] = Field(default_factory=list)
+    error: Optional[str] = None
+    updated_at: Optional[float] = None
+
+
 class JobResult(BaseModel):
     output_url: Optional[str] = None
     source_url: Optional[str] = None
@@ -106,6 +147,11 @@ class JobResult(BaseModel):
     subtitles_url: Optional[str] = None        # .srt, for download
     subtitles_vtt_url: Optional[str] = None    # .vtt, for <track>
     subtitles_burned: bool = False
+    # What to look at in this dub and how to fix it. See Issue.
+    issues: list[Issue] = Field(default_factory=list)
+    # The dubbed voice on its own, without the background, so the editor can
+    # draw the waveform of what it is editing. Set when the run kept the stem.
+    voice_url: Optional[str] = None
 
 
 class JobBilling(BaseModel):
@@ -149,6 +195,8 @@ class Job(BaseModel):
     # deployment runs unbilled (TH_LABS_ACCOUNT_API_URL unset).
     billing: JobBilling = Field(default_factory=JobBilling)
     error: Optional[str] = None
+    # Speech edits (Studio Max). See EditState.
+    edit: EditState = Field(default_factory=EditState)
     created_at: float
     updated_at: float
 
