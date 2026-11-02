@@ -134,15 +134,16 @@ def _download_models() -> None:
     step("NLLB-200 weights",
          lambda: snapshot_download("facebook/nllb-200-distilled-600M"))
 
-    # Whisper caches to ~/.cache/whisper. "medium" is the paper setting;
-    # "base"/"small" back the Fast/Balanced quality tiers. Loaded one at a
-    # time and released, so the build container isn't holding all three.
+    # Whisper caches to ~/.cache/whisper. Which plan and quality uses which is
+    # backend/app/pipeline/plan_models.py; every model named there must be
+    # here. Loaded one at a time and released, so the build container isn't
+    # holding them all.
     def _whisper(name: str) -> None:
         import whisper
         m = whisper.load_model(name, device="cpu")
         del m
 
-    for _name in ("base", "small", "medium"):
+    for _name in ("base", "small", "medium", "large-v3"):
         step(f"whisper {_name}", lambda n=_name: _whisper(n))
 
     # silero-VAD gates ASR to real speech. Imports torchaudio, so this is also
@@ -216,7 +217,7 @@ def _download_gigaam() -> None:
 
 image = (
     modal.Image.debian_slim(python_version="3.12")
-    .apt_install("ffmpeg", "git", "curl", "ca-certificates")
+    .apt_install("ffmpeg", "fonts-dejavu-core", "git", "curl", "ca-certificates")
     # Node, for building the React Studio into static files
     .run_commands(
         "curl -fsSL https://deb.nodesource.com/setup_20.x | bash -",

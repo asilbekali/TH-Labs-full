@@ -128,6 +128,7 @@ async def create_job(
     lip_sync: bool = Form(False),
     keep_background: bool = Form(True),
     quality: Quality = Form(Quality.balanced),
+    subtitles: bool = Form(False),
     sample: bool = Form(False),
     file: UploadFile | None = File(None),
     reference: UploadFile | None = File(None),
@@ -157,6 +158,7 @@ async def create_job(
         voice_clone=voice_clone, voice_mode=voice_mode or None,
         lip_sync=lip_sync,
         keep_background=keep_background, quality=quality,
+        subtitles=subtitles,
     )
 
     scenario = "lecture"
@@ -244,7 +246,7 @@ async def create_job(
     # video still pays for the front of it. When that happens the source is cut
     # to the affordable length and the dub runs on that, with a notice carried
     # back to the user — a minute of a five-minute video is worth more to them
-    # than a 402, and a brand-new account's free minute is exactly this path
+    # than a 402, and a brand-new account's free minutes are exactly this path
     # rather than a special case.
     #
     # ORDER MATTERS. The id is reserved first, the charge settles against it,
@@ -261,7 +263,20 @@ async def create_job(
             # cannot be quietly treated as zero — that would dub for free.
             raise HTTPException(400, "Could not read the video's duration.")
         source_seconds = probed
-        gate = await billing.can_dub(user.token, source_seconds, quality.value)
+        # Every plan-locked option, not just the quality, so the plan holds for
+        # callers that skip the Studio. Background separation never runs at
+        # Fast, so it is not asked for there.
+        features = {
+            "targetLang": options.target_lang,
+            "voiceMode": options.voice_mode
+            or ("speaker" if options.voice_clone else "native"),
+            "referenceVoice": reference_path is not None,
+            "keepBackground": options.keep_background
+            and options.quality != Quality.fast,
+            "lipSync": options.lip_sync,
+        }
+        gate = await billing.can_dub(user.token, source_seconds, quality.value,
+                                     features)
         duration_seconds = source_seconds
 
         if gate.trimmed:
@@ -281,9 +296,9 @@ async def create_job(
                           gate.billable_seconds, input_video)
                 raise HTTPException(
                     402,
-                    f"You have {gate.balance} credits, which covers "
+                    f"You have {gate.balance} tokens, which covers "
                     f"{int(gate.billable_seconds)}s of this video, but we "
-                    "couldn't cut it to that length. Buy credits to dub the "
+                    "couldn't cut it to that length. Buy tokens to dub the "
                     "whole video.",
                 )
             input_video = trimmed_path
@@ -307,6 +322,7 @@ async def create_job(
             balance_after=charged.balance,
             trimmed=gate.trimmed,
             notice=gate.notice(source_seconds),
+            tier=gate.tier,
         )
 
     job = manager.create(options, input_video, scenario, filename,
@@ -390,7 +406,8 @@ async def revoice_job(
 
     new_job = manager.create(job.options, source, "lecture", job.filename,
                              owner_id=user.id, preset_segments=segments,
-                             reference_audio=manager.reference_audio(job_id))
+                             reference_audio=manager.reference_audio(job_id),
+                             billing=JobBilling(tier=job.billing.tier))
     new_job.result.detected_source_lang = job.result.detected_source_lang
     return {"id": new_job.id, "job": new_job.model_dump(mode="json"),
             "edited_lines": changed}

@@ -790,7 +790,9 @@ function DetailPanel({ work, isSheet, onClose }: { work: Work; isSheet: boolean;
 
         <div className="min-h-0 flex-1 space-y-6 overflow-y-auto px-5 pb-6 no-scrollbar">
           {/* A/B player — the actual media the pipeline produced. */}
-          <div className="overflow-hidden rounded-control border border-subtle">
+          {/* Not rounded-control: in this theme that token is 999px (every control
+              is a pill), which turns a box this size into an ellipse. */}
+          <div className="overflow-hidden rounded-[var(--radius-inner)] border border-subtle">
             <div className="flex items-center justify-between border-b border-subtle bg-sunken px-3 py-2">
               <LayoutGroup id={`ab-${work.id}`}>
                 <div className="flex gap-1">
@@ -822,7 +824,7 @@ function DetailPanel({ work, isSheet, onClose }: { work: Work; isSheet: boolean;
                 controls
                 playsInline
                 onTimeUpdate={(e) => setPlayT(e.currentTarget.currentTime)}
-                className="aspect-video w-full bg-black"
+                className="aspect-video w-full bg-black object-contain"
               />
             ) : (
               <div className="grid aspect-video place-items-center bg-sunken px-4 text-center font-mono text-xs text-muted">

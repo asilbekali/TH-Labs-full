@@ -17,9 +17,10 @@ from typing import Awaitable, Callable
 from ..config import get_settings
 from ..schemas import (DubOptions, Job, JobResult, Segment, StageState,
                        StageStatus)
-from . import bleed, emotion, media, metrics, refine
+from . import bleed, emotion, media, metrics, refine, subtitles
 from .lipsync import Wav2LipSync
 from .nmt import NLLBTranslator
+from .plan_models import models_for
 from .separation import DemucsSeparator
 from .stt import WhisperSTT
 from .stt_gigaam import GigaAMSTT
@@ -32,9 +33,8 @@ from .voice_clone import OpenVoiceCloner
 
 EmitFn = Callable[..., Awaitable[None]]
 
-# Quality → Whisper model. "Fast" trades accuracy for a big speed-up (base is
-# ~4-5× faster than medium); "Studio" is the paper's Whisper medium.
-QUALITY_WHISPER = {"fast": "base", "balanced": "small", "studio": "medium"}
+# Which Whisper model and whether the translation repair runs now depend on the
+# user's plan as well as the quality — see pipeline/plan_models.py.
 
 
 log = logging.getLogger(__name__)
@@ -183,15 +183,17 @@ class Orchestrator:
         """
         s = get_settings()
         options = job.options
+        models = models_for(job.billing.tier, options.quality)
         duration = await asyncio.to_thread(media.probe_duration, input_video)
         started = time.perf_counter()
 
         log.info(
             "[%s] START %s -> %s | quality=%s clone=%s lipsync=%s keep_bg=%s "
-            "| duration=%ss force_simulate=%s",
+            "| duration=%ss force_simulate=%s | plan=%s whisper=%s refine=%s",
             job.id, options.source_lang, options.target_lang, options.quality,
             options.voice_clone, options.lip_sync, options.keep_background,
-            duration, force_simulate,
+            duration, force_simulate, job.billing.tier or "-", models.whisper,
+            models.refine,
         )
 
         # `force_simulate` is set for the synthetic sample clip (no real speech
@@ -260,7 +262,7 @@ class Orchestrator:
                             lambda: self.giga.transcribe(wav, hint, regions))
                     else:
                         asr_engine = "Whisper"
-                        wmodel = QUALITY_WHISPER.get(options.quality, "small")
+                        wmodel = models.whisper
                         segments, detected, vad_detail = await self._heartbeat(
                             job, "asr", emit,
                             lambda: self.stt.transcribe(wav, options.source_lang,
@@ -333,7 +335,7 @@ class Orchestrator:
             # says how many lines were revised, not how.
             revised = 0
             if (segments and not force_simulate and preset_segments is None
-                    and refine.available()):
+                    and models.refine and refine.available()):
                 try:
                     revised, suspects = await self._heartbeat(
                         job, "nmt", emit,
@@ -620,7 +622,7 @@ class Orchestrator:
 
                     def _words(clip: Path) -> list[str]:
                         segs, _, _ = self.stt.transcribe(
-                            clip, bleed_lang, QUALITY_WHISPER.get(options.quality, "small"))
+                            clip, bleed_lang, models.whisper)
                         return [seg.source_text for seg in segs]
 
                     try:
@@ -718,6 +720,34 @@ class Orchestrator:
                                     final_audio, out_video)
             log.info("[%s] mux: out=%s", job.id, out_video.name)
             st.detail = {**st.detail, "muxed": True}
+
+            # Optional subtitles, in the dub's language, from the very lines
+            # that were voiced. After the mux on purpose: the dub above is
+            # already written and verified, and nothing here can undo it.
+            if options.subtitles:
+                items = subtitles.cues(job.result.segments)
+                if items:
+                    srt = s.outputs_dir / f"{job.id}.srt"
+                    vtt = s.outputs_dir / f"{job.id}.vtt"
+                    await asyncio.to_thread(subtitles.write_srt, items, srt)
+                    await asyncio.to_thread(subtitles.write_vtt, items, vtt)
+                    job.result.subtitles_url = f"/media/outputs/{srt.name}"
+                    job.result.subtitles_vtt_url = f"/media/outputs/{vtt.name}"
+                    st.message = "Adding subtitles"
+                    await emit(job)
+                    burned_out = s.outputs_dir / f"{job.id}_subs.mp4"
+                    burned = await asyncio.to_thread(
+                        subtitles.burn, out_video, srt, burned_out, duration)
+                    if burned:
+                        burned_out.replace(out_video)
+                    else:
+                        # The dub stands; the player shows the .vtt instead.
+                        log.warning("[%s] subtitles could not be burned in — "
+                                    "delivered as a separate track", job.id)
+                    job.result.subtitles_burned = burned
+                    st.message = ""
+                    st.detail = {**st.detail, "subtitles": len(items),
+                                 "subtitles_burned": burned}
 
         # ── finalise ------------------------------------------------------
         elapsed = time.perf_counter() - started

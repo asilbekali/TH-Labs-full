@@ -233,8 +233,8 @@ class SpeechService:
         if gate.trimmed:
             # A dub can be cut to what the wallet covers; a script cannot.
             raise HTTPException(
-                402, f"You have {gate.balance} credits — not enough to voice "
-                     "all of this text. Shorten it, or buy credits.")
+                402, f"You have {gate.balance} tokens — not enough to voice "
+                     "all of this text. Shorten it, or buy tokens.")
 
         task = SpeechTask(id=uuid.uuid4().hex[:12], owner_id=owner_id,
                           language=language, voice=voice, chars=len(text),

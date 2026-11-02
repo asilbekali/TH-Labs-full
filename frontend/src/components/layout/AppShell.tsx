@@ -16,8 +16,8 @@ import { leaveToLanding, LOCAL_AUTH } from '../../lib/landing'
 // being wrapped in the centred, scrolling column every other page gets.
 const WORKBENCH_ROUTES = ['/studio', '/works']
 
-// Routes that keep the centred column but fit it to the viewport on desktop
-// instead of scrolling it.
+// Routes that keep the centred column but stretch it to at least the viewport
+// on desktop; content taller than that scrolls rather than being squeezed.
 const FIXED_ROUTES = ['/tts']
 
 const COLLAPSE_KEY = 'th:sidebar-collapsed'
@@ -141,9 +141,12 @@ export default function AppShell({ children }: { children: ReactNode }) {
 
         <main
           className={
-            workbench || fixed
+            // A fixed route fills the viewport but may still grow past it (the
+            // TTS player appears under the form), so it scrolls vertically
+            // instead of squeezing its children. Never sideways.
+            workbench
               ? 'min-h-0 flex-1 overflow-hidden'
-              : 'min-h-0 flex-1 overflow-y-auto'
+              : 'min-h-0 flex-1 overflow-y-auto overflow-x-hidden'
           }
         >
           {workbench ? (
@@ -154,7 +157,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
             // range, and the mobile tab bar would sit on top of the last card.
             <div
               className={`mx-auto w-full max-w-[1400px] px-4 pb-32 pt-2 sm:px-6 lg:px-0 lg:pb-2 lg:pt-0 ${
-                fixed ? 'h-full' : ''
+                fixed ? 'min-h-full' : ''
               }`}
             >
               {children}

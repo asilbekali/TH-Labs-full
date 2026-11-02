@@ -53,6 +53,9 @@ class DubOptions(BaseModel):
         True, description="Keep original music/FX; remove only the original speech")
     quality: Quality = Quality.balanced
     preserve_timing: bool = True
+    # Subtitles in the target language, burned into the dubbed video and
+    # also delivered as .srt/.vtt. Off unless asked for.
+    subtitles: bool = False
 
 
 class Segment(BaseModel):
@@ -98,6 +101,11 @@ class JobResult(BaseModel):
     segments: list[Segment] = Field(default_factory=list)
     metrics: DubMetrics = Field(default_factory=DubMetrics)
     detected_source_lang: Optional[str] = None
+    # Set only when subtitles were asked for. `subtitles_burned` says whether
+    # they are in the picture itself; when false the player shows the .vtt.
+    subtitles_url: Optional[str] = None        # .srt, for download
+    subtitles_vtt_url: Optional[str] = None    # .vtt, for <track>
+    subtitles_burned: bool = False
 
 
 class JobBilling(BaseModel):
@@ -120,6 +128,9 @@ class JobBilling(BaseModel):
     # A sentence written for the user, shown verbatim by the Studio. Set only
     # when the dub was cut short.
     notice: Optional[str] = None
+    # The plan the dub ran under, as the billing API reported it. Set by the
+    # server only, never read from the request; picks the pipeline's models.
+    tier: Optional[str] = None
 
 
 class Job(BaseModel):

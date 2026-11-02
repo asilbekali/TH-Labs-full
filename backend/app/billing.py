@@ -74,6 +74,10 @@ class Gate:
     affordable_seconds: float = 0.0
     credits_per_minute: int = 20
     reason: str | None = None
+    # The plan the dub was checked against (FREE / PRO / STUDIO). None when
+    # billing is off or the API predates the field. The pipeline picks its
+    # models from it — see pipeline/plan_models.py.
+    tier: str | None = None
 
     def notice(self, source_seconds: float) -> str | None:
         """The sentence shown to the user when their dub was cut short."""
@@ -83,7 +87,7 @@ class Gate:
             f"Your balance covered {_mmss(self.billable_seconds)} of this "
             f"{_mmss(source_seconds)} video, so only the first "
             f"{_mmss(self.billable_seconds)} was dubbed "
-            f"({self.billable_cost} credits). Buy credits or a plan to dub the "
+            f"({self.billable_cost} tokens). Buy tokens or a plan to dub the "
             "whole thing."
         )
 
@@ -167,7 +171,7 @@ async def _post(path: str, token: str, payload: dict) -> dict:
         log.info("billing %s refused: %s %s", path, reason or "402", detail)
         raise HTTPException(
             status.HTTP_402_PAYMENT_REQUIRED,
-            detail or "Not enough credits for this dub.",
+            detail or "Not enough tokens for this dub.",
         )
 
     # Ours, not theirs. Loud, because this is the failure mode that used to be
@@ -176,7 +180,7 @@ async def _post(path: str, token: str, payload: dict) -> dict:
         "billing %s failed with %s (NOT a payment problem): %s | payload=%s",
         path, resp.status_code, detail or "<no body>", payload,
     )
-    raise _unavailable("verify your credits")
+    raise _unavailable("verify your tokens")
 
 
 def _gate_from(data: dict, requested_seconds: float) -> Gate:
@@ -211,11 +215,19 @@ def _gate_from(data: dict, requested_seconds: float) -> Gate:
         affordable_seconds=affordable,
         credits_per_minute=int(data.get("creditsPerMinute") or 20),
         reason=data.get("reason"),
+        tier=data.get("tier"),
     )
 
 
-async def can_dub(token: str, duration_seconds: float, quality: str) -> Gate:
+async def can_dub(token: str, duration_seconds: float, quality: str,
+                  features: dict | None = None) -> Gate:
     """Preflight. Charges nothing.
+
+    `features` are the other plan-locked options of the dub (targetLang,
+    voiceMode, referenceVoice, keepBackground, lipSync — the CanDubDto names).
+    Sent so the plan is enforced here and not only in the Studio: without them
+    a direct API caller on Free could ask for lip sync and get it. A locked
+    option comes back as a 402 with the API's own message.
 
     Raises 402 only when the balance buys no dubbing at all. A balance that
     covers part of the clip comes back as an allowed Gate with `trimmed` set and
@@ -227,7 +239,7 @@ async def can_dub(token: str, duration_seconds: float, quality: str) -> Gate:
                     affordable_seconds=duration_seconds)
 
     payload = {"durationSeconds": round(float(duration_seconds), 3),
-               "quality": quality}
+               "quality": quality, **(features or {})}
     try:
         data = await _post("/payments/can-dub", token, payload)
     except HTTPException:
@@ -235,15 +247,15 @@ async def can_dub(token: str, duration_seconds: float, quality: str) -> Gate:
     except Exception as exc:
         # Unreachable billing API. Deny — see the module docstring.
         log.error("billing can-dub unreachable: %s: %s", type(exc).__name__, exc)
-        raise _unavailable("verify your credits") from exc
+        raise _unavailable("verify your tokens") from exc
 
     gate = _gate_from(data, float(duration_seconds))
     if not gate.allowed:
         raise HTTPException(
             status.HTTP_402_PAYMENT_REQUIRED,
-            f"You have {gate.balance} credits — not enough to dub any of this "
+            f"You have {gate.balance} tokens — not enough to dub any of this "
             f"video. A minute costs {gate.credits_per_minute} at "
-            f"{quality} quality. Buy credits or a plan to continue.",
+            f"{quality} quality. Buy tokens or a plan to continue.",
         )
     return gate
 
