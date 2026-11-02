@@ -224,6 +224,10 @@
 
 html { scroll-behavior: smooth; }
 
+/* Never scroll sideways: `clip` (unlike `hidden`) on both roots also holds on
+   iOS Safari, and does not turn either into a scroll container. */
+html, body { overflow-x: clip; max-width: 100%; }
+
 /* Scale the rem-based design up on very large displays so it fills the screen. */
 @media (min-width: 1920px) { html { font-size: 17px; } }
 @media (min-width: 2560px) { html { font-size: 19px; } }
@@ -1539,11 +1543,26 @@ h1, h2, h3 { letter-spacing: -0.03em; }
     transition: background-color 0.15s var(--ease-exit), color 0.15s var(--ease-exit);
   }
   .side-link:hover { background: var(--hover-wash); color: rgb(var(--c-text-primary)); }
+  /* The ink fill is a separate pill (Sidebar's ActivePill) that glides from
+     row to row, so the row itself only changes colour. */
   .side-link[data-active='true'] {
-    background: rgb(var(--c-text-primary));
+    background: transparent;
     color: rgb(var(--c-canvas));
     font-weight: 500;
   }
+  .side-link > :not(.side-pill) { position: relative; z-index: 1; }
+  .side-link svg { transition: transform 0.25s var(--ease-entrance, cubic-bezier(0.22, 1, 0.36, 1)); }
+  .side-link:hover svg { transform: translateX(2px) scale(1.06); }
+  .side-pill {
+    position: absolute;
+    inset: 0;
+    border-radius: var(--radius-pill);
+    background: rgb(var(--c-text-primary));
+  }
+  /* Same glide for the sidebar's theme switch. */
+  .seg-glide { position: relative; }
+  .seg-glide[data-active='true'] { background: transparent; }
+  .seg-glide > :not(.side-pill) { position: relative; z-index: 1; }
   .side-link[data-compact='true'] {
     justify-content: center;
     padding: 0;

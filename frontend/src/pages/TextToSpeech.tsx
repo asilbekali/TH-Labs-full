@@ -12,11 +12,8 @@
 // until it is done. Credits are charged per second of audio produced, at the
 // Balanced dub rate, and only for a render that succeeded.
 import { useEffect, useRef, useState } from 'react'
-import { motion, useReducedMotion } from 'framer-motion'
 import { Link } from 'react-router-dom'
-import Page from '../components/Page'
 import LanguageSelect from '../components/LanguageSelect'
-import { EASE_ENTRANCE } from '../lib/motion'
 import {
   AuthRequiredError,
   PaymentRequiredError,
@@ -145,29 +142,20 @@ export default function TextToSpeech() {
   const audio = task?.status === 'done' ? mediaUrl(task.audio_url) : undefined
 
   return (
-    <Page className="mx-auto max-w-2xl space-y-6 py-2 sm:space-y-8 sm:py-6">
-      <motion.section
-        initial={{ opacity: 0, y: 14, filter: 'blur(6px)' }}
-        animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
-        transition={{ duration: 0.6, ease: EASE_ENTRANCE }}
-        className="text-center"
-      >
-        <Waveform active={running} />
-        <p className="eyebrow mt-6">Text to speech</p>
-        <h1 className="mt-3 text-[clamp(1.75rem,5vw,2.4rem)] font-medium leading-[1.15] text-primary">
+    <div className="mx-auto flex max-w-2xl flex-col gap-6 py-2 sm:py-6 lg:h-full lg:gap-4 lg:py-2">
+      <section className="shrink-0 text-center">
+        <p className="eyebrow">Text to speech</p>
+        <h1 className="mt-2 text-[clamp(1.75rem,5vw,2.4rem)] font-medium leading-[1.15] text-primary">
           Type it. <span className="gradient-text">Hear it.</span>
         </h1>
-        <p className="mx-auto mt-3 max-w-md text-[15px] leading-relaxed text-secondary">
+        <p className="mx-auto mt-2 max-w-md text-[15px] leading-relaxed text-secondary">
           Paste a script, pick a language and a voice, and get it back as natural speech in
           seconds.
         </p>
-      </motion.section>
+      </section>
 
-      <motion.section
-        initial={{ opacity: 0, y: 16 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.6, ease: EASE_ENTRANCE, delay: 0.1 }}
-        className="composer space-y-5 p-4 sm:p-6"
+      <section
+        className="composer flex flex-col gap-4 p-4 sm:p-6 lg:min-h-0 lg:flex-1"
         aria-label="Text to speech"
       >
         <LanguageSelect
@@ -180,7 +168,7 @@ export default function TextToSpeech() {
           label="Language"
         />
 
-        <div>
+        <div className="flex flex-col lg:min-h-0 lg:flex-1">
           <div className="mb-2 flex items-center justify-between">
             <label htmlFor="tts-text" className="eyebrow">
               Script
@@ -200,7 +188,7 @@ export default function TextToSpeech() {
             maxLength={max}
             onChange={(e) => setText(e.target.value)}
             placeholder={PLACEHOLDER[language] ?? PLACEHOLDER.en}
-            className="field min-h-[9rem] resize-y leading-relaxed"
+            className="field min-h-[9rem] resize-none leading-relaxed lg:min-h-[5rem] lg:flex-1"
           />
         </div>
 
@@ -316,10 +304,7 @@ export default function TextToSpeech() {
         )}
 
         {audio && task && (
-          <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.45, ease: EASE_ENTRANCE }}
+          <div
             className="space-y-3 rounded-[var(--radius-card)] border border-success/30 bg-success/[0.07] p-3 sm:p-4"
           >
             <audio controls autoPlay src={audio} className="w-full" />
@@ -336,18 +321,18 @@ export default function TextToSpeech() {
                 Download WAV
               </a>
             </div>
-          </motion.div>
+          </div>
         )}
-      </motion.section>
+      </section>
 
-      <p className="text-center text-sm text-secondary">
+      <p className="shrink-0 text-center text-sm text-secondary">
         Have a video instead?{' '}
         <Link to="/studio" className="font-medium text-primary underline-offset-4 hover:underline">
           Dub it in the Studio
         </Link>
         .
       </p>
-    </Page>
+    </div>
   )
 }
 
@@ -437,41 +422,4 @@ function groups(options: SpeechVoice[]): [string | null, SpeechVoice[]][] {
     ['Trained styles', options.filter((o) => o.group !== 'blend')],
     ['Blends', blends],
   ]
-}
-
-/** Speech-like bars: idle sway, livelier while a render runs, still under
- *  prefers-reduced-motion. */
-function Waveform({ active }: { active: boolean }) {
-  const reduce = useReducedMotion()
-  const BARS = [18, 34, 52, 30, 46, 24, 40, 16]
-  return (
-    <div
-      aria-hidden
-      className="deep-card aurora grain mx-auto flex h-28 w-28 items-center justify-center gap-1.5 rounded-[1.75rem]"
-    >
-      {BARS.map((h, i) => (
-        <motion.span
-          key={i}
-          className="w-1.5 rounded-full"
-          style={{
-            height: h,
-            background: 'linear-gradient(180deg, #ffc128, #ff7a1a 55%, #ff5a3c)',
-            boxShadow: '0 0 12px rgb(255 140 40 / 0.45)',
-          }}
-          initial={{ scaleY: 0.5 }}
-          animate={reduce ? { scaleY: 0.7 } : { scaleY: [0.4, 1, 0.4] }}
-          transition={
-            reduce
-              ? { duration: 0 }
-              : {
-                  duration: active ? 0.6 : 1.2,
-                  repeat: Infinity,
-                  ease: 'easeInOut',
-                  delay: i * (active ? 0.05 : 0.1),
-                }
-          }
-        />
-      ))}
-    </div>
-  )
 }

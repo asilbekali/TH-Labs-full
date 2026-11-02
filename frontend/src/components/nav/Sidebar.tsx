@@ -1,4 +1,6 @@
+import { useId } from 'react'
 import { Link, useLocation } from 'react-router-dom'
+import { AnimatePresence, LayoutGroup, MotionConfig, motion } from 'framer-motion'
 import LogoMark from '../brand/LogoMark'
 import AnimatedNumber from '../AnimatedNumber'
 import { NAV_BOTTOM, NAV_MAIN, RailSvg, type NavItem } from './nav-items'
@@ -6,6 +8,27 @@ import { useWorkspace } from '../../lib/workspace'
 import { useWorks } from '../../lib/works'
 import { affordableSeconds, useWallet } from '../../lib/wallet'
 import { useTheme } from '../../hooks/useTheme'
+import { EASE_ENTRANCE, springLayout } from '../../lib/motion'
+
+// Labels and other expanded-only pieces fade and slide in as the pane widens.
+const reveal = {
+  initial: { opacity: 0, x: -6 },
+  animate: { opacity: 1, x: 0, transition: { duration: 0.25, ease: EASE_ENTRANCE, delay: 0.08 } },
+  exit: { opacity: 0, x: -6, transition: { duration: 0.12 } },
+}
+
+// Rows rise in one after another the first time the pane mounts.
+const list = { hidden: {}, show: { transition: { staggerChildren: 0.04, delayChildren: 0.05 } } }
+const item = {
+  hidden: { opacity: 0, x: -10 },
+  show: { opacity: 1, x: 0, transition: { duration: 0.35, ease: EASE_ENTRANCE } },
+}
+
+/** The ink fill behind the current row. Every row renders it while active and
+ *  framer-motion glides it between them via the shared layoutId. */
+function ActivePill() {
+  return <motion.span layoutId="side-active" className="side-pill" transition={springLayout} />
+}
 
 /**
  * The labelled sidebar.
@@ -36,6 +59,9 @@ export default function Sidebar({
   const { pathname } = useLocation()
   const workspace = useWorkspace()
   const { works } = useWorks()
+  // The desktop pane stays mounted (just hidden) while the mobile drawer is
+  // open, so each instance needs its own layout group or the pills collide.
+  const group = useId()
 
   // Same rule NavLink's `end` would apply, written out because the row needs
   // the verdict as a `data-` attribute (that is what `.side-link` styles on)
@@ -50,87 +76,148 @@ export default function Sidebar({
     return null
   }
 
-  const row = (item: NavItem) => {
-    const b = badge(item)
+  const row = (it: NavItem) => {
+    const b = badge(it)
+    const active = isActive(it)
     return (
-      <Link
-        key={item.to}
-        to={item.to}
-        title={compact ? item.label : undefined}
-        onClick={onNavigate}
-        data-active={isActive(item)}
-        data-compact={compact}
-        aria-current={isActive(item) ? 'page' : undefined}
-        className="side-link focusable relative"
-      >
-        <span className="relative grid shrink-0 place-items-center">
-          <RailSvg icon={item.icon} className="h-5 w-5" />
-          {compact && item.soon && (
-            <span aria-hidden className="absolute -right-1 -top-1 h-[5px] w-[5px] rounded-full bg-brand" />
-          )}
-        </span>
-        {!compact && <span className="truncate">{item.label}</span>}
-        {!compact && b !== null && <span className="side-badge num">{b}</span>}
-      </Link>
+      <motion.div key={it.to} variants={item} className="w-full">
+        <Link
+          to={it.to}
+          title={compact ? it.label : undefined}
+          onClick={onNavigate}
+          data-active={isActive(it)}
+          data-compact={compact}
+          aria-current={isActive(it) ? 'page' : undefined}
+          className="side-link focusable relative"
+        >
+          {active && <ActivePill />}
+          <span className="relative grid shrink-0 place-items-center">
+            <RailSvg icon={it.icon} className="h-5 w-5" />
+            {compact && it.soon && (
+              <span aria-hidden className="absolute -right-1 -top-1 h-[5px] w-[5px] rounded-full bg-brand" />
+            )}
+          </span>
+          <AnimatePresence initial={false}>
+            {!compact && (
+              <motion.span key="label" {...reveal} className="truncate">
+                {it.label}
+              </motion.span>
+            )}
+            {!compact && b !== null && (
+              <motion.span key="badge" {...reveal} className="side-badge num">
+                {b}
+              </motion.span>
+            )}
+          </AnimatePresence>
+        </Link>
+      </motion.div>
     )
   }
 
   return (
-    <aside
-      className={`no-scrollbar shrink-0 flex-col gap-[18px] overflow-y-auto glass rounded-[30px] py-[18px] ${
-        compact ? 'w-[76px] items-center px-3.5' : 'w-[264px] px-3.5'
-      } ${className}`}
-    >
-      {/* Brand. The wordmark disappears when collapsed; the mark never does. */}
-      <Link
-        to="/"
-        onClick={onNavigate}
-        aria-label="TH-Labs home"
-        className={`focusable flex items-center gap-2.5 rounded-xl ${compact ? 'justify-center' : 'px-1.5 py-0.5'}`}
-      >
-        <LogoMark className="h-[38px] w-[38px] shrink-0 text-primary" title="TH-Labs" />
-        {!compact && <span className="text-lg font-semibold tracking-[-0.02em] text-primary">TH-Labs</span>}
-      </Link>
+    <MotionConfig reducedMotion="user">
+      <LayoutGroup id={group}>
+        <motion.aside
+          initial={false}
+          animate={{ width: compact ? 76 : 264 }}
+          transition={springLayout}
+          className={`no-scrollbar shrink-0 flex-col gap-[18px] overflow-y-auto overflow-x-hidden glass rounded-[30px] px-3.5 py-[18px] ${
+            compact ? 'items-center' : ''
+          } ${className}`}
+        >
+          {/* Brand. The wordmark disappears when collapsed; the mark never does. */}
+          <Link
+            to="/"
+            onClick={onNavigate}
+            aria-label="TH-Labs home"
+            className={`focusable flex items-center gap-2.5 rounded-xl ${compact ? 'justify-center' : 'px-1.5 py-0.5'}`}
+          >
+            <motion.span
+              className="shrink-0"
+              initial={{ rotate: -90, scale: 0.6, opacity: 0 }}
+              animate={{ rotate: 0, scale: 1, opacity: 1 }}
+              whileHover={{ rotate: 8, scale: 1.06 }}
+              transition={{ type: 'spring', stiffness: 260, damping: 18 }}
+            >
+              <LogoMark className="h-[38px] w-[38px] text-primary" title="TH-Labs" />
+            </motion.span>
+            <AnimatePresence initial={false}>
+              {!compact && (
+                <motion.span
+                  key="wordmark"
+                  {...reveal}
+                  className="whitespace-nowrap text-lg font-semibold tracking-[-0.02em] text-primary"
+                >
+                  TH-Labs
+                </motion.span>
+              )}
+            </AnimatePresence>
+          </Link>
 
-      {/* The workspace card. There is one workspace per account, so it is an
-          identity card and not a switcher — a chevron here would promise a menu
-          with nothing to put in it. What it states is the account's staff role,
-          or its billing tier when there is no staff role. */}
-      {compact ? (
-        <span
-          aria-label={workspace.label}
-          title={workspace.label}
-          className="h-6 w-6 shrink-0 rounded-full"
-          style={{ background: workspace.gradient }}
-        />
-      ) : (
-        <div className="flex h-12 shrink-0 items-center gap-2.5 rounded-full border border-[var(--card-edge)] bg-[var(--well)] px-3">
-          <span
-            aria-hidden
-            className="h-6 w-6 shrink-0 rounded-full"
-            style={{ background: workspace.gradient }}
-          />
-          <span className="truncate text-sm font-medium text-primary">{workspace.label}</span>
-        </div>
-      )}
+          {/* The workspace card. There is one workspace per account, so it is an
+              identity card and not a switcher — a chevron here would promise a menu
+              with nothing to put in it. What it states is the account's staff role,
+              or its billing tier when there is no staff role. */}
+          {compact ? (
+            <span
+              aria-label={workspace.label}
+              title={workspace.label}
+              className="h-6 w-6 shrink-0 rounded-full"
+              style={{ background: workspace.gradient }}
+            />
+          ) : (
+            <div className="flex h-12 shrink-0 items-center gap-2.5 rounded-full border border-[var(--card-edge)] bg-[var(--well)] px-3">
+              <span
+                aria-hidden
+                className="h-6 w-6 shrink-0 rounded-full"
+                style={{ background: workspace.gradient }}
+              />
+              <span className="truncate text-sm font-medium text-primary">{workspace.label}</span>
+            </div>
+          )}
 
-      <nav aria-label="Create" className="flex w-full flex-col gap-1">
-        {!compact && <span className="side-group">Create</span>}
-        {NAV_MAIN.map(row)}
-      </nav>
+          <motion.nav
+            aria-label="Create"
+            className="flex w-full flex-col gap-1"
+            variants={list}
+            initial="hidden"
+            animate="show"
+          >
+            {!compact && <span className="side-group">Create</span>}
+            {NAV_MAIN.map(row)}
+          </motion.nav>
 
-      {/* `mt-auto` is what pins everything from here down to the bottom edge. */}
-      <div className="mt-auto flex w-full flex-col gap-[18px]">
-        {!compact && <CreditsWell onNavigate={onNavigate} />}
+          {/* `mt-auto` is what pins everything from here down to the bottom edge. */}
+          <div className="mt-auto flex w-full flex-col gap-[18px]">
+            <AnimatePresence initial={false}>
+              {!compact && (
+                <motion.div
+                  key="credits"
+                  initial={{ opacity: 0, y: 8, scale: 0.97 }}
+                  animate={{ opacity: 1, y: 0, scale: 1, transition: { duration: 0.3, ease: EASE_ENTRANCE, delay: 0.1 } }}
+                  exit={{ opacity: 0, scale: 0.97, transition: { duration: 0.12 } }}
+                >
+                  <CreditsWell onNavigate={onNavigate} />
+                </motion.div>
+              )}
+            </AnimatePresence>
 
-        <nav aria-label="Account" className="flex w-full flex-col gap-1">
-          {!compact && <span className="side-group">Account</span>}
-          {NAV_BOTTOM.map(row)}
-        </nav>
+            <motion.nav
+              aria-label="Account"
+              className="flex w-full flex-col gap-1"
+              variants={list}
+              initial="hidden"
+              animate="show"
+            >
+              {!compact && <span className="side-group">Account</span>}
+              {NAV_BOTTOM.map(row)}
+            </motion.nav>
 
-        <ThemeSwitch compact={compact} />
-      </div>
-    </aside>
+            <ThemeSwitch compact={compact} />
+          </div>
+        </motion.aside>
+      </LayoutGroup>
+    </MotionConfig>
   )
 }
 
@@ -190,7 +277,18 @@ function ThemeSwitch({ compact }: { compact: boolean }) {
         aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
         className="bar-icon focusable"
       >
-        <RailSvg icon={theme === 'dark' ? moon : sun} className="h-4 w-4" />
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.span
+            key={theme}
+            className="grid place-items-center"
+            initial={{ rotate: -90, scale: 0.5, opacity: 0 }}
+            animate={{ rotate: 0, scale: 1, opacity: 1 }}
+            exit={{ rotate: 90, scale: 0.5, opacity: 0 }}
+            transition={{ duration: 0.2, ease: EASE_ENTRANCE }}
+          >
+            <RailSvg icon={theme === 'dark' ? moon : sun} className="h-4 w-4" />
+          </motion.span>
+        </AnimatePresence>
       </button>
     )
   }
@@ -205,10 +303,13 @@ function ThemeSwitch({ compact }: { compact: boolean }) {
           aria-checked={theme === t}
           data-active={theme === t}
           onClick={() => setTheme(t)}
-          className="seg focusable flex-1"
+          className="seg seg-glide focusable flex-1"
         >
+          {theme === t && (
+            <motion.span layoutId="theme-active" className="side-pill" transition={springLayout} />
+          )}
           <RailSvg icon={t === 'dark' ? moon : sun} className="h-4 w-4" />
-          {t === 'dark' ? 'Dark' : 'Light'}
+          <span>{t === 'dark' ? 'Dark' : 'Light'}</span>
         </button>
       ))}
     </div>

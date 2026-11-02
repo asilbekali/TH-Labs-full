@@ -138,6 +138,9 @@ const COMPARE_ROWS: { feature: string; values: (string | boolean)[] }[] = [
   { feature: "Custom reference voice", values: [false, true, true] },
   { feature: "Keep background music & effects", values: [false, true, true] },
   { feature: "Fast & Balanced quality", values: [true, true, true] },
+  // Must agree with backend/app/pipeline/plan_models.py.
+  { feature: "Speech recognition", values: ["Standard", "Enhanced", "Best"] },
+  { feature: "AI translation polish", values: [false, true, true] },
   { feature: "Studio quality", values: [false, false, true] },
   { feature: "Lip sync", values: [false, false, true] },
   { feature: "Priority queue", values: [false, true, true] },
@@ -169,6 +172,10 @@ function creditsOf(row: ServerPlan | undefined): {
   return { perGrant, grants, total: perGrant * grants };
 }
 
+// The Free tier's grant, fixed here rather than read from the API: 20 tokens,
+// enough for the five free minutes.
+const FREE_TOKENS = 20;
+
 function buildTiers(plans: ServerPlan[]): UiTier[] {
   return TIER_META.map((m) => {
     // FREE only has a MONTHLY row — there is nothing to buy yearly — so fall
@@ -183,6 +190,7 @@ function buildTiers(plans: ServerPlan[]): UiTier[] {
       );
     };
 
+    const free = m.tier === "FREE";
     return {
       tier: m.tier,
       name: m.name,
@@ -191,9 +199,9 @@ function buildTiers(plans: ServerPlan[]): UiTier[] {
       prices: byCycle((c) => (Number(rowFor(c)?.priceCents) || 0) / 100),
       // Every cycle reads its OWN plan row. Reading the monthly row for both
       // was why monthly and yearly advertised the same number of credits.
-      perGrant: byCycle((c) => creditsOf(rowFor(c)).perGrant),
-      grants: byCycle((c) => creditsOf(rowFor(c)).grants),
-      credits: byCycle((c) => creditsOf(rowFor(c)).total),
+      perGrant: byCycle((c) => (free ? FREE_TOKENS : creditsOf(rowFor(c)).perGrant)),
+      grants: byCycle((c) => (free ? 1 : creditsOf(rowFor(c)).grants)),
+      credits: byCycle((c) => (free ? FREE_TOKENS : creditsOf(rowFor(c)).total)),
       fixedCycle: m.tier === "FREE" ? ("monthly" as Cycle) : undefined,
     };
   });
@@ -1058,11 +1066,11 @@ function CompareDisclosure({
                   <p className="mt-2 text-sm text-secondary">
                     Every new account starts with{" "}
                     <span className="font-mono text-primary">
-                      {catalog.signupBonusCredits ?? 100} tokens
+                      {FREE_TOKENS} tokens
                     </span>{" "}
                     — enough to dub{" "}
                     <span className="font-mono text-primary">
-                      {Math.round((catalog.freeMinuteSeconds ?? 300) / 60)} min
+                      5 min
                     </span>{" "}
                     at Balanced quality, with no card and nothing to cancel.
                   </p>

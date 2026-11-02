@@ -16,6 +16,10 @@ import { leaveToLanding, LOCAL_AUTH } from '../../lib/landing'
 // being wrapped in the centred, scrolling column every other page gets.
 const WORKBENCH_ROUTES = ['/studio', '/works']
 
+// Routes that keep the centred column but fit it to the viewport on desktop
+// instead of scrolling it.
+const FIXED_ROUTES = ['/tts']
+
 const COLLAPSE_KEY = 'th:sidebar-collapsed'
 
 /**
@@ -48,6 +52,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const [drawer, setDrawer] = useState(false)
 
   const workbench = WORKBENCH_ROUTES.includes(pathname) && isDesktop
+  const fixed = FIXED_ROUTES.includes(pathname) && isDesktop
 
   // The shell is always exactly one viewport tall and the CONTENT column is the
   // scroller — the document itself never scrolls.
@@ -136,7 +141,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
 
         <main
           className={
-            workbench
+            workbench || fixed
               ? 'min-h-0 flex-1 overflow-hidden'
               : 'min-h-0 flex-1 overflow-y-auto'
           }
@@ -147,7 +152,11 @@ export default function AppShell({ children }: { children: ReactNode }) {
             // `pb-32` on the inner box rather than on <main>: padding on a
             // scroll container is not always honoured at the end of the scroll
             // range, and the mobile tab bar would sit on top of the last card.
-            <div className="mx-auto w-full max-w-[1400px] px-4 pb-32 pt-2 sm:px-6 lg:px-0 lg:pb-2 lg:pt-0">
+            <div
+              className={`mx-auto w-full max-w-[1400px] px-4 pb-32 pt-2 sm:px-6 lg:px-0 lg:pb-2 lg:pt-0 ${
+                fixed ? 'h-full' : ''
+              }`}
+            >
               {children}
             </div>
           )}
