@@ -100,7 +100,7 @@ export default function Realtime() {
               </p>
               <p className="mt-0.5 text-[12px] text-muted">Live pricing will be announced at launch.</p>
             </div>
-            <Link to="/plans" className="btn-ghost focusable inline-flex h-9 items-center px-4 text-[13px]">
+            <Link to="/plans" className="btn-primary focusable inline-flex h-9 items-center px-4 text-[13px]">
               Top up tokens
             </Link>
           </div>

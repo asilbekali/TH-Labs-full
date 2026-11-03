@@ -39,7 +39,7 @@ export const TOOL_INFO: Record<Tool, { name: string; blurb: string }> = {
     blurb: 'Fix a wrong word and re-dub only that line — not the whole video.',
   },
   videoEditor: {
-    name: 'Video editor',
+    name: 'AI Voiceover',
     blurb: 'Voice an animation: type lines, cut and place speech, add music.',
   },
   realtime: { name: 'Real-time dubbing', blurb: 'Live translation of a stream or call.' },

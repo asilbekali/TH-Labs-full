@@ -47,6 +47,11 @@ RUN test -f dist/main.js
 # ── runtime ─────────────────────────────────────────────────────────────────
 FROM base AS runtime
 ENV NODE_ENV=production
+# ffmpeg: the speech editor splices re-voiced lines into a dub, and the video
+# editor renders its timeline (src/media/media.service.ts).
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ffmpeg \
+ && rm -rf /var/lib/apt/lists/*
 
 # node_modules is taken from `build` rather than `deps` so it carries the
 # generated Prisma client. devDependencies ride along on purpose: this image is
@@ -73,7 +78,7 @@ RUN sed -i 's/\r$//' /usr/local/bin/docker-entrypoint.sh \
 # to path.join(process.cwd(), 'logs') and mkdirs it during construction. /app is
 # root-owned, so the unprivileged runtime user cannot create it and Nest dies
 # in the injector with EACCES before it ever listens.
-RUN mkdir -p /app/logs && chown node:node /app/logs
+RUN mkdir -p /app/logs /app/data && chown node:node /app/logs /app/data
 
 USER node
 EXPOSE 3000

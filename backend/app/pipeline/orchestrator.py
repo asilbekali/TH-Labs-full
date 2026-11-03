@@ -168,7 +168,7 @@ class Orchestrator:
     async def run(self, job: Job, input_video: Path, scenario: str,
                   emit: EmitFn, force_simulate: bool = False,
                   preset_segments: list[Segment] | None = None,
-                  reference_audio: Path | None = None) -> dict:
+                  reference_audio: Path | None = None) -> None:
         """Dub `input_video` into `job.options.target_lang`.
 
         `preset_segments` re-voices an existing transcript instead of producing
@@ -180,12 +180,6 @@ class Orchestrator:
         `reference_audio` is a voice to dub in, supplied by the user instead of
         taken from the video. It replaces the speaker reference for whichever
         cloning mode is selected.
-
-        Returns the run's artifacts — the voice stem, the background bed, the
-        video it was muxed onto, the engine and the speaker reference. They are
-        server paths, so they go to the job manager and never to the browser;
-        re-dubbing a single line (pipeline/redub.py) needs every one of them to
-        patch this dub instead of starting it over.
         """
         s = get_settings()
         options = job.options
@@ -392,9 +386,6 @@ class Orchestrator:
         voiced: TTSOutcome | None = None
         tts_stats: dict | None = None
         emotions: dict | None = None
-        # The voice the dub was cloned from, kept for re-dubbing single lines
-        # in the same voice later. (None, None) when nothing was cloned.
-        ref_used: tuple[Path | None, str | None] = (None, None)
         async with _stage(job, "tts", emit) as st:
             done = False
             # voice_mode is authoritative; voice_clone is what older clients
@@ -449,7 +440,6 @@ class Orchestrator:
                              tts_stats, emotions)
                     if voiced.ok:
                         tts_engine, used_real, done = "Navoiy", True, True
-                        ref_used = (ref_audio, None)
                         voice_cloned = bool(tts_stats and tts_stats["cloned"])
                         if voice_cloned and self.cloner.available():
                             measured_similarity = await asyncio.to_thread(
@@ -486,7 +476,6 @@ class Orchestrator:
                     if ok:
                         tts_engine, voice_cloned, used_real, done = \
                             "OmniVoice", bool(ref_audio), True, True
-                        ref_used = (ref_audio, ref_text)
                 except Exception as exc:
                     st.message = f"OmniVoice unavailable ({str(exc)[:45]})"
             # 2) edge-tts — real neural speech (generic per-language voice)
@@ -520,7 +509,6 @@ class Orchestrator:
                                         dubbed_audio = cloned
                                         tts_engine = "edge-tts + OpenVoice"
                                         voice_cloned = True
-                                        ref_used = (ref_audio, None)
                                         measured_similarity = sim
                                         st.message = f"cloned to source speaker · {sim}% match"
                             except Exception as exc:
@@ -764,8 +752,6 @@ class Orchestrator:
         # ── finalise ------------------------------------------------------
         elapsed = time.perf_counter() - started
         job.result.output_url = f"/media/outputs/{out_video.name}"
-        if dubbed_audio.exists() and dubbed_audio.parent == s.outputs_dir:
-            job.result.voice_url = f"/media/outputs/{dubbed_audio.name}"
         length_ratio = self.nmt.length_ratio(segments)
         job.result.metrics = metrics.simulated_metrics(
             job.id, options, elapsed, duration, length_ratio,
@@ -777,18 +763,6 @@ class Orchestrator:
             for i, seg in enumerate(job.result.segments):
                 seg.speaker_similarity = round(
                     max(0.0, min(99.9, base_sim + metrics._jitter(job.id, f"s{i}", 3.0))), 1)
-
-        return {
-            "voice": str(dubbed_audio),
-            "background": str(background) if background is not None else None,
-            "video": str(working_video),
-            "duration": duration,
-            "engine": tts_engine,
-            "voice_mode": mode,
-            "ref_audio": str(ref_used[0]) if ref_used[0] else None,
-            "ref_text": ref_used[1],
-            "lip_synced": working_video != input_video,
-        }
 
 
 # ── small async helpers ───────────────────────────────────────────────────

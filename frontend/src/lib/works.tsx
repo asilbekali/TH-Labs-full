@@ -73,6 +73,12 @@ export interface Work {
 
 interface WorksContextValue {
   works: Work[]
+  /**
+   * True once the first sync with the server has finished (or failed). Until
+   * then an empty `works` means "still loading", not "no dubs" — a page must
+   * not tell someone their library is empty while it is being fetched.
+   */
+  ready: boolean
   addWork: (w: Work) => void
   updateWork: (id: string, patch: Partial<Work>) => void
   removeWork: (id: string) => void
@@ -199,6 +205,7 @@ export function WorksProvider({ children }: { children: ReactNode }) {
   // Which account `works` belongs to. Saving is skipped until it matches, so a
   // sign-out/sign-in never writes one account's list under the other's key.
   const [owner, setOwner] = useState<number | null>(null)
+  const [ready, setReady] = useState(false)
 
   const worksRef = useRef(works)
   worksRef.current = works
@@ -233,6 +240,8 @@ export function WorksProvider({ children }: { children: ReactNode }) {
       result.push.forEach(push)
     } catch {
       /* offline or API asleep — the cached copy stays on screen */
+    } finally {
+      setReady(true)
     }
   }, [push])
 
@@ -250,6 +259,8 @@ export function WorksProvider({ children }: { children: ReactNode }) {
     worksRef.current = cached
     setWorks(cached)
     setOwner(userId)
+    // A cached copy is something to show; an empty cache is not an answer.
+    setReady(cached.length > 0)
     void refresh()
   }, [userId, refresh])
 
@@ -324,8 +335,8 @@ export function WorksProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const value = useMemo<WorksContextValue>(
-    () => ({ works, addWork, updateWork, removeWork, clear }),
-    [works, addWork, updateWork, removeWork, clear],
+    () => ({ works, ready, addWork, updateWork, removeWork, clear }),
+    [works, ready, addWork, updateWork, removeWork, clear],
   )
 
   return <WorksContext.Provider value={value}>{children}</WorksContext.Provider>

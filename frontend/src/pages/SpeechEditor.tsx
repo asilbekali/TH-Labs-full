@@ -3,21 +3,35 @@
 // For agencies delivering dubs to a client: when a word comes out wrong, the
 // fix must not cost a whole new dub. Here you open a finished video, correct
 // the line (its words, its timing, or both), and only that section is
-// re-voiced and spliced back in — POST /api/jobs/{id}/segments, see
-// backend/app/pipeline/redub.py. Everything you did not touch stays exactly as
-// it was, down to the sample.
+// re-voiced and spliced back in — POST /v1/speech-edits on the account API
+// (api/src/speech-edit). Everything you did not touch stays exactly as it was.
+// The dub itself is read from the dubbing pipeline; each correction is a new
+// version kept by the account API.
 //
 //   /editor          your dubs, to pick one
 //   /editor/:jobId   the editor; `?lines=3,4` opens with those lines selected
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { AnimatePresence, motion } from 'framer-motion'
 import Page from '../components/Page'
 import IssuesPanel from '../components/IssuesPanel'
 import UpgradeGate from '../components/UpgradeGate'
-import { editSegments, getJob, listJobs, mediaUrl, type LineEdit } from '../lib/api'
+import WorkThumb from '../components/WorkThumb'
+import HowItWorks from '../components/HowItWorks'
+import { SQUARED } from '../lib/shape'
+import { getJob, mediaUrl } from '../lib/api'
 import { usePlan } from '../lib/plan'
-import type { Job, JobSummary, Segment } from '../lib/types'
+import {
+  accountMediaUrl,
+  createSpeechEdit,
+  getDubIssues,
+  listSpeechEdits,
+  type LineEdit,
+  type SpeechEditVersion,
+} from '../lib/tools-api'
+import type { Issue, Job, Segment } from '../lib/types'
+import { useWorks, workTitle } from '../lib/works'
 
 const POLL_MS = 1500
 const MIN_LINE = 0.2
@@ -42,11 +56,11 @@ export default function SpeechEditor() {
         tool="speechEditor"
         points={[
           'Fix a mispronounced word without re-dubbing the video',
-          'Only the edited section is re-voiced, in the same voice',
+          'Only the edited section is re-voiced; the rest stays untouched',
           'Drag a line on the timeline to re-time it',
           'Every problem found after a dub, with the fix',
           'Each fix is a new version — the earlier one stays playable',
-          'No tokens charged for corrections',
+          'Pay only for the seconds of speech re-voiced',
         ]}
       />
     )
@@ -57,67 +71,93 @@ export default function SpeechEditor() {
 // ── The list ─────────────────────────────────────────────────────────────────
 
 function DubList() {
-  const [jobs, setJobs] = useState<JobSummary[] | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  useEffect(() => {
-    listJobs()
-      .then(setJobs)
-      .catch((e) => setError(e instanceof Error ? e.message : 'Could not load your dubs.'))
-  }, [])
-  const done = (jobs ?? []).filter((j) => j.status === 'completed')
+  // The library the Studio keeps of every dub (GET /v1/works).
+  const { works, ready } = useWorks()
+  const done = works.filter((w) => w.status === 'completed')
 
   return (
-    <Page className="mx-auto w-full max-w-5xl py-2 sm:py-6">
+    // No pill or capsule shapes on this page (lib/shape.ts).
+    <Page className="mx-auto w-full max-w-5xl py-2 sm:py-6" style={SQUARED}>
       <p className="eyebrow">Speech editor</p>
       <h1 className="mt-2 text-[clamp(1.6rem,4vw,2.2rem)] font-medium leading-tight text-primary">
         Fix a line, <span className="gradient-text">not the whole video.</span>
       </h1>
       <p className="mt-2 max-w-2xl text-[15px] leading-relaxed text-secondary">
         Pick a dub. Correct a word or re-time a line, and only that section is re-voiced and
-        put back — in the same voice, with everything else untouched.
+        put back — everything else stays exactly as it was.
       </p>
 
-      {error && <p className="mt-6 text-sm text-danger">{error}</p>}
-      {jobs === null && !error && (
-        <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      <HowItWorks
+        className="mt-6"
+        steps={[
+          {
+            title: 'Pick a dub',
+            body: 'Choose one of your finished dubs below. Its lines open on a timeline.',
+          },
+          {
+            title: 'Fix the line',
+            body: 'Click a line to change its words, or drag its edges to change when it is said.',
+          },
+          {
+            title: 'Re-dub just that part',
+            body: 'Press “Re-dub”. Only the changed lines are re-voiced; the rest stays as it is.',
+          },
+        ]}
+      />
+
+      <h2 className="mt-8 text-sm font-medium text-primary">Your dubs</h2>
+      {!ready && done.length === 0 && (
+        <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3" aria-label="Loading your dubs">
           {[0, 1, 2].map((i) => (
-            <div key={i} className="card h-32 animate-pulse" />
+            <div key={i} className="card overflow-hidden">
+              <div className="shimmer aspect-video bg-sunken" />
+              <div className="space-y-2 p-3.5">
+                <div className="shimmer h-3.5 w-2/3 rounded-[6px] bg-sunken" />
+                <div className="shimmer h-3 w-1/2 rounded-[6px] bg-sunken" />
+              </div>
+            </div>
           ))}
         </div>
       )}
-      {jobs !== null && done.length === 0 && (
-        <div className="card mt-6 p-6 text-center">
-          <p className="text-sm text-secondary">You have no finished dubs on this server yet.</p>
-          <Link to="/studio" className="btn-primary focusable mt-4 inline-flex h-10 items-center px-5 text-sm">
+      {ready && done.length === 0 && (
+        <div className="card mt-3 flex flex-col items-center gap-3 p-8 text-center">
+          <p className="text-sm font-medium text-primary">No finished dubs yet</p>
+          <p className="max-w-sm text-[13px] text-secondary">
+            Dub a video in the Studio first. When it is done, it shows up here, ready to fix.
+          </p>
+          <Link to="/studio" className="btn-primary focusable inline-flex h-10 items-center px-5 text-sm">
             Dub a video
           </Link>
         </div>
       )}
-      <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {done.map((j) => (
+      <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {done.map((w) => (
+          // The video, like My works: the frame is what an editor recognises
+          // a dub by, not its file name.
           <Link
-            key={j.id}
-            to={j.editable ? `/editor/${j.id}` : '#'}
-            aria-disabled={!j.editable}
-            className={`card card-hover focusable flex flex-col gap-2 p-4 ${j.editable ? '' : 'pointer-events-none opacity-60'}`}
+            key={w.id}
+            to={`/editor/${w.id}`}
+            style={SQUARED}
+            className="card card-hover focusable group flex flex-col overflow-hidden"
           >
-            <div className="flex items-start justify-between gap-2">
-              <p className="line-clamp-2 text-sm font-medium text-primary">{j.filename || 'Untitled video'}</p>
-              {j.issues > 0 && (
-                <span className="chip shrink-0 border-danger/40 px-2 py-0.5 text-[11px] text-danger">
-                  {j.issues} to fix
+            <div className="relative aspect-video w-full overflow-hidden bg-black">
+              <WorkThumb work={w} />
+              {w.durationSec ? (
+                <span className="absolute bottom-2 right-2 rounded-[6px] bg-black/60 px-1.5 py-0.5 font-mono text-[11px] text-white">
+                  {ts(w.durationSec)}
                 </span>
-              )}
+              ) : null}
+              <span className="absolute inset-0 grid place-items-center bg-black/0 text-sm font-medium text-white opacity-0 transition-all duration-200 group-hover:bg-black/35 group-hover:opacity-100">
+                ✎ Edit speech
+              </span>
             </div>
-            <p className="font-mono text-[12px] text-muted">
-              {j.source_lang.toUpperCase()} → {j.target_lang.toUpperCase()} · {j.segments} lines
-              {j.duration ? ` · ${ts(j.duration)}` : ''}
-            </p>
-            <p className="mt-auto text-[12px] text-muted">
-              {j.editable
-                ? `${new Date(j.created_at * 1000).toLocaleString()}${j.edit_version ? ` · v${j.edit_version + 1}` : ''}`
-                : 'Made before editing existed — dub it again to edit'}
-            </p>
+            <div className="flex flex-col gap-1 p-3.5">
+              <p className="truncate text-sm font-medium text-primary">{workTitle(w)}</p>
+              <p className="font-mono text-[12px] text-muted">
+                {w.sourceLang.toUpperCase()} → {w.targetLang.toUpperCase()} · {w.segments.length} lines ·{' '}
+                {new Date(w.createdAt).toLocaleDateString()}
+              </p>
+            </div>
           </Link>
         ))}
       </div>
@@ -133,6 +173,9 @@ function Editor({ jobId }: { jobId: string }) {
   const navigate = useNavigate()
   const [params] = useSearchParams()
   const [job, setJob] = useState<Job | null>(null)
+  // Corrected versions of this dub, newest first (account API).
+  const [versions, setVersions] = useState<SpeechEditVersion[]>([])
+  const [issues, setIssues] = useState<Issue[]>([])
   const [loadError, setLoadError] = useState<string | null>(null)
   const [drafts, setDrafts] = useState<Record<number, Draft>>({})
   const [selected, setSelected] = useState<number | null>(null)
@@ -153,11 +196,16 @@ function Editor({ jobId }: { jobId: string }) {
 
   const load = useCallback(async () => {
     try {
-      const j = await getJob(jobId)
+      const [j, v] = await Promise.all([getJob(jobId), listSpeechEdits(jobId)])
       setJob(j)
-      return j
+      setVersions(v)
+      return v
     } catch (e) {
-      setLoadError(e instanceof Error ? e.message : 'Could not open this dub.')
+      setLoadError(
+        e instanceof Error
+          ? `${e.message} — this dub is no longer on the dubbing server, so it cannot be edited.`
+          : 'Could not open this dub.',
+      )
       return null
     }
   }, [jobId])
@@ -166,34 +214,44 @@ function Editor({ jobId }: { jobId: string }) {
   const watch = useCallback(() => {
     if (poll.current) window.clearTimeout(poll.current)
     poll.current = window.setTimeout(async () => {
-      const j = await load()
-      if (!j?.edit) return
-      if (j.edit.status === 'queued' || j.edit.status === 'running') return watch()
+      let v: SpeechEditVersion[]
+      try {
+        v = await listSpeechEdits(jobId)
+      } catch {
+        return watch()
+      }
+      setVersions(v)
+      const newest = v[0]
+      if (!newest) return
+      if (newest.status === 'QUEUED' || newest.status === 'RUNNING') return watch()
       setSubmitting(false)
-      if (j.edit.status === 'done') {
+      if (newest.status === 'DONE') {
         setDrafts({})
-        const n = j.edit.segment_ids.length
+        const n = newest.changed.length
         setNotice(
-          `Re-dubbed ${n} line${n === 1 ? '' : 's'} — this is version ${j.edit.version + 1}.` +
-            (j.edit.message ? ` ${j.edit.message}.` : ''),
+          `Re-dubbed ${n} line${n === 1 ? '' : 's'} — this is version ${newest.version + 1}.` +
+            (newest.message ? ` ${newest.message}.` : ''),
         )
-      } else if (j.edit.status === 'failed') {
-        setError(j.edit.error ?? 'The edit could not be applied.')
+      } else {
+        setError(newest.error ?? 'The edit could not be applied.')
       }
     }, POLL_MS)
-  }, [load])
+  }, [jobId])
 
   useEffect(() => {
-    void load().then((j) => {
-      if (j?.edit && (j.edit.status === 'queued' || j.edit.status === 'running')) {
+    void load().then((v) => {
+      if (v?.[0] && (v[0].status === 'QUEUED' || v[0].status === 'RUNNING')) {
         setSubmitting(true)
         watch()
       }
     })
+    getDubIssues(jobId)
+      .then(setIssues)
+      .catch(() => setIssues([]))
     return () => {
       if (poll.current) window.clearTimeout(poll.current)
     }
-  }, [load, watch])
+  }, [load, watch, jobId])
 
   // Open on the lines a "Fix these lines" link pointed at.
   useEffect(() => {
@@ -203,7 +261,16 @@ function Editor({ jobId }: { jobId: string }) {
     rowRefs.current[first]?.scrollIntoView({ block: 'center', behavior: 'smooth' })
   }, [job, highlighted])
 
-  const segments = useMemo(() => job?.result.segments ?? [], [job])
+  // The dub as it stands: the newest finished correction, or the dub itself.
+  const current = versions.find((v) => v.status === 'DONE') ?? null
+  const segments = useMemo(
+    () => current?.segments ?? job?.result.segments ?? [],
+    [current, job],
+  )
+  const videoUrl = current ? accountMediaUrl(current.outputUrl) : mediaUrl(job?.result.output_url ?? null)
+  const pending = versions[0] && (versions[0].status === 'QUEUED' || versions[0].status === 'RUNNING')
+    ? versions[0]
+    : null
   const duration = job?.result.duration ?? (segments.length ? segments[segments.length - 1].end : 0)
 
   // The transcript as it will be after the drafts are applied.
@@ -235,16 +302,16 @@ function Editor({ jobId }: { jobId: string }) {
 
   const issueLines = useMemo(() => {
     const m = new Map<number, 'error' | 'warning' | 'info'>()
-    for (const i of job?.result.issues ?? []) {
+    for (const i of issues) {
       for (const id of i.segment_ids) {
         const cur = m.get(id)
         if (!cur || (cur !== 'error' && i.severity === 'error')) m.set(id, i.severity)
       }
     }
     return m
-  }, [job])
+  }, [issues])
 
-  const editing = submitting || job?.edit?.status === 'queued' || job?.edit?.status === 'running'
+  const editing = submitting || !!pending
 
   function setDraft(id: number, patch: Draft) {
     setDrafts((d) => ({ ...d, [id]: { ...d[id], ...patch } }))
@@ -279,8 +346,8 @@ function Editor({ jobId }: { jobId: string }) {
     setNotice(null)
     setSubmitting(true)
     try {
-      const j = await editSegments(jobId, edits)
-      setJob(j)
+      const created = await createSpeechEdit(jobId, edits)
+      setVersions((v) => [created, ...v])
       watch()
     } catch (e) {
       setSubmitting(false)
@@ -292,7 +359,7 @@ function Editor({ jobId }: { jobId: string }) {
     return (
       <Page className="mx-auto max-w-xl py-10 text-center">
         <p className="text-sm text-danger">{loadError}</p>
-        <button type="button" onClick={() => navigate('/editor')} className="btn-ghost focusable mt-4 h-10 px-5 text-sm">
+        <button type="button" onClick={() => navigate('/editor')} className="btn-primary focusable mt-4 h-10 px-5 text-sm">
           Back to your dubs
         </button>
       </Page>
@@ -301,13 +368,13 @@ function Editor({ jobId }: { jobId: string }) {
   if (!job) return <Page className="card mx-auto mt-6 h-64 max-w-5xl animate-pulse">{null}</Page>
 
   const sel = view.find((s) => s.id === selected) ?? null
-  const version = (job.edit?.version ?? 0) + 1
+  const version = (current?.version ?? 0) + 1
 
   return (
-    <Page className="mx-auto flex w-full max-w-6xl flex-col gap-4 pb-28 lg:pb-6">
+    <Page className="mx-auto flex w-full max-w-6xl flex-col gap-4 pb-28 lg:pb-6" style={SQUARED}>
       {/* Header */}
       <div className="flex flex-wrap items-center gap-3">
-        <Link to="/editor" className="btn-ghost focusable inline-flex h-9 items-center px-3 text-[13px]">
+        <Link to="/editor" className="btn-primary focusable inline-flex h-9 items-center px-3 text-[13px]">
           ← Dubs
         </Link>
         <div className="min-w-0 flex-1">
@@ -317,19 +384,21 @@ function Editor({ jobId }: { jobId: string }) {
             {job.options.target_lang.toUpperCase()} · {segments.length} lines · version {version}
           </p>
         </div>
-        {job.result.output_url && (
-          <a href={mediaUrl(job.result.output_url)} download className="btn-ghost focusable inline-flex h-9 items-center px-4 text-[13px]">
+        {videoUrl && (
+          <a href={videoUrl} download className="btn-primary focusable inline-flex h-9 items-center px-4 text-[13px]">
             ↓ Download
           </a>
         )}
       </div>
+
+      <FirstTip />
 
       {editing && (
         <div className="flex items-center gap-3 rounded-[var(--radius-control)] border border-brand/30 bg-brand/[0.07] px-4 py-3 text-sm text-primary" aria-live="polite">
           <span className="eq" aria-hidden>
             <i /><i /><i /><i />
           </span>
-          Re-dubbing only the changed section… {job.edit?.message}
+          Re-dubbing only the changed section… {pending?.message}
         </div>
       )}
       {notice && !editing && (
@@ -348,9 +417,9 @@ function Editor({ jobId }: { jobId: string }) {
         <div className="flex min-w-0 flex-col gap-4">
           <div className="card overflow-hidden">
             <video
-              key={job.result.output_url ?? ''}
+              key={videoUrl ?? ''}
               ref={videoRef}
-              src={mediaUrl(job.result.output_url)}
+              src={videoUrl}
               controls
               playsInline
               onTimeUpdate={(e) => {
@@ -399,11 +468,11 @@ function Editor({ jobId }: { jobId: string }) {
                 className="field mt-2 w-full resize-none text-sm leading-relaxed"
               />
               <div className="mt-2 flex flex-wrap items-center gap-2">
-                <button type="button" onClick={() => playSection(sel)} className="btn-ghost focusable h-8 px-3 text-[12px]">
+                <button type="button" onClick={() => playSection(sel)} className="btn-primary focusable h-8 px-3 text-[12px]">
                   ▶ Play this section
                 </button>
                 {drafts[sel.id] && (
-                  <button type="button" onClick={() => revert(sel.id)} className="btn-ghost focusable h-8 px-3 text-[12px]">
+                  <button type="button" onClick={() => revert(sel.id)} className="btn-primary focusable h-8 px-3 text-[12px]">
                     Undo changes
                   </button>
                 )}
@@ -414,7 +483,7 @@ function Editor({ jobId }: { jobId: string }) {
             </div>
           )}
           <IssuesPanel
-            issues={job.result.issues ?? []}
+            issues={issues}
             segments={segments}
             canEditLines
             compact
@@ -457,7 +526,7 @@ function Editor({ jobId }: { jobId: string }) {
                       <span className={`h-1.5 w-1.5 rounded-full ${issue === 'error' ? 'bg-danger' : issue === 'warning' ? 'bg-warn' : 'bg-info'}`} />
                     )}
                     {changed && <span className="chip ml-auto px-1.5 py-0 text-[10px] text-brand">edited</span>}
-                    {job.edit?.segment_ids.includes(s.id) && !changed && (
+                    {current?.changed.includes(s.id) && !changed && (
                       <span className="chip ml-auto px-1.5 py-0 text-[10px] text-success">re-dubbed</span>
                     )}
                   </button>
@@ -488,11 +557,11 @@ function Editor({ jobId }: { jobId: string }) {
         <div className="deep-card grain flex flex-wrap items-center gap-3 px-4 py-3">
           <span className="above min-w-0 flex-1 text-sm text-white">
             {edits.length
-              ? `${edits.length} line${edits.length > 1 ? 's' : ''} changed — only ${edits.length > 1 ? 'those sections' : 'that section'} will be re-dubbed. No tokens charged.`
+              ? `${edits.length} line${edits.length > 1 ? 's' : ''} changed — only ${edits.length > 1 ? 'those sections' : 'that section'} will be re-dubbed, in the standard voice for the language. Priced like text to speech.`
               : 'Change a line’s words or drag it on the timeline, then re-dub just that part.'}
           </span>
           {edits.length > 0 && !editing && (
-            <button type="button" onClick={() => setDrafts({})} className="btn-on-deep focusable above h-10 px-4 text-[13px] opacity-80">
+            <button type="button" onClick={() => setDrafts({})} className="btn-primary focusable above h-10 px-4 text-[13px] opacity-80">
               Discard
             </button>
           )}
@@ -500,7 +569,7 @@ function Editor({ jobId }: { jobId: string }) {
             type="button"
             onClick={apply}
             disabled={!edits.length || editing}
-            className="btn-on-deep focusable above h-10 px-5 text-sm disabled:opacity-50"
+            className="btn-primary focusable above h-10 px-5 text-sm disabled:opacity-50"
           >
             {editing
               ? 'Re-dubbing…'
@@ -511,6 +580,57 @@ function Editor({ jobId }: { jobId: string }) {
         </div>
       </div>
     </Page>
+  )
+}
+
+const TIP_KEY = 'th-labs.tip.speech-editor'
+
+/**
+ * How to fix a line, in three steps — shown until the customer closes it, and
+ * never again after that on this device.
+ */
+function FirstTip() {
+  const [open, setOpen] = useState(() => {
+    try {
+      return localStorage.getItem(TIP_KEY) !== 'closed'
+    } catch {
+      return true
+    }
+  })
+  const close = () => {
+    setOpen(false)
+    try {
+      localStorage.setItem(TIP_KEY, 'closed')
+    } catch {
+      /* the tip simply shows again next time */
+    }
+  }
+  return (
+    <AnimatePresence initial={false}>
+      {open && (
+        <motion.div
+          initial={{ opacity: 0, height: 0 }}
+          animate={{ opacity: 1, height: 'auto' }}
+          exit={{ opacity: 0, height: 0 }}
+          transition={{ duration: 0.25 }}
+          className="overflow-hidden"
+        >
+          <div className="flex flex-wrap items-start gap-x-6 gap-y-2 rounded-[14px] border border-brand/25 bg-brand/[0.06] px-4 py-3 text-[13px] text-secondary">
+            <p className="font-medium text-primary">How to fix a line</p>
+            <p><span className="font-mono text-brand">1</span> Click the line on the right or on the timeline.</p>
+            <p><span className="font-mono text-brand">2</span> Change its words, or drag its edges to move it.</p>
+            <p><span className="font-mono text-brand">3</span> Press “Re-dub” — only that part is re-voiced.</p>
+            <button
+              type="button"
+              onClick={close}
+              className="focusable ml-auto text-[12px] font-medium text-primary underline-offset-4 hover:underline"
+            >
+              Got it
+            </button>
+          </div>
+        </motion.div>
+      )}
+    </AnimatePresence>
   )
 }
 

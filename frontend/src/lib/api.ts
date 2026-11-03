@@ -25,7 +25,7 @@
 // When a call fails the caller surfaces the failure rather than substituting
 // invented content.
 import { apiUrl, authFetchUrl, getAccessToken } from './http'
-import type { Health, Job, JobEvent, JobSummary, Language } from './types'
+import type { Health, Job, JobEvent, Language } from './types'
 
 const BASE: string = import.meta.env.VITE_DUB_API ?? '/api'
 
@@ -227,49 +227,6 @@ export async function revoiceJob(
   return (await r.json()).job
 }
 
-/** Pull FastAPI's `detail` sentence out of an error response. */
-async function failure(r: Response, what: string): Promise<Error> {
-  const raw = await r.text().catch(() => '')
-  let detail = ''
-  try {
-    const parsed = JSON.parse(raw)
-    if (typeof parsed?.detail === 'string') detail = parsed.detail
-  } catch {
-    /* not JSON */
-  }
-  if (r.status === 401) return new AuthRequiredError()
-  if (r.status === 402) return new PaymentRequiredError(detail)
-  return new Error(detail || `${what}: ${r.status}`)
-}
-
-/** This user's dubs, newest first (GET /api/jobs). */
-export async function listJobs(): Promise<JobSummary[]> {
-  const r = await authFetchUrl(`${BASE}/jobs`)
-  if (!r.ok) throw await failure(r, 'could not list your dubs')
-  return (await r.json()).jobs
-}
-
-export interface LineEdit {
-  id: number
-  target_text?: string
-  start?: number
-  end?: number
-}
-
-/**
- * Re-dub only the changed lines of a finished dub (Studio Max). Returns at
- * once; progress is on `job.edit` — poll getJob until it is done or failed.
- */
-export async function editSegments(jobId: string, segments: LineEdit[]): Promise<Job> {
-  const r = await authFetchUrl(`${BASE}/jobs/${jobId}/segments`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ segments }),
-  })
-  if (!r.ok) throw await failure(r, 'the edit failed')
-  return (await r.json()).job
-}
-
 export async function getJob(jobId: string): Promise<Job> {
   const r = await authFetchUrl(`${BASE}/jobs/${jobId}`)
   if (r.status === 401) throw new AuthRequiredError()
@@ -393,6 +350,11 @@ async function speechError(r: Response, what: string): Promise<Error> {
     /* not JSON */
   }
   if (r.status === 402) return new PaymentRequiredError(detail)
+  // 502/504 come from the proxy in front of the dubbing service, not from the
+  // service itself: it is down or still starting. Say so, not "failed: 502".
+  if (!detail && (r.status === 502 || r.status === 504)) {
+    return new Error('The dubbing service is not reachable right now. Try again in a minute.')
+  }
   return new Error(detail || `${what}: ${r.status}`)
 }
 
@@ -416,127 +378,4 @@ export async function getSpeech(id: string): Promise<SpeechTask> {
   if (r.status === 401) throw new AuthRequiredError()
   if (!r.ok) throw await speechError(r, 'speech status failed')
   return (await r.json()).task
-}
-
-// ── Video editor (Studio Max; backend/app/editor.py) ─────────────────────────
-
-export interface EditorAsset {
-  id: string
-  kind: 'video' | 'audio'
-  name: string
-  url: string
-  duration: number
-  has_audio: boolean
-  width: number | null
-  height: number | null
-  source: 'upload' | 'tts' | 'dub'
-  text: string | null
-  /** Loudness envelope, 20 points a second, 0..1. */
-  peaks: number[]
-}
-
-export interface EditorClip {
-  id: string
-  asset_id: string
-  /** Position on the timeline, seconds. */
-  start: number
-  /** The part of the asset that plays, in asset seconds. */
-  trim_in: number
-  trim_out: number
-  volume: number
-  fade_in: number
-  fade_out: number
-  label?: string | null
-}
-
-export type TrackKind = 'video' | 'voice' | 'music' | 'audio'
-
-export interface EditorTrack {
-  id: string
-  kind: TrackKind
-  name: string
-  muted: boolean
-  volume: number
-  clips: EditorClip[]
-}
-
-export interface RenderState {
-  status: 'idle' | 'running' | 'done' | 'failed'
-  progress: number
-  url: string | null
-  error: string | null
-  updated_at: number | null
-}
-
-export interface EditorProject {
-  id: string
-  owner_id: number
-  name: string
-  created_at: number
-  updated_at: number
-  assets: EditorAsset[]
-  tracks: EditorTrack[]
-  render: RenderState
-}
-
-export interface EditorProjectSummary {
-  id: string
-  name: string
-  created_at: number
-  updated_at: number
-  duration: number
-  assets: number
-  clips: number
-  video_url: string | null
-  render: RenderState
-}
-
-async function editorJson<T>(path: string, init?: RequestInit): Promise<T> {
-  const r = await authFetchUrl(`${BASE}/editor${path}`, init)
-  if (!r.ok) throw await failure(r, 'the editor request failed')
-  return r.json()
-}
-
-const JSON_HEADERS = { 'Content-Type': 'application/json' }
-
-export const editorApi = {
-  list: () =>
-    editorJson<{ projects: EditorProjectSummary[] }>('/projects').then((r) => r.projects),
-  create: (name: string) =>
-    editorJson<{ project: EditorProject }>('/projects', {
-      method: 'POST',
-      headers: JSON_HEADERS,
-      body: JSON.stringify({ name }),
-    }).then((r) => r.project),
-  get: (id: string) =>
-    editorJson<{ project: EditorProject }>(`/projects/${id}`).then((r) => r.project),
-  save: (id: string, body: { name?: string; tracks?: EditorTrack[] }) =>
-    editorJson<{ project: EditorProject }>(`/projects/${id}`, {
-      method: 'PUT',
-      headers: JSON_HEADERS,
-      body: JSON.stringify(body),
-    }).then((r) => r.project),
-  remove: (id: string) => editorJson<{ deleted: string }>(`/projects/${id}`, { method: 'DELETE' }),
-  upload: (id: string, file: File) => {
-    const fd = new FormData()
-    fd.append('file', file)
-    return editorJson<{ asset: EditorAsset; project: EditorProject }>(`/projects/${id}/assets`, {
-      method: 'POST',
-      body: fd,
-    })
-  },
-  importAsset: (id: string, body: { tts_task_id?: string; job_id?: string; name?: string }) =>
-    editorJson<{ asset: EditorAsset; project: EditorProject }>(`/projects/${id}/assets/import`, {
-      method: 'POST',
-      headers: JSON_HEADERS,
-      body: JSON.stringify(body),
-    }),
-  removeAsset: (id: string, assetId: string) =>
-    editorJson<{ project: EditorProject }>(`/projects/${id}/assets/${assetId}`, {
-      method: 'DELETE',
-    }).then((r) => r.project),
-  render: (id: string) =>
-    editorJson<{ project: EditorProject }>(`/projects/${id}/render`, { method: 'POST' }).then(
-      (r) => r.project,
-    ),
 }

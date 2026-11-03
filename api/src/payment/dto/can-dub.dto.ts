@@ -80,6 +80,13 @@ export class CanDubDto {
   @IsOptional()
   @IsBoolean()
   lipSync?: boolean;
+
+  @ApiPropertyOptional({
+    description: 'Subtitles+ — burned-in subtitles and an .srt (Pro and up)',
+  })
+  @IsOptional()
+  @IsBoolean()
+  subtitles?: boolean;
 }
 
 export type CanDubReason = 'INSUFFICIENT_CREDITS' | null;

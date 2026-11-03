@@ -47,6 +47,8 @@ lerna-debug.log*
 .tmp
 
 # Runtime data
+# Uploaded and rendered media from the speech and video editors (API_DATA_DIR).
+/data
 pids
 *.pid
 *.seed

@@ -234,6 +234,30 @@ const RULES: ActionRule[] = [
   // ── Staff email ─────────────────────────────────────────────────────────
   {
     method: 'POST',
+    pattern: '/speech-edits',
+    action: 'speech.edit',
+    summary: 'Re-dubbed lines of a dub',
+  },
+  {
+    method: 'POST',
+    pattern: '/editor/projects',
+    action: 'editor.project.create',
+    summary: 'Created a video editor project',
+  },
+  {
+    method: 'DELETE',
+    pattern: '/editor/projects/:id',
+    action: 'editor.project.delete',
+    summary: 'Deleted a video editor project',
+  },
+  {
+    method: 'POST',
+    pattern: '/editor/projects/:id/render',
+    action: 'editor.render',
+    summary: 'Exported a video editor project',
+  },
+  {
+    method: 'POST',
     pattern: '/admin/mail',
     action: 'mail.send',
     summary: 'Emailed users from the admin panel',
@@ -341,6 +365,8 @@ export function isAuditable(
   // save would bury the feed and copy every transcript into it. Deleting a dub
   // is an action, and stays.
   if (path.startsWith('/works') && method === 'PUT') return false;
+  // The video editor autosaves its timeline on every change.
+  if (path.startsWith('/editor/projects') && method === 'PUT') return false;
 
   if (method !== 'GET') return true;
 
