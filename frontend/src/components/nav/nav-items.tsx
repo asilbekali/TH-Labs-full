@@ -51,6 +51,11 @@ const ICON = {
   settings: <path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6" />,
   tts: <path d="M2 10v3M6 6v11M10 3v18M14 8v7M18 5v13M22 10v3" />,
   developers: <path d="m16 18 6-6-6-6M8 6l-6 6 6 6" />,
+  tools: (
+    <>
+      <path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18v3h3l6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-.6-.6-2.4z" />
+    </>
+  ),
   speechEditor: (
     <>
       <path d="M3 10v4M7 7v10M11 10v4" />
@@ -93,10 +98,19 @@ export const NAV_MAIN: NavItem[] = [
   { to: '/studio', label: 'Studio', icon: ICON.studio },
   { to: '/tts', label: 'Text to speech', short: 'Voice', icon: ICON.tts },
   { to: '/works', label: 'My works', icon: ICON.works },
-  { to: '/editor', label: 'Speech editor', short: 'Edit', icon: ICON.speechEditor, tool: 'speechEditor' },
-  { to: '/video-editor', label: 'Video editor', icon: ICON.videoEditor, tool: 'videoEditor' },
   { to: '/realtime', label: 'Real-time dubbing', icon: ICON.realtime, soon: true, tool: 'realtime' },
 ]
+
+/**
+ * The editing tools, grouped under one "Tools" row in the sidebar that opens
+ * to show them — they are things you do to a dub, not places of their own.
+ */
+export const NAV_TOOLS: NavItem[] = [
+  { to: '/editor', label: 'Speech editor', short: 'Edit', icon: ICON.speechEditor, tool: 'speechEditor' },
+  { to: '/video-editor', label: 'AI Voiceover', icon: ICON.videoEditor, tool: 'videoEditor' },
+]
+
+export const TOOLS_ICON = ICON.tools
 
 /**
  * Pinned to the bottom of the sidebar. These are the rows you go to
@@ -112,7 +126,7 @@ export const NAV_BOTTOM: NavItem[] = [
 ]
 
 /** Everything the sidebar can reach, for the search box. */
-export const NAV_ALL: NavItem[] = [...NAV_MAIN, ...NAV_BOTTOM]
+export const NAV_ALL: NavItem[] = [...NAV_MAIN, ...NAV_TOOLS, ...NAV_BOTTOM]
 
 /**
  * The five destinations the mobile tab bar shows: the four places there is
@@ -131,7 +145,7 @@ export const PAGE_TITLES: Record<string, string> = {
   '/works': 'My works',
   '/tts': 'Text to speech',
   '/editor': 'Speech editor',
-  '/video-editor': 'Video editor',
+  '/video-editor': 'AI Voiceover',
   '/realtime': 'Real-time dubbing',
   '/plans': 'Plans and billing',
   '/plans/success': 'Payment',

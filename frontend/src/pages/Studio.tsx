@@ -26,6 +26,8 @@ import OptionToggle from "../components/OptionToggle";
 import VideoCompare from "../components/VideoCompare";
 import SegmentTable from "../components/SegmentTable";
 import IssuesPanel from "../components/IssuesPanel";
+import { getDubIssues } from "../lib/tools-api";
+import type { Issue } from "../lib/types";
 import { PLAN_LABEL, TOOL_PLAN, usePlan } from "../lib/plan";
 import ResultMetrics from "../components/ResultMetrics";
 import AnimatedNumber from "../components/AnimatedNumber";
@@ -361,6 +363,21 @@ export default function Studio() {
   const running = job?.status === "running" || job?.status === "queued";
   const completed = job?.status === "completed";
   const failed = job?.status === "failed";
+  // What went wrong in this dub and how to fix it — the account API reads the
+  // finished job and answers (GET /v1/dub-issues/:jobId).
+  const [issues, setIssues] = useState<Issue[] | null>(null);
+  const finishedId = completed || failed ? job?.id : undefined;
+  useEffect(() => {
+    setIssues(null);
+    if (!finishedId) return;
+    let live = true;
+    getDubIssues(finishedId)
+      .then((list) => live && setIssues(list))
+      .catch(() => live && setIssues(null));
+    return () => {
+      live = false;
+    };
+  }, [finishedId]);
 
   const overall = useMemo(() => {
     if (!job) return 0;
@@ -457,6 +474,7 @@ export default function Studio() {
       referenceVoice: !!reference,
       keepBackground,
       lipSync: lipSyncAvailable && lipSync,
+      subtitles: canSubtitles && subtitles,
     };
     setError(null);
     setNeedsCredits(false);
@@ -2231,10 +2249,10 @@ export default function Studio() {
                     ↓ Download subtitles (.srt)
                   </motion.a>
                 )}
-                {job.result.issues && (
+                {issues && (
                   <motion.div variants={rise}>
                     <IssuesPanel
-                      issues={job.result.issues}
+                      issues={issues}
                       segments={job.result.segments}
                       canEditLines={plan.isMax}
                       editorHref={`/editor/${job.id}`}

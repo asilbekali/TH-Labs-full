@@ -1,9 +1,9 @@
-import { useId } from 'react'
+import { useEffect, useId, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { AnimatePresence, LayoutGroup, MotionConfig, motion } from 'framer-motion'
 import LogoMark from '../brand/LogoMark'
 import AnimatedNumber from '../AnimatedNumber'
-import { NAV_BOTTOM, NAV_MAIN, RailSvg, type NavItem } from './nav-items'
+import { NAV_BOTTOM, NAV_MAIN, NAV_TOOLS, RailSvg, TOOLS_ICON, type NavItem } from './nav-items'
 import { useWorkspace } from '../../lib/workspace'
 import { useWorks } from '../../lib/works'
 import { affordableSeconds, useWallet } from '../../lib/wallet'
@@ -70,6 +70,14 @@ export default function Sidebar({
   // rather than as a class name.
   const isActive = (item: NavItem) =>
     item.to === '/' ? pathname === '/' : pathname === item.to || pathname.startsWith(`${item.to}/`)
+
+  // The Tools group: open while you are in one of its tools, and otherwise
+  // whatever you last left it as.
+  const inTools = NAV_TOOLS.some(isActive)
+  const [toolsOpen, setToolsOpen] = useState(inTools)
+  useEffect(() => {
+    if (inTools) setToolsOpen(true)
+  }, [inTools])
 
   // A count beside My works, so the library's size is visible from anywhere.
   const badge = (item: NavItem) => {
@@ -189,6 +197,59 @@ export default function Sidebar({
           >
             {!compact && <span className="side-group">Create</span>}
             {NAV_MAIN.map(row)}
+            {compact ? (
+              // Collapsed to icons there is no label to open; show the tools.
+              NAV_TOOLS.map(row)
+            ) : (
+              <motion.div variants={item} className="w-full">
+                <button
+                  type="button"
+                  onClick={() => setToolsOpen((o) => !o)}
+                  aria-expanded={toolsOpen}
+                  aria-controls={`${group}-tools`}
+                  data-active={false}
+                  className={`side-link focusable relative w-full ${inTools && !toolsOpen ? 'text-primary' : ''}`}
+                >
+                  <span className="relative grid shrink-0 place-items-center">
+                    <RailSvg icon={TOOLS_ICON} className="h-5 w-5" />
+                  </span>
+                  <span className="truncate">Tools</span>
+                  <motion.svg
+                    viewBox="0 0 24 24"
+                    className="ml-auto h-4 w-4 shrink-0 text-muted"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    animate={{ rotate: toolsOpen ? 90 : 0 }}
+                    transition={{ type: 'spring', stiffness: 400, damping: 28 }}
+                    aria-hidden
+                  >
+                    <path d="m9 6 6 6-6 6" />
+                  </motion.svg>
+                </button>
+                <AnimatePresence initial={false}>
+                  {toolsOpen && (
+                    <motion.div
+                      id={`${group}-tools`}
+                      key="tools"
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: 'auto', opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      transition={{ duration: 0.22, ease: EASE_ENTRANCE }}
+                      className="ml-4 overflow-hidden border-l border-[var(--card-edge)] pl-2 pt-1"
+                    >
+                      {/* Its own stagger: rows take their entrance from a
+                          variants parent, and this panel animates height. */}
+                      <motion.div variants={list} initial="hidden" animate="show" className="flex flex-col gap-1">
+                        {NAV_TOOLS.map(row)}
+                      </motion.div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </motion.div>
+            )}
           </motion.nav>
 
           {/* `mt-auto` is what pins everything from here down to the bottom edge. */}

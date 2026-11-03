@@ -20,6 +20,11 @@ import { HealthModule } from './health/health.module';
 import { PriceTokenModule } from './price-token/price-token.module';
 import { AuditModule } from './audit/audit.module';
 import { WorksModule } from './works/works.module';
+import { MediaModule } from './media/media.module';
+import { PipelineModule } from './pipeline/pipeline.module';
+import { SpeechEditModule } from './speech-edit/speech-edit.module';
+import { DubIssuesModule } from './dub-issues/dub-issues.module';
+import { EditorModule } from './editor/editor.module';
 
 @Module({
   imports: [
@@ -47,6 +52,11 @@ import { WorksModule } from './works/works.module';
     HealthModule,
     PriceTokenModule,
     WorksModule,
+    MediaModule,
+    PipelineModule,
+    SpeechEditModule,
+    DubIssuesModule,
+    EditorModule,
   ],
   controllers: [AppController],
   providers: [AppService],

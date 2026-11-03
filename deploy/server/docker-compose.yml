@@ -88,6 +88,8 @@ services:
       # `not_configured`, which the Studio shows as "unreachable". The probe hits
       # the L4 container, so an open Studio tab (health every 60s) keeps it warm.
       DUB_API_URL: ${DUB_API_URL:-}
+      # Speech-editor versions and video-editor files (api/src/media).
+      API_DATA_DIR: /app/data
       # Always allowed through CORS on top of the built-in list, and what
       # decides the refresh cookie's Secure/SameSite pair (api/src/auth).
       APP_URL: ${APP_URL:-}
@@ -112,6 +114,7 @@ services:
       # live in the container's writable layer and are discarded on every
       # deploy, which would take the audit trail with them.
       - api-logs:/app/logs
+      - api-data:/app/data
     init: true
     healthcheck:
       test:
@@ -180,3 +183,4 @@ services:
 volumes:
   db-data:
   api-logs:
+  api-data:

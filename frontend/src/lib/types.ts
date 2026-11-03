@@ -64,7 +64,8 @@ export interface Segment {
 
 /**
  * Something in a finished dub worth the user's attention, with the fix to
- * offer. Built by backend/app/pipeline/issues.py. `segment_ids` names the lines
+ * offer. Built by the account API (GET /v1/dub-issues/:jobId,
+ * api/src/dub-issues/issues.ts). `segment_ids` names the lines
  * it is about, when it is about lines.
  */
 export interface Issue {
@@ -77,16 +78,7 @@ export interface Issue {
   segment_ids: number[]
 }
 
-/** A speech edit in progress — re-dubbing only the changed lines (Studio Max). */
-export interface EditState {
-  status: 'idle' | 'queued' | 'running' | 'done' | 'failed'
-  message: string
-  /** 0 is the dub as first rendered; each successful edit bumps it. */
-  version: number
-  segment_ids: number[]
-  error: string | null
-  updated_at: number | null
-}
+
 
 export interface DubMetrics {
   wer: number | null
@@ -111,10 +103,6 @@ export interface JobResult {
   subtitles_vtt_url?: string | null
   /** True when the subtitles are in the picture; false → show the .vtt track. */
   subtitles_burned?: boolean
-  /** What to look at in this dub and how to fix it (absent on older backends). */
-  issues?: Issue[]
-  /** The dubbed voice alone, without the background. */
-  voice_url?: string | null
 }
 
 export type JobStatus = 'queued' | 'running' | 'completed' | 'failed'
@@ -158,30 +146,9 @@ export interface Job {
   stages: StageState[]
   result: JobResult
   billing?: JobBilling
-  /** Speech edits (Studio Max). Absent on older backends. */
-  edit?: EditState
   error: string | null
   created_at: number
   updated_at: number
-}
-
-/** One row of GET /api/jobs — enough to list a dub, not to open it. */
-export interface JobSummary {
-  id: string
-  status: JobStatus
-  filename: string | null
-  created_at: number
-  updated_at: number
-  target_lang: string
-  source_lang: string
-  duration: number | null
-  segments: number
-  output_url: string | null
-  /** Errors + warnings (info items are not counted). */
-  issues: number
-  edit_version: number
-  /** False for a dub made before edits were possible; it cannot be patched. */
-  editable: boolean
 }
 
 export interface JobEvent {

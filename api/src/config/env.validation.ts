@@ -37,6 +37,7 @@ export interface AppEnv {
   // Optional: an account API with no pipeline attached is a valid deployment,
   // and health then reports `pipeline: "not_configured"` rather than guessing.
   DUB_API_URL?: string;
+  API_DATA_DIR?: string;
 
   // SMTP. Optional: with no credentials MailService logs and skips sends, so a
   // dev box boots fine without a mailbox attached.
@@ -118,6 +119,7 @@ export function validateEnv(config: RawEnv): AppEnv {
     APP_URL: config.APP_URL ?? 'http://localhost:5173',
 
     DUB_API_URL: config.DUB_API_URL?.trim() || undefined,
+    API_DATA_DIR: config.API_DATA_DIR?.trim() || undefined,
 
     MAIL_HOST: config.MAIL_HOST ?? 'smtp.gmail.com',
     MAIL_PORT: toInt(config.MAIL_PORT, 465),

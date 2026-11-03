@@ -7,6 +7,7 @@
 // problem opens the speech editor on exactly those lines; below Max it points
 // at the transcript editor under the video, which re-dubs the whole thing.
 import { Link } from 'react-router-dom'
+import { SQUARED } from '../lib/shape'
 import type { Issue, Segment } from '../lib/types'
 
 const TONE: Record<Issue['severity'], { ring: string; dot: string; label: string }> = {
@@ -43,7 +44,7 @@ export default function IssuesPanel({
 }) {
   if (!issues.length) {
     return (
-      <div className="card flex items-center gap-3 px-5 py-4">
+      <div className="card flex items-center gap-3 px-5 py-4" style={SQUARED}>
         <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-success/15 text-success">
           <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
             <path d="m5 12 5 5 9-10" />
@@ -61,7 +62,7 @@ export default function IssuesPanel({
   const serious = issues.filter((i) => i.severity !== 'info').length
 
   return (
-    <div className="card overflow-hidden">
+    <div className="card overflow-hidden" style={SQUARED}>
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-subtle px-5 py-3.5">
         <h3 className="text-sm font-semibold text-primary">
           {serious ? `${serious} thing${serious > 1 ? 's' : ''} to fix` : 'Notes on this dub'}
@@ -146,7 +147,7 @@ function IssueAction({
   onRetry?: () => void
   inEditor: boolean
 }) {
-  const btn = 'btn-ghost focusable mt-3 inline-flex h-8 items-center px-3.5 text-[12px]'
+  const btn = 'btn-primary focusable mt-3 inline-flex h-8 items-center px-3.5 text-[12px]'
   if (issue.action === 'edit_line') {
     if (inEditor) return null
     if (canEditLines && editorHref) {

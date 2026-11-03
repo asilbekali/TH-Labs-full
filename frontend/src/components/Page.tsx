@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion'
-import type { ReactNode } from 'react'
+import type { CSSProperties, ReactNode } from 'react'
 import { pageTransition } from '../lib/motion'
 
 // Wraps a routed page so it fades/slides in on navigation (works with the
@@ -7,9 +7,11 @@ import { pageTransition } from '../lib/motion'
 export default function Page({
   children,
   className = '',
+  style,
 }: {
   children: ReactNode
   className?: string
+  style?: CSSProperties
 }) {
   return (
     <motion.div
@@ -18,6 +20,7 @@ export default function Page({
       exit={pageTransition.exit}
       transition={pageTransition.transition}
       className={className}
+      style={style}
     >
       {children}
     </motion.div>

@@ -115,13 +115,15 @@ model User {
   /// cron asks LS about every account with a checkout opened in the last day.
   lsCheckoutStartedAt DateTime?
 
-  subscriptions Subscription[]
-  payments      Payment[]
-  feedback      Feedback[]
-  creditEntries CreditEntry[]
-  refreshTokens RefreshToken[]
-  handoffCodes  HandoffCode[]
-  works         Work[]
+  subscriptions  Subscription[]
+  payments       Payment[]
+  feedback       Feedback[]
+  creditEntries  CreditEntry[]
+  refreshTokens  RefreshToken[]
+  handoffCodes   HandoffCode[]
+  works          Work[]
+  speechEdits    SpeechEdit[]
+  editorProjects EditorProject[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @default(now()) @updatedAt
@@ -496,3 +498,62 @@ model AuditLog {
 // (PaymentService.claimOrders), and deduplicated by the unique
 // `Payment.lsOrderId` / `Payment.lsInvoiceId` above. One fewer table, and no public route
 // that moves credits.
+
+// ── Studio Max tools ──────────────────────────────────────────────────────
+// The speech editor and the video editor live here, in the account API, and
+// not in the dubbing pipeline: they are records a user owns and comes back
+// to. The pipeline (backend/) stays the AI — it is only ever asked, through
+// its existing endpoints, for speech and for the media it already produced.
+// See src/speech-edit and src/editor.
+
+enum SpeechEditStatus {
+  QUEUED
+  RUNNING
+  DONE
+  FAILED
+}
+
+/// One correction of a finished dub: a few lines re-voiced and spliced back
+/// into the video. Versions stack — each edit starts from the previous one's
+/// video — so the newest DONE row is the dub as it stands now.
+model SpeechEdit {
+  id         String           @id @default(cuid())
+  userId     Int
+  /// The dubbing pipeline's job id.
+  jobId      String
+  /// 1 for the first correction, 2 for the next, …
+  version    Int
+  status     SpeechEditStatus @default(QUEUED)
+  /// The whole transcript after this edit, in the pipeline's segment shape.
+  segments   Json
+  /// Ids of the lines this edit re-voiced.
+  changed    Json
+  /// The video this edit wrote, relative to the API's data directory.
+  outputPath String?
+  /// Progress for the UI while it runs; a note for the user when it is done.
+  message    String?
+  error      String?
+  user       User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @default(now()) @updatedAt
+
+  @@unique([userId, jobId, version])
+  @@index([userId, jobId])
+}
+
+/// A video editor project: its media files and the timeline built from them.
+/// `assets` and `tracks` are the editor's own documents, validated on save
+/// (src/editor/timeline.ts); `render` is the state of the last export.
+model EditorProject {
+  id        String   @id @default(cuid())
+  userId    Int
+  name      String
+  assets    Json     @default("[]")
+  tracks    Json     @default("[]")
+  render    Json     @default("{}")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  @@index([userId, updatedAt])
+}

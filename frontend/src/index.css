@@ -1428,7 +1428,11 @@ h1, h2, h3 { letter-spacing: -0.03em; }
     color: #140b05;
     font-weight: 600;
     border: 1px solid transparent;
-    border-radius: var(--radius-pill);
+    /* Always a pill — the "Top up tokens" button. Fixed rather than
+       var(--radius-pill): pages that square their boxes and tags
+       (lib/shape.ts) redefine that variable, and their buttons should
+       still look like this one. */
+    border-radius: 9999px;
     box-shadow:
       inset 0 1px 0 rgb(255 255 255 / 0.4),
       0 10px 26px color-mix(in srgb, var(--ac) 35%, transparent);

@@ -6,6 +6,7 @@ import { Link } from 'react-router-dom'
 import type { ReactNode } from 'react'
 import Page from './Page'
 import { PLAN_LABEL, TOOL_INFO, TOOL_PLAN, type Tool } from '../lib/plan'
+import { SQUARED } from '../lib/shape'
 
 export default function UpgradeGate({
   tool,
@@ -21,7 +22,8 @@ export default function UpgradeGate({
   const info = TOOL_INFO[tool]
   const plan = PLAN_LABEL[TOOL_PLAN[tool]]
   return (
-    <Page className="mx-auto w-full max-w-3xl py-4 sm:py-8">
+    // No pill or capsule shapes on the new tools' pages (lib/shape.ts).
+    <Page className="mx-auto w-full max-w-3xl py-4 sm:py-8" style={SQUARED}>
       <div className="card overflow-hidden">
         {preview && <div className="border-b border-subtle bg-sunken p-4 sm:p-6">{preview}</div>}
         <div className="p-5 sm:p-8">

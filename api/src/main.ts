@@ -7,6 +7,9 @@ import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
+import { mkdirSync } from 'node:fs';
+import type { ServerResponse } from 'node:http';
+import * as path from 'node:path';
 
 import { AppModule } from './app.module';
 import { PrismaExceptionFilter } from './common/filters/prisma-exception.filter';
@@ -84,6 +87,25 @@ async function bootstrap() {
   // contentSecurityPolicy is disabled so the Swagger UI at /docs (inline
   // scripts/styles) still loads; all other helmet protections stay on.
   app.use(helmet({ contentSecurityPolicy: false }));
+
+  // Media this API writes — speech-editor versions, video-editor files and
+  // exports (src/media). Read-only, under random ids, like the pipeline's own
+  // /media. Cross-Origin-Resource-Policy is relaxed for this path only:
+  // helmet's default (same-origin) would stop the Studio, a different origin,
+  // from loading these into a <video>.
+  const dataDir = path.resolve(
+    process.env.API_DATA_DIR?.trim() || path.join(process.cwd(), 'data'),
+  );
+  mkdirSync(dataDir, { recursive: true });
+  app.useStaticAssets(dataDir, {
+    prefix: '/v1/media/',
+    index: false,
+    dotfiles: 'deny',
+    setHeaders: (res: ServerResponse) => {
+      res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+      res.setHeader('Cache-Control', 'private, max-age=3600');
+    },
+  });
 
   // An allowlist rather than a single APP_URL. The Studio runs on its own
   // origin (*.modal.run) and calls this API from the browser to redeem a

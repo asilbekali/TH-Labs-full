@@ -38,6 +38,8 @@ import {
   TIER_DISPLAY_NAME,
   TURKIC_LANGUAGES,
   checkFeatures,
+  checkTool,
+  type ToolFeature,
 } from './plan-features';
 import {
   CREDITS_PER_MINUTE,
@@ -1367,6 +1369,25 @@ export class PaymentService {
       allTiers: PLAN_FEATURES,
       tierNames: TIER_DISPLAY_NAME,
     };
+  }
+
+  /**
+   * Throws a 402 PLAN_UPGRADE_REQUIRED unless the caller's plan includes
+   * `tool` — the speech and video editors, which are not options of a dub and
+   * so are never seen by can-dub.
+   */
+  async assertTool(userId: number, tool: ToolFeature): Promise<PlanTier> {
+    const tier = await this.getEffectiveTier(userId);
+    const refusal = checkTool(tier, tool);
+    if (refusal) {
+      throw new PlanUpgradeRequiredException({
+        message: refusal.message,
+        feature: refusal.feature,
+        currentTier: tier,
+        requiredTier: refusal.requiredTier,
+      });
+    }
+    return tier;
   }
 
   /** Throws a 402 PLAN_UPGRADE_REQUIRED when the plan does not include this dub. */

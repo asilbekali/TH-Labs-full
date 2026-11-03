@@ -78,6 +78,10 @@ class Settings(BaseSettings):
 
     # ── STT · Whisper ─────────────────────────────────────────────────────
     whisper_model: str = "medium"          # per the RSEF paper
+    # Whisper model for the video editor's auto subtitles (pipeline/captions.py).
+    # Word timing matters more than the last point of accuracy there, and it
+    # runs beside dubs, so a smaller model than the pipeline's.
+    caption_model: str = "small"
     whisper_device: str = "auto"           # auto|cuda|cpu
     whisper_compute_type: str = "auto"     # e.g. float16 / int8
 

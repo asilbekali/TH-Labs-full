@@ -156,9 +156,6 @@ class SpeechService:
     def __init__(self, orchestrator) -> None:
         self._orch = orchestrator
         self._tasks: dict[str, SpeechTask] = {}
-        # The text each task voiced, for the video editor's speech clips. Not
-        # on the task itself: the /tts page already has the text it sent.
-        self._texts: dict[str, str] = {}
         self._navoiy = orchestrator.navoiy
 
     # ── what can run ───────────────────────────────────────────────────────
@@ -174,9 +171,10 @@ class SpeechService:
             return "Navoiy"
         if self._omnivoice_ok():
             return "OmniVoice"
-        # Last resort: a stock neural voice per language. One voice, no
-        # styles, but a script still gets read out while the GPU engines are
-        # down — which is what the video editor's speech clips need.
+        # Last resort: a stock neural voice per language (edge-tts, no GPU).
+        # One voice, no styles — but a script still gets read out where the
+        # GPU engines are not running, e.g. a developer's laptop, and the video
+        # and speech editors keep working when they are down.
         if self._edge_ok(language):
             return "edge-tts"
         return None
@@ -215,9 +213,6 @@ class SpeechService:
             threading.Thread(target=load, daemon=True).start()
 
     # ── tasks ──────────────────────────────────────────────────────────────
-    def text_of(self, task_id: str) -> str | None:
-        return self._texts.get(task_id)
-
     def get(self, task_id: str, owner_id: int) -> SpeechTask | None:
         task = self._tasks.get(task_id)
         return task if task and task.owner_id == owner_id else None
@@ -260,7 +255,6 @@ class SpeechService:
                           language=language, voice=voice, chars=len(text),
                           engine=engine)
         self._tasks[task.id] = task
-        self._texts[task.id] = text
         asyncio.get_running_loop().create_task(
             self._run(task, text, token))
         return task

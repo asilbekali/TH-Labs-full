@@ -6,9 +6,11 @@
 // Credits decide HOW MUCH a user can dub. This decides WHAT KIND of dub.
 //
 //   Free        Turkic target languages, one voice mode, Fast/Balanced.
+//               Dubbing and text to speech.
 //   Pro         + every language, every voice mode, a custom reference voice,
-//               keeping the background music & effects.
-//   Studio Max  + lip sync and Studio quality. Everything.
+//               keeping the background music & effects, Subtitles+.
+//   Studio Max  + lip sync and Studio quality, the speech editor (fix one line
+//               without re-dubbing the video) and the video editor. Everything.
 //
 // Enforcement reach. The dubbing pipeline (backend/) calls can-dub and
 // commit-dub with the quality only, so `qualities` is enforced on every run no
@@ -60,6 +62,12 @@ export interface PlanFeatures {
   keepBackground: boolean;
   /** Reshape the speaker's mouth to the new speech (Wav2Lip). */
   lipSync: boolean;
+  /** Subtitles+: subtitles burned into the dub, plus an .srt. */
+  subtitles: boolean;
+  /** Speech editor: fix a line of a finished dub and re-dub only that part. */
+  speechEditor: boolean;
+  /** Video editor: voice an animation on a timeline and export it. */
+  videoEditor: boolean;
 }
 
 export const PLAN_FEATURES: Record<PlanTier, PlanFeatures> = {
@@ -70,6 +78,9 @@ export const PLAN_FEATURES: Record<PlanTier, PlanFeatures> = {
     referenceVoice: false,
     keepBackground: false,
     lipSync: false,
+    subtitles: false,
+    speechEditor: false,
+    videoEditor: false,
   },
   PRO: {
     qualities: ['fast', 'balanced'],
@@ -78,6 +89,9 @@ export const PLAN_FEATURES: Record<PlanTier, PlanFeatures> = {
     referenceVoice: true,
     keepBackground: true,
     lipSync: false,
+    subtitles: true,
+    speechEditor: false,
+    videoEditor: false,
   },
   STUDIO: {
     qualities: ['fast', 'balanced', 'studio'],
@@ -86,6 +100,9 @@ export const PLAN_FEATURES: Record<PlanTier, PlanFeatures> = {
     referenceVoice: true,
     keepBackground: true,
     lipSync: true,
+    subtitles: true,
+    speechEditor: true,
+    videoEditor: true,
   },
 };
 
@@ -95,7 +112,16 @@ const FLAG_LABEL = {
   referenceVoice: 'Dubbing in a custom voice',
   keepBackground: 'Keeping the background music & effects',
   lipSync: 'Lip sync',
+  subtitles: 'Subtitles+',
 } as const;
+
+/** The plan tools that are not options of a dub, gated on their own. */
+export type ToolFeature = 'speechEditor' | 'videoEditor';
+
+const TOOL_LABEL: Record<ToolFeature, string> = {
+  speechEditor: 'The speech editor',
+  videoEditor: 'AI Voiceover',
+};
 
 const VOICE_MODE_LABEL: Record<VoiceMode, string> = {
   both: '"Their voice, spoken natively"',
@@ -112,6 +138,7 @@ export interface RequestedFeatures {
   referenceVoice?: boolean;
   keepBackground?: boolean;
   lipSync?: boolean;
+  subtitles?: boolean;
 }
 
 export interface FeatureRefusal {
@@ -184,4 +211,19 @@ export function checkFeatures(
     }
   }
   return null;
+}
+
+/** Null when `tier` includes the tool, otherwise why not and what does. */
+export function checkTool(
+  tier: PlanTier,
+  tool: ToolFeature,
+): FeatureRefusal | null {
+  if (PLAN_FEATURES[tier][tool]) return null;
+  const required =
+    TIER_ORDER.find((t) => PLAN_FEATURES[t][tool]) ?? PlanTier.STUDIO;
+  return {
+    feature: tool,
+    requiredTier: required,
+    message: `${TOOL_LABEL[tool]} is part of the ${TIER_DISPLAY_NAME[required]} plan. Upgrade to use it.`,
+  };
 }
