@@ -7,14 +7,18 @@ import TopBar from '../nav/TopBar'
 import MobileTabBar from '../nav/MobileTabBar'
 import LogoLoader from '../brand/LogoLoader'
 import SignIn from '../../pages/SignIn'
-import { useIsDesktop } from '../../hooks/useMediaQuery'
+import { useIsDesktop, useMediaQuery } from '../../hooks/useMediaQuery'
 import { useAuth } from '../../lib/auth'
 import { leaveToLanding, LOCAL_AUTH } from '../../lib/landing'
 
 // Routes that render as their own workbench on desktop: they own two or three
 // internally-scrolling regions, so they take the content area raw instead of
 // being wrapped in the centred, scrolling column every other page gets.
-const WORKBENCH_ROUTES = ['/studio', '/works']
+const WORKBENCH_ROUTES = ['/studio', '/works', '/realtime']
+
+// The two editors, once a dub or project is open, fill the window the same way.
+// They need the width of a large screen for it; below that they scroll.
+const EDITOR_ROUTE = /^\/(editor|video-editor)\/[^/]+$/
 
 // Routes that keep the centred column but stretch it to at least the viewport
 // on desktop; content taller than that scrolls rather than being squeezed.
@@ -39,6 +43,7 @@ const COLLAPSE_KEY = 'th:sidebar-collapsed'
 export default function AppShell({ children }: { children: ReactNode }) {
   const { pathname } = useLocation()
   const isDesktop = useIsDesktop()
+  const isWide = useMediaQuery('(min-width: 1280px)')
   const { user, ready } = useAuth()
 
   const [collapsed, setCollapsed] = useState(() => {
@@ -51,7 +56,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
   })
   const [drawer, setDrawer] = useState(false)
 
-  const workbench = WORKBENCH_ROUTES.includes(pathname) && isDesktop
+  const workbench = (WORKBENCH_ROUTES.includes(pathname) && isDesktop) || (EDITOR_ROUTE.test(pathname) && isWide)
   const fixed = FIXED_ROUTES.includes(pathname) && isDesktop
 
   // The shell is always exactly one viewport tall and the CONTENT column is the

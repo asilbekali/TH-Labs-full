@@ -97,7 +97,7 @@ export default function LanguageSelect({
       {open && !loading && (
         // Solid, not the glass `.card`: this list floats over the next step,
         // and a translucent panel lets that step show through it.
-        <div className="absolute z-50 mt-2 w-full overflow-hidden rounded-[var(--radius-card)] border border-[var(--card-edge)] bg-raised shadow-[var(--shadow-lg),0_0_0_1px_rgb(0_0_0/0.2)]">
+        <div className="absolute z-50 mt-2 w-full overflow-hidden rounded-[var(--radius-card)] border border-[var(--card-edge)] glass-thick shadow-[var(--shadow-lg),0_0_0_1px_rgb(0_0_0/0.2)]">
           <div className="border-b border-[var(--card-edge)] p-2">
             <input
               autoFocus

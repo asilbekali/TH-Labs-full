@@ -155,7 +155,7 @@ export default function SearchEverything() {
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -4 }}
             transition={{ duration: 0.12 }}
-            className="absolute inset-x-0 top-[calc(100%+0.4rem)] z-50 overflow-hidden rounded-[20px] border border-[var(--card-edge)] bg-raised p-1.5 shadow-[var(--shadow-lg)]"
+            className="absolute inset-x-0 top-[calc(100%+0.4rem)] z-50 overflow-hidden rounded-[20px] border border-[var(--card-edge)] glass-thick p-1.5 shadow-[var(--shadow-lg)]"
           >
             {hits.length === 0 ? (
               <div className="px-3 py-3 text-sm text-muted">

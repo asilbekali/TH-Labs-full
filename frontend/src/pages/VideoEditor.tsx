@@ -10,6 +10,10 @@
 // clock, so what you hear while editing is each clip at its own volume and
 // trim, the same numbers the render uses.
 //
+// Most people only want three things: add a video, type the words, export. So
+// that is the screen they get: the picture beside the words. The full timeline
+// and clip settings are behind "Advanced editing", and the choice is remembered.
+//
 //   /video-editor        projects
 //   /video-editor/:id    the editor
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -39,8 +43,9 @@ import {
 } from '../lib/tools-api'
 import { useWorks, workTitle, type Work } from '../lib/works'
 import { useConfirm, type ConfirmOptions } from '../components/ConfirmDialog'
-import { SQUARED } from '../lib/shape'
+import { EDITOR_SHAPE } from '../lib/shape'
 import HowItWorks from '../components/HowItWorks'
+import EditorIcon, { type IconName } from '../components/EditorIcon'
 import { AnimatePresence, motion } from 'framer-motion'
 
 const PEAKS_PER_SECOND = 20
@@ -48,13 +53,14 @@ const MIN_CLIP = 0.1
 const SNAP_PX = 7
 const SAVE_DEBOUNCE_MS = 700
 const DRIFT = 0.25
+const ADVANCED_KEY = 'thlabs.voiceover.advanced'
 
-const KIND_STYLE: Record<TrackKind, { block: string; label: string }> = {
-  video: { block: 'border-brand/60 bg-brand/20', label: 'Video' },
-  voice: { block: 'border-magenta/60 bg-magenta/20', label: 'Voice' },
-  music: { block: 'border-gold/60 bg-gold/20', label: 'Music' },
-  audio: { block: 'border-info/60 bg-info/20', label: 'Audio' },
-  text: { block: 'border-strong bg-[var(--well)]', label: 'Subtitles' },
+const KIND_STYLE: Record<TrackKind, { block: string; tint: string; icon: IconName; label: string }> = {
+  video: { block: 'border-brand/60 bg-brand/20', tint: 'text-brand', icon: 'media', label: 'Video' },
+  voice: { block: 'border-magenta/60 bg-magenta/20', tint: 'text-magenta', icon: 'voice', label: 'Voice' },
+  music: { block: 'border-gold/60 bg-gold/20', tint: 'text-gold', icon: 'music', label: 'Music' },
+  audio: { block: 'border-info/60 bg-info/20', tint: 'text-info', icon: 'sound', label: 'Audio' },
+  text: { block: 'border-strong bg-[var(--well)]', tint: 'text-secondary', icon: 'text', label: 'Subtitles' },
 }
 
 // Which tracks a clip may be dragged between: picture, words, or sound.
@@ -159,60 +165,23 @@ function ProjectList() {
   }
 
   return (
-    // No pill or capsule shapes anywhere in the video editor (lib/shape.ts).
-    <Page className="mx-auto w-full max-w-5xl py-2 sm:py-6" style={SQUARED}>
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <p className="eyebrow">AI Voiceover</p>
-          <h1 className="mt-2 text-[clamp(1.6rem,4vw,2.2rem)] font-medium leading-tight text-primary">
-            Give your animation <span className="gradient-text">a voice.</span>
-          </h1>
-          <p className="mt-2 max-w-2xl text-[15px] leading-relaxed text-secondary">
-            Upload the video, type the lines, and place each one where it belongs. Cut speech,
-            trim the picture, add music — then export one finished video.
-          </p>
-        </div>
-        <button type="button" onClick={create} disabled={creating} className="btn-primary focusable h-11 px-6 text-sm">
-          {creating ? 'Creating…' : '+ New project'}
+    <Page className="mx-auto w-full max-w-5xl py-2 sm:py-6" style={EDITOR_SHAPE}>
+      <h1 className="text-xl font-semibold tracking-tight text-primary">AI Voiceover</h1>
+      <p className="mt-0.5 text-sm text-secondary">Add a video, type what the voice should say, and download it.</p>
+      {error && <p className="mt-4 text-sm text-danger">{error}</p>}
+      <motion.div layout className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        <button
+          type="button"
+          onClick={create}
+          disabled={creating}
+          className="card card-hover focusable flex min-h-48 flex-col items-center justify-center gap-3 p-5 text-center"
+        >
+          <span className="icon-tile h-12 w-12 text-brand" data-accent="false">
+            <EditorIcon name="plus" className="h-6 w-6" />
+          </span>
+          <span className="text-[15px] font-medium text-primary">{creating ? 'Creating…' : 'New voiceover'}</span>
         </button>
-      </div>
-      <HowItWorks
-        className="mt-6"
-        steps={[
-          {
-            title: 'Upload your video',
-            body: 'Start a project and drop in your animation. Its own sound goes on a separate track.',
-          },
-          {
-            title: 'Add voices and subtitles',
-            body: 'Type each line to turn it into speech, or press “Auto subtitles” to caption the speech in the video.',
-          },
-          {
-            title: 'Place, cut and export',
-            body: 'Drag lines to where they belong, trim and add music, then export one finished video.',
-          },
-        ]}
-      />
-      {error && <p className="mt-6 text-sm text-danger">{error}</p>}
-      {projects === null && !error && (
-        <div className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {[0, 1, 2].map((i) => (
-            <div key={i} className="card h-36 animate-pulse" />
-          ))}
-        </div>
-      )}
-      {projects?.length === 0 && (
-        <div className="card mt-6 flex flex-col items-center gap-3 p-8 text-center">
-          <p className="text-sm font-medium text-primary">No projects yet</p>
-          <p className="max-w-sm text-[13px] text-secondary">
-            Start your first project — it takes one click, and you can upload your video right after.
-          </p>
-          <button type="button" onClick={create} disabled={creating} className="btn-primary focusable h-10 px-5 text-sm">
-            {creating ? 'Creating…' : 'Start my first project'}
-          </button>
-        </div>
-      )}
-      <motion.div layout className="mt-6 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {projects === null && !error && [0, 1].map((i) => <div key={i} className="card min-h-48 animate-pulse" />)}
         <AnimatePresence initial={false}>
         {projects?.map((p) => (
           <motion.div
@@ -225,34 +194,57 @@ function ProjectList() {
             className="card card-hover flex flex-col overflow-hidden"
           >
             <Link to={`/video-editor/${p.id}`} className="focusable block">
-              <div className="aspect-video bg-black">
-                {p.videoUrl && (
+              <div className="grid aspect-video place-items-center bg-black">
+                {p.videoUrl ? (
                   <video src={`${mediaUrl(p.videoUrl)}#t=0.5`} muted preload="metadata" className="h-full w-full object-cover" />
+                ) : (
+                  <span className="text-[13px] text-white/60">No video yet</span>
                 )}
               </div>
-              <div className="p-4">
-                <p className="truncate text-sm font-medium text-primary">{p.name}</p>
-                <p className="mt-1 font-mono text-[12px] text-muted">
-                  {fmt(p.duration)} · {p.clips} clips · {new Date(p.updatedAt).toLocaleDateString()}
-                </p>
-              </div>
             </Link>
-            <div className="mt-auto flex items-center justify-between border-t border-subtle px-4 py-2">
-              {p.render.status === 'done' && p.render.url ? (
-                <a href={mediaUrl(p.render.url)} download className="text-[12px] font-medium text-primary hover:underline">
-                  ↓ Last export
+            <div className="flex items-center gap-2 p-3.5">
+              <Link to={`/video-editor/${p.id}`} className="focusable min-w-0 flex-1">
+                <p className="truncate text-sm font-medium text-primary">{p.name}</p>
+                <p className="mt-0.5 text-[13px] text-muted">
+                  {fmt(p.duration)} · {new Date(p.updatedAt).toLocaleDateString()}
+                </p>
+              </Link>
+              {p.render.status === 'done' && p.render.url && (
+                <a
+                  href={mediaUrl(p.render.url)}
+                  download
+                  aria-label={`Download ${p.name}`}
+                  title="Download"
+                  className="focusable grid h-9 w-9 shrink-0 place-items-center rounded-full text-secondary hover:bg-[var(--well)] hover:text-primary"
+                >
+                  <EditorIcon name="download" />
                 </a>
-              ) : (
-                <span className="text-[12px] text-muted">Not exported yet</span>
               )}
-              <button type="button" onClick={() => remove(p)} className="text-[12px] text-muted hover:text-danger">
-                Delete
+              <button
+                type="button"
+                onClick={() => remove(p)}
+                aria-label={`Delete ${p.name}`}
+                title="Delete"
+                className="focusable grid h-9 w-9 shrink-0 place-items-center rounded-full text-muted hover:bg-[var(--well)] hover:text-danger"
+              >
+                <EditorIcon name="trash" />
               </button>
             </div>
           </motion.div>
         ))}
         </AnimatePresence>
       </motion.div>
+      {/* The steps are for the first visit; after that the projects are the page. */}
+      {projects?.length === 0 && (
+        <HowItWorks
+          className="mt-6"
+          steps={[
+            { title: 'Add your video', body: 'Press New voiceover and upload your video.' },
+            { title: 'Type the words', body: 'Each line you type becomes speech.' },
+            { title: 'Export', body: 'Download one finished video.' },
+          ]}
+        />
+      )}
       {confirmDialog}
     </Page>
   )
@@ -261,7 +253,15 @@ function ProjectList() {
 // ── Editor ───────────────────────────────────────────────────────────────────
 
 type Sel = { track: string; clip: string } | null
-type BinTab = 'files' | 'speech' | 'dubs'
+type BinTab = 'speech' | 'subtitles' | 'files'
+
+function rememberedAdvanced(): boolean {
+  try {
+    return localStorage.getItem(ADVANCED_KEY) === '1'
+  } catch {
+    return false
+  }
+}
 
 function Editor({ projectId }: { projectId: string }) {
   const [project, setProject] = useState<EditorProject | null>(null)
@@ -275,7 +275,9 @@ function Editor({ projectId }: { projectId: string }) {
   const [playing, setPlaying] = useState(false)
   const [zoom, setZoom] = useState(1)
   const [confirmDialog, confirm] = useConfirm()
-  const [binTab, setBinTab] = useState<BinTab>('files')
+  const [binTab, setBinTab] = useState<BinTab>('speech')
+  const [dubsOpen, setDubsOpen] = useState(false)
+  const [advanced, setAdvanced] = useState(rememberedAdvanced)
   const tracksRef = useRef(tracks)
   tracksRef.current = tracks
   const past = useRef<EditorTrack[][]>([])
@@ -435,7 +437,7 @@ function Editor({ projectId }: { projectId: string }) {
    * Auto subtitles, CapCut style: every clip you can hear becomes subtitle
    * lines at the exact time each phrase is said, in order.
    *
-   * Speech typed in Text → speech already has its exact words, spread over the
+   * Speech typed in the Voice panel already has its exact words, spread over the
    * clip. Anything else — the animation's own sound, uploaded voice — is heard
    * by the AI service word by word (one request per file, reused for every
    * clip of it), and each line lands under the part of the clip that plays it.
@@ -452,7 +454,7 @@ function Editor({ projectId }: { projectId: string }) {
       }
     }
     if (!audible.length) {
-      setError('There is no speech on the timeline yet. Add a video with sound, a voice file, or make speech in “Text → speech”.')
+      setError('There is no speech on the timeline yet. Add a video with sound, a voice file, or make speech in the Voice panel.')
       return
     }
     setError(null)
@@ -543,8 +545,11 @@ function Editor({ projectId }: { projectId: string }) {
     const firstVideo =
       asset.kind === 'video' &&
       !tracksRef.current.some((t) => t.kind === 'video' && t.clips.length)
-    if (autoPlace) place(asset)
-    else if (firstVideo) place(asset, 0)
+    if (autoPlace) {
+      place(asset)
+      // The next line follows this one instead of landing on top of it.
+      setTime(time + asset.duration)
+    } else if (firstVideo) place(asset, 0)
   }
 
   function splitAtPlayhead() {
@@ -591,9 +596,35 @@ function Editor({ projectId }: { projectId: string }) {
       confirmLabel: 'Delete',
     })
     if (!ok) return
-    commit(tracks.map((t) => (t.id === sel.track ? { ...t, clips: t.clips.filter((c) => c.id !== sel.clip) } : t)))
-    setSel(null)
+    removeClip(sel.track, sel.clip)
   }
+
+  function removeClip(trackId: string, clipId: string) {
+    commit(tracks.map((t) => (t.id === trackId ? { ...t, clips: t.clips.filter((c) => c.id !== clipId) } : t)))
+    if (sel?.clip === clipId) setSel(null)
+  }
+
+  function playFrom(at: number) {
+    setPlaying(false)
+    setTime(at)
+    requestAnimationFrame(() => setPlaying(true))
+  }
+
+  function toggleAdvanced() {
+    const next = !advanced
+    setAdvanced(next)
+    try {
+      localStorage.setItem(ADVANCED_KEY, next ? '1' : '0')
+    } catch {
+      /* private mode — the choice is simply not remembered */
+    }
+  }
+
+  const linesOf = (kind: TrackKind) =>
+    tracks
+      .filter((t) => t.kind === kind)
+      .flatMap((t) => t.clips.map((clip) => ({ trackId: t.id, clip })))
+      .sort((a, b) => a.clip.start - b.clip.start)
 
   function duplicateSelected() {
     if (!sel || !selected) return
@@ -642,11 +673,11 @@ function Editor({ projectId }: { projectId: string }) {
   if (!project) return <Page className="card mx-auto mt-6 h-96 max-w-6xl animate-pulse">{null}</Page>
 
   return (
-    <Page className="flex w-full min-w-0 flex-col gap-3 pb-6" style={SQUARED}>
+    <Page className="flex w-full min-w-0 flex-col gap-3 pb-6 xl:h-full xl:pb-0" style={EDITOR_SHAPE}>
       {/* Top bar */}
       <div className="flex flex-wrap items-center gap-3">
-        <Link to="/video-editor" className="btn-primary focusable inline-flex h-9 items-center px-3 text-[13px]">
-          ← Projects
+        <Link to="/video-editor" aria-label="Back to projects" title="Back to projects" className="btn-ghost focusable grid h-9 w-9 shrink-0 place-items-center rounded-full!">
+          <EditorIcon name="back" className="h-4 w-4" />
         </Link>
         <input
           value={name}
@@ -655,12 +686,20 @@ function Editor({ projectId }: { projectId: string }) {
             dirty.current = true
           }}
           aria-label="Project name"
-          className="field h-9 min-w-0 max-w-xs flex-1 text-sm font-medium"
+          className="field h-9 min-w-0 max-w-xs flex-1 text-sm font-medium max-sm:order-last max-sm:max-w-none max-sm:basis-full"
         />
         <span className={`text-[12px] ${saveState === 'error' ? 'text-danger' : 'text-muted'}`}>
-          {saveState === 'saved' ? 'All changes saved' : saveState === 'saving' ? 'Saving…' : saveState === 'error' ? 'Not saved' : 'Unsaved changes'}
+          {saveState === 'saved' ? 'Saved' : saveState === 'error' ? 'Not saved' : 'Saving…'}
         </span>
-        <div className="ml-auto">
+        <button
+          type="button"
+          onClick={toggleAdvanced}
+          aria-pressed={advanced}
+          className={`btn-ghost focusable ml-auto h-9 rounded-full! px-4 text-[13px] ${advanced ? 'text-primary' : ''}`}
+        >
+          {advanced ? 'Simple view' : 'Advanced editing'}
+        </button>
+        <div>
           <ExportButton project={project} length={length} flush={() => editorApi.save(projectId, { tracks, name })} onUpdate={setProject} />
         </div>
       </div>
@@ -673,7 +712,26 @@ function Editor({ projectId }: { projectId: string }) {
         </div>
       )}
 
-      <div className="grid min-w-0 gap-3 xl:grid-cols-[300px_minmax(0,1fr)_260px]">
+      {!advanced && (
+        <VoiceSteps
+          video={tracks.some((t) => t.kind === 'video' && t.clips.length > 0)}
+          voice={tracks.some((t) => t.kind === 'voice' && t.clips.length > 0)}
+          exported={project.render.status === 'done'}
+        />
+      )}
+
+      {/* Simple view: the picture beside the words. Advanced, on a phone: one
+          column. Tablet: panel beside the picture, the rest under it. Large
+          screen: one window with the timeline along the bottom. */}
+      <div className={`grid min-h-0 min-w-0 flex-1 gap-3 ${
+          !advanced
+            ? "[grid-template-areas:'preview'_'left'] lg:grid-cols-[minmax(0,1fr)_360px] lg:[grid-template-areas:'preview_left'] xl:grid-rows-[minmax(0,1fr)]"
+            : `[grid-template-areas:'preview'_'left'_'time'_'insp'] lg:grid-cols-[320px_minmax(0,1fr)] lg:[grid-template-areas:'left_preview'_'time_time'_'insp_insp'] xl:grid-rows-[minmax(0,1fr)_auto] ${
+                length > 0
+                  ? "xl:grid-cols-[300px_minmax(0,1fr)_250px] xl:[grid-template-areas:'left_preview_insp'_'time_time_time']"
+                  : "xl:grid-cols-[300px_minmax(0,1fr)] xl:[grid-template-areas:'left_preview'_'time_time']"
+              }`
+        }`}>
         <MediaBin
           project={project}
           onAdded={onAssetAdded}
@@ -684,6 +742,37 @@ function Editor({ projectId }: { projectId: string }) {
           confirm={confirm}
           tab={binTab}
           setTab={setBinTab}
+          dubsOpen={dubsOpen}
+          setDubsOpen={setDubsOpen}
+          advanced={advanced}
+          startsAt={time}
+          voiceLines={
+            <VoiceLines
+              lines={linesOf('voice')}
+              assets={assetById}
+              time={time}
+              onPlay={playFrom}
+              onMove={(l) => updateClip(l.trackId, l.clip.id, { start: Number(time.toFixed(2)) })}
+              onDelete={(l) => removeClip(l.trackId, l.clip.id)}
+            />
+          }
+          subtitles={
+            <>
+              <SubtitlesPanel
+                onAuto={() => void autoSubtitles()}
+                onAdd={addText}
+                busy={subtitling}
+                lang={subLang}
+                setLang={setSubLang}
+              />
+              <SubtitleLines
+                lines={linesOf('text')}
+                onPlay={playFrom}
+                onChange={(l, text) => updateClip(l.trackId, l.clip.id, { text })}
+                onDelete={(l) => removeClip(l.trackId, l.clip.id)}
+              />
+            </>
+          }
         />
         <Preview
           tracks={tracks}
@@ -693,95 +782,49 @@ function Editor({ projectId }: { projectId: string }) {
           playing={playing}
           setPlaying={setPlaying}
           length={length}
+          onUpload={() => setBinTab('files')}
+          onDubs={() => {
+            setBinTab('files')
+            setDubsOpen(true)
+          }}
         />
-        <Inspector
-          clip={selected}
-          track={selectedTrack}
-          asset={selected ? assetById.get(selected.asset_id) : undefined}
-          onChange={(patch) => sel && updateClip(sel.track, sel.clip, patch)}
+        {advanced && length > 0 && (
+          <Inspector
+            clip={selected}
+            track={selectedTrack}
+            asset={selected ? assetById.get(selected.asset_id) : undefined}
+            onChange={(patch) => sel && updateClip(sel.track, sel.clip, patch)}
+            onTrackVolume={(volume) => sel && updateTrack(sel.track, { volume })}
+            onDelete={deleteSelected}
+            onDuplicate={duplicateSelected}
+            onDetach={() => sel && commit(detachAudio(sel.track, sel.clip))}
+          />
+        )}
+        {advanced && <Timeline
+          tracks={tracks}
+          assets={assetById}
+          time={time}
+          length={length}
+          zoom={zoom}
+          setZoom={setZoom}
+          sel={sel}
+          setSel={setSel}
+          onSeek={(t) => {
+            setPlaying(false)
+            setTime(Math.max(0, t))
+          }}
+          onLive={setTracks}
+          onCommit={commit}
+          onTrack={updateTrack}
+          onAddTrack={addTrack}
+          onRemoveTrack={removeTrack}
           onSplit={splitAtPlayhead}
           onDelete={deleteSelected}
-          onDuplicate={duplicateSelected}
-          onDetach={() => sel && commit(detachAudio(sel.track, sel.clip))}
-          time={time}
-        />
+          onUndo={undo}
+          onRedo={redo}
+          playing={playing}
+        />}
       </div>
-
-      <AnimatePresence initial={false}>
-        {length <= 0 && (
-          <motion.div
-            key="start"
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, height: 0, marginTop: -12 }}
-            transition={{ duration: 0.25 }}
-          >
-            <HowItWorks
-              title="Start here"
-              steps={[
-                {
-                  title: 'Upload your video',
-                  body: 'Your animation goes on the timeline; its own sound on a separate track.',
-                  action: (
-                    <label htmlFor="ve-upload" onClick={() => setBinTab('files')} className="btn-primary focusable inline-flex h-9 cursor-pointer items-center px-4 text-[13px]">
-                      Upload a video
-                    </label>
-                  ),
-                },
-                {
-                  title: 'Add the voice',
-                  body: 'Type a line, turn it into speech, and it lands at the playhead.',
-                  action: (
-                    <button type="button" onClick={() => setBinTab('speech')} className="btn-primary focusable h-9 px-4 text-[13px]">
-                      Type a line → speech
-                    </button>
-                  ),
-                },
-                {
-                  title: 'Or start from a dub',
-                  body: 'Bring in a video you already dubbed in the Studio, and fix or caption it here.',
-                  action: (
-                    <button type="button" onClick={() => setBinTab('dubs')} className="btn-primary focusable h-9 px-4 text-[13px]">
-                      Bring in a dub
-                    </button>
-                  ),
-                },
-              ]}
-            />
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      <Timeline
-        tracks={tracks}
-        assets={assetById}
-        time={time}
-        length={length}
-        zoom={zoom}
-        setZoom={setZoom}
-        sel={sel}
-        setSel={setSel}
-        onSeek={(t) => {
-          setPlaying(false)
-          setTime(Math.max(0, t))
-        }}
-        onLive={setTracks}
-        onCommit={commit}
-        onTrack={updateTrack}
-        onAddTrack={addTrack}
-        onRemoveTrack={removeTrack}
-        onSplit={splitAtPlayhead}
-        onDelete={deleteSelected}
-        onUndo={undo}
-        onRedo={redo}
-        playing={playing}
-        setPlaying={setPlaying}
-        onAutoSubtitles={() => void autoSubtitles()}
-        onAddText={addText}
-        subtitling={subtitling}
-        subLang={subLang}
-        setSubLang={setSubLang}
-      />
       {confirmDialog}
     </Page>
   )
@@ -833,8 +876,8 @@ function ExportButton({
   return (
     <div className="flex flex-wrap items-center gap-2">
       {r.status === 'done' && r.url && !running && (
-        <a href={mediaUrl(r.url)} download className="btn-primary focusable inline-flex h-9 items-center px-4 text-[13px]">
-          ↓ Download export
+        <a href={mediaUrl(r.url)} download className="btn-primary focusable inline-flex h-9 items-center gap-1.5 px-4 text-[13px]">
+          <EditorIcon name="download" className="h-4 w-4" /> Download
         </a>
       )}
       {(err || (r.status === 'failed' && r.error)) && !running && (
@@ -867,6 +910,12 @@ function MediaBin({
   confirm,
   tab,
   setTab,
+  dubsOpen,
+  setDubsOpen,
+  advanced,
+  startsAt,
+  voiceLines,
+  subtitles,
 }: {
   project: EditorProject
   onAdded: (p: EditorProject, a: EditorAsset, autoPlace: boolean) => void
@@ -877,6 +926,13 @@ function MediaBin({
   confirm: (opts: ConfirmOptions) => Promise<boolean>
   tab: BinTab
   setTab: (t: BinTab) => void
+  dubsOpen: boolean
+  setDubsOpen: (open: boolean) => void
+  advanced: boolean
+  /** Where the next line of speech will land. */
+  startsAt: number
+  voiceLines: ReactNode
+  subtitles: ReactNode
 }) {
   const [uploading, setUploading] = useState<string | null>(null)
   const input = useRef<HTMLInputElement>(null)
@@ -910,21 +966,32 @@ function MediaBin({
   }
 
   return (
-    <div className="card flex min-h-0 flex-col overflow-hidden xl:max-h-[440px]">
-      <div role="tablist" className="seg-track m-2 flex rounded-[12px]!">
+    <div className={`card flex min-h-0 min-w-0 flex-col overflow-hidden [grid-area:left] ${advanced ? 'lg:max-h-[420px] xl:max-h-none' : ''}`}>
+      <div role="tablist" aria-label="Add to your video" className="m-3 mb-0 flex shrink-0 gap-1 rounded-control bg-sunken p-1">
         {(
           [
-            ['files', 'Files'],
-            ['speech', 'Text → speech'],
-            ['dubs', 'From Studio'],
+            ['speech', 'Voice', 'voice'],
+            ['subtitles', 'Subtitles', 'subtitles'],
+            ['files', 'Files', 'media'],
           ] as const
-        ).map(([k, label]) => (
-          <button key={k} type="button" role="tab" aria-selected={tab === k} data-active={tab === k} onClick={() => setTab(k)} className="seg focusable flex-1 rounded-[9px]! text-[12px]">
+        ).map(([k, label, icon]) => (
+          <button
+            key={k}
+            type="button"
+            role="tab"
+            aria-selected={tab === k}
+            onClick={() => setTab(k)}
+            className={`focusable flex flex-1 items-center justify-center gap-1.5 rounded-[8px] px-1 py-2 text-[13px] font-medium transition-colors ${
+              tab === k ? 'bg-surface text-primary shadow-sm dark:bg-raised' : 'text-muted hover:text-primary'
+            }`}
+          >
+            <EditorIcon name={icon} className="h-4 w-4" />
             {label}
           </button>
         ))}
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-3">
+      <input ref={input} id="ve-upload" type="file" multiple accept="video/*,audio/*" hidden onChange={(e) => void upload(e.target.files)} />
+      <div className="min-h-0 min-w-0 flex-1 overflow-y-auto p-3">
         {tab === 'files' && (
           <>
             <button
@@ -935,39 +1002,44 @@ function MediaBin({
                 e.preventDefault()
                 void upload(e.dataTransfer.files)
               }}
-              className="focusable flex w-full flex-col items-center gap-1 rounded-[var(--radius-control)] border border-dashed border-strong px-3 py-4 text-center text-[13px] text-secondary hover:border-brand"
+              className="focusable w-full rounded-[var(--radius-control)] border border-dashed border-strong px-3 py-5 text-center text-[13px] text-secondary hover:border-brand"
             >
-              {uploading ? `Uploading ${uploading}…` : 'Drop a video, voice or music file — or click'}
-              <span className="text-[11px] text-muted">MP4, MOV, WebM, MP3, WAV, M4A…</span>
+              {uploading ? `Uploading ${uploading}…` : 'Add a video or music'}
             </button>
-            <input ref={input} id="ve-upload" type="file" multiple accept="video/*,audio/*" hidden onChange={(e) => void upload(e.target.files)} />
-            <ul className="mt-3 flex flex-col gap-1.5">
+            <ul className="mt-3 flex flex-col gap-1">
               {project.assets.map((a) => (
-                <li key={a.id} className="inner flex items-center gap-2 rounded-[var(--radius-control)] px-2.5 py-2">
-                  <span className={`h-7 w-1.5 shrink-0 rounded-[2px] ${a.kind === 'video' ? 'bg-brand' : a.source === 'tts' ? 'bg-magenta' : 'bg-gold'}`} />
+                <li key={a.id} className="group flex items-center gap-2 rounded-[var(--radius-control)] px-1.5 py-1.5 hover:bg-[var(--well)]">
+                  <span className={`h-7 w-1 shrink-0 rounded-[2px] ${a.kind === 'video' ? 'bg-brand' : a.source === 'tts' ? 'bg-magenta' : 'bg-gold'}`} />
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-[12px] text-primary" title={a.text ?? a.name}>
                       {a.text ?? a.name}
                     </p>
-                    <p className="font-mono text-[10px] text-muted">
-                      {a.kind === 'video' ? 'Video' : a.source === 'tts' ? 'Speech' : 'Audio'} · {fmt(a.duration, true)}
-                    </p>
+                    <p className="text-[12px] text-muted">{fmt(a.duration)}</p>
                   </div>
-                  <button type="button" onClick={() => onPlace(a)} className="btn-primary focusable h-7 shrink-0 px-2 text-[11px]" title="Add at the playhead">
-                    + Add
-                  </button>
                   {!used.has(a.id) && (
-                    <button type="button" onClick={() => remove(a)} className="shrink-0 text-[11px] text-muted hover:text-danger" aria-label={`Remove ${a.name}`}>
+                    <button type="button" onClick={() => remove(a)} className="shrink-0 text-[11px] text-muted opacity-0 hover:text-danger focus:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100" aria-label={`Remove ${a.name}`}>
                       ✕
                     </button>
                   )}
+                  <button type="button" onClick={() => onPlace(a)} className="btn-primary focusable h-8 shrink-0 px-3 text-[12px]" title="Add it where the video is now">
+                    Add
+                  </button>
                 </li>
               ))}
             </ul>
+            <details open={dubsOpen} onToggle={(e) => setDubsOpen(e.currentTarget.open)} className="mt-3 text-[13px] text-secondary">
+              <summary className="focusable cursor-pointer py-1">Use a dub from the Studio</summary>
+              <DubImporter project={project} onAdded={onAdded} onError={onError} />
+            </details>
           </>
         )}
-        {tab === 'speech' && <SpeechMaker project={project} onAdded={onAdded} onError={onError} />}
-        {tab === 'dubs' && <DubImporter project={project} onAdded={onAdded} onError={onError} />}
+        {tab === 'speech' && (
+          <>
+            <SpeechMaker project={project} startsAt={startsAt} onAdded={onAdded} onError={onError} />
+            {voiceLines}
+          </>
+        )}
+        {tab === 'subtitles' && subtitles}
       </div>
     </div>
   )
@@ -975,10 +1047,12 @@ function MediaBin({
 
 function SpeechMaker({
   project,
+  startsAt,
   onAdded,
   onError,
 }: {
   project: EditorProject
+  startsAt: number
   onAdded: (p: EditorProject, a: EditorAsset, autoPlace: boolean) => void
   onError: (msg: string) => void
 }) {
@@ -1018,6 +1092,7 @@ function SpeechMaker({
         ? 'Text to speech is not available on this server right now.'
         : null
   const chosen = voice && options.some((o) => o.id === voice) ? voice : (engine?.default ?? undefined)
+  const tokens = Math.max(1, Math.ceil((text.trim().length / 12) * (20 / 60)))
 
   async function make() {
     const line = text.trim()
@@ -1047,21 +1122,19 @@ function SpeechMaker({
   }
 
   return (
-    <div className="flex flex-col gap-3 pt-1">
+    <div className="flex flex-col gap-3">
       <LanguageSelect languages={languages} value={language} onChange={(c) => { setLanguage(c); setVoice(null) }} label="Language" />
       {options.length > 1 && (
-        <div className="flex flex-wrap gap-1.5">
-          {options.slice(0, 12).map((o) => (
-            <button
-              key={o.id}
-              type="button"
-              onClick={() => setVoice(o.id)}
-              className={`focusable rounded-pill border px-2.5 py-1 text-[11px] ${chosen === o.id ? 'border-brand bg-brand/15 text-primary' : 'border-subtle text-secondary'}`}
-            >
-              {o.label}
-            </button>
-          ))}
-        </div>
+        <label className="flex flex-col gap-1 text-[12px] text-muted">
+          Voice
+          <select value={chosen ?? ''} onChange={(e) => setVoice(e.target.value)} className="field h-10 py-0 text-[13px]">
+            {options.map((o) => (
+              <option key={o.id} value={o.id}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </label>
       )}
       <textarea
         value={text}
@@ -1071,8 +1144,8 @@ function SpeechMaker({
         }}
         rows={4}
         maxLength={voices?.max_chars ?? 1000}
-        placeholder="Type one line of dialogue…"
-        className="field resize-none text-[13px] leading-relaxed"
+        placeholder="Type what the voice should say…"
+        className="field rounded-[12px]! resize-none text-[13px] leading-relaxed"
       />
       {unavailable && (
         <p className="rounded-[var(--radius-control)] border border-warn/30 bg-warn/[0.07] px-3 py-2 text-[12px] text-secondary">
@@ -1080,13 +1153,180 @@ function SpeechMaker({
         </p>
       )}
       <button type="button" onClick={make} disabled={!text.trim() || busy || !!unavailable} className="btn-primary focusable h-10 text-[13px] disabled:opacity-50">
-        {busy ? 'Making speech…' : 'Make speech & add at playhead'}
+        {busy ? 'Making speech…' : `Add at ${fmt(startsAt)}`}
       </button>
-      <p className="text-[11px] leading-relaxed text-muted">
-        Each line becomes its own clip on the Voice track, so you can move and cut it. Priced like
-        text to speech (≈{Math.max(1, Math.ceil((text.trim().length / 12) * (20 / 60)))} tokens). ⌘/Ctrl + Enter to make it.
-      </p>
+      {text.trim() && (
+        <p className="text-center text-[12px] text-muted">
+          About {tokens} token{tokens === 1 ? '' : 's'}
+        </p>
+      )}
     </div>
+  )
+}
+
+/** Subtitles from the speech on the timeline, or one typed by hand. */
+function SubtitlesPanel({
+  onAuto,
+  onAdd,
+  busy,
+  lang,
+  setLang,
+}: {
+  onAuto: () => void
+  onAdd: () => void
+  /** Progress while auto subtitles are being made; null when idle. */
+  busy: string | null
+  lang: string
+  setLang: (code: string) => void
+}) {
+  const { data: languages = [] } = useLanguages()
+  return (
+    <div className="flex flex-col gap-3">
+      <p className="text-[13px] leading-relaxed text-secondary">Turn the speech on the timeline into subtitles.</p>
+      <label className="flex flex-col gap-1 text-[12px] text-muted">
+        Spoken language
+        <select value={lang} onChange={(e) => setLang(e.target.value)} className="field h-10 py-0 text-[13px]">
+          <option value="auto">Detect automatically</option>
+          {languages.map((l) => (
+            <option key={l.code} value={l.code}>
+              {l.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <button type="button" onClick={onAuto} disabled={!!busy} className="btn-primary focusable h-10 text-[13px] disabled:opacity-60">
+        {busy ?? 'Make subtitles'}
+      </button>
+      <button type="button" onClick={onAdd} className="focusable text-[13px] text-muted underline-offset-4 hover:text-primary hover:underline">
+        or add one by hand
+      </button>
+    </div>
+  )
+}
+
+type ClipLine = { trackId: string; clip: EditorClip }
+
+/** What the voice says, in order. All the simple view needs to place a line. */
+function VoiceLines({
+  lines,
+  assets,
+  time,
+  onPlay,
+  onMove,
+  onDelete,
+}: {
+  lines: ClipLine[]
+  assets: Map<string, EditorAsset>
+  time: number
+  onPlay: (at: number) => void
+  onMove: (line: ClipLine) => void
+  onDelete: (line: ClipLine) => void
+}) {
+  if (!lines.length) return null
+  return (
+    <section className="mt-4 border-t border-subtle pt-3">
+      <h3 className="mb-2 text-[13px] font-semibold text-primary">Your lines</h3>
+      <ul className="flex flex-col gap-1.5">
+        {lines.map((l) => (
+          <li key={l.clip.id} className="inner p-2.5">
+            <p className="line-clamp-2 text-[13px] leading-relaxed text-primary">
+              {assets.get(l.clip.asset_id)?.text ?? l.clip.label ?? 'Voice'}
+            </p>
+            <div className="mt-1.5 flex items-center gap-1">
+              <span className="text-[12px] text-muted">{fmt(l.clip.start)}</span>
+              {Math.abs(l.clip.start - time) >= 0.1 && (
+                <button type="button" onClick={() => onMove(l)} className="focusable ml-1 text-[12px] text-brand hover:underline">
+                  Move to {fmt(time)}
+                </button>
+              )}
+              <span className="ml-auto" />
+              <LineButton label="Play from this line" onClick={() => onPlay(l.clip.start)}>
+                <EditorIcon name="play" className="h-3.5 w-3.5" />
+              </LineButton>
+              <LineButton label="Remove this line" onClick={() => onDelete(l)}>
+                <EditorIcon name="trash" className="h-4 w-4" />
+              </LineButton>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
+}
+
+function SubtitleLines({
+  lines,
+  onPlay,
+  onChange,
+  onDelete,
+}: {
+  lines: ClipLine[]
+  onPlay: (at: number) => void
+  onChange: (line: ClipLine, text: string) => void
+  onDelete: (line: ClipLine) => void
+}) {
+  if (!lines.length) return null
+  return (
+    <section className="mt-4 border-t border-subtle pt-3">
+      <h3 className="mb-2 text-[13px] font-semibold text-primary">Your subtitles</h3>
+      <ul className="flex flex-col gap-1.5">
+        {lines.map((l) => (
+          <li key={l.clip.id} className="flex items-center gap-1">
+            <button type="button" onClick={() => onPlay(l.clip.start)} title="Play from here" className="focusable w-9 shrink-0 text-left text-[12px] text-muted hover:text-primary">
+              {fmt(l.clip.start)}
+            </button>
+            <input
+              key={l.clip.text}
+              defaultValue={l.clip.text ?? ''}
+              aria-label={`Subtitle at ${fmt(l.clip.start)}`}
+              onBlur={(e) => {
+                const text = e.target.value.trim()
+                if (text && text !== l.clip.text) onChange(l, text)
+              }}
+              className="field h-9 min-w-0 flex-1 rounded-[10px]! px-2.5 py-0 text-[13px]"
+            />
+            <LineButton label="Remove this subtitle" onClick={() => onDelete(l)}>
+              <EditorIcon name="trash" className="h-4 w-4" />
+            </LineButton>
+          </li>
+        ))}
+      </ul>
+    </section>
+  )
+}
+
+function LineButton({ label, onClick, children }: { label: string; onClick: () => void; children: ReactNode }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+      className="focusable grid h-8 w-8 shrink-0 place-items-center rounded-full text-secondary hover:bg-[var(--well)] hover:text-primary"
+    >
+      {children}
+    </button>
+  )
+}
+
+function VoiceSteps({ video, voice, exported }: { video: boolean; voice: boolean; exported: boolean }) {
+  const steps = [
+    { label: 'Add your video', done: video },
+    { label: 'Type the words', done: voice },
+    { label: 'Export', done: exported },
+  ]
+  const current = steps.findIndex((s) => !s.done)
+  return (
+    <ol className="flex items-center gap-2 sm:gap-3">
+      {steps.map((s, i) => (
+        <li key={s.label} className={`flex min-w-0 items-center gap-1.5 text-[13px] ${i === current ? 'font-medium text-primary' : 'text-muted'}`}>
+          <span className={`grid h-5 w-5 shrink-0 place-items-center rounded-[6px] text-[12px] ${s.done ? 'bg-success/15 text-success' : i === current ? 'bg-brand/15 text-brand' : 'bg-[var(--well)]'}`}>
+            {s.done ? '✓' : i + 1}
+          </span>
+          <span className="truncate">{s.label}</span>
+        </li>
+      ))}
+    </ol>
   )
 }
 
@@ -1159,6 +1399,8 @@ function Preview({
   playing,
   setPlaying,
   length,
+  onUpload,
+  onDubs,
 }: {
   tracks: EditorTrack[]
   assets: Map<string, EditorAsset>
@@ -1167,6 +1409,8 @@ function Preview({
   playing: boolean
   setPlaying: (p: boolean) => void
   length: number
+  onUpload: () => void
+  onDubs: () => void
 }) {
   const videos = useRef<Map<string, HTMLVideoElement>>(new Map())
   const audios = useRef<Map<string, HTMLAudioElement>>(new Map())
@@ -1293,8 +1537,8 @@ function Preview({
   const anyVideo = videoClips.some(({ c, t }) => !t.muted && time >= c.start && time < clipEnd(c))
 
   return (
-    <div className="card flex min-w-0 flex-col overflow-hidden">
-      <div className="relative aspect-video w-full bg-black">
+    <div className="card flex min-h-0 min-w-0 flex-col overflow-hidden [grid-area:preview]">
+      <div className="relative aspect-video w-full bg-black xl:aspect-auto xl:min-h-0 xl:flex-1">
         {videoClips.map(({ c, ti }) => {
           const a = assets.get(c.asset_id)
           if (!a) return null
@@ -1313,10 +1557,23 @@ function Preview({
             />
           )
         })}
-        {!anyVideo && (
-          <div className="absolute inset-0 grid place-items-center text-[13px] text-white/50">
-            {videoClips.length ? 'No picture at this point' : 'Add a video to see it here'}
+        {length <= 0 ? (
+          // An empty project has one thing to do, so that is all it shows.
+          <div className="absolute inset-0 z-[41] flex flex-col items-center justify-center gap-3 p-4 text-center">
+            <p className="text-[15px] font-medium text-white">Start with your video</p>
+            <label htmlFor="ve-upload" onClick={onUpload} className="btn-primary focusable inline-flex h-10 cursor-pointer items-center px-5 text-sm">
+              Upload a video
+            </label>
+            <button type="button" onClick={onDubs} className="focusable text-[13px] text-white/70 underline-offset-4 hover:text-white hover:underline">
+              or use a dub from the Studio
+            </button>
           </div>
+        ) : (
+          !anyVideo && (
+            <div className="absolute inset-0 grid place-items-center text-[13px] text-white/50">
+              {videoClips.length ? 'No picture at this point' : 'Add a video to see it here'}
+            </div>
+          )
         )}
         {/* The subtitle under the playhead, drawn the way the export burns it. */}
         <div className="pointer-events-none absolute inset-x-0 bottom-[6%] z-[40] flex justify-center px-[6%]">
@@ -1337,19 +1594,33 @@ function Preview({
           </AnimatePresence>
         </div>
       </div>
-      <div className="flex items-center gap-3 px-3 py-2">
+      <input
+        type="range"
+        min={0}
+        max={Math.max(length, 0.1)}
+        step={0.05}
+        value={Math.min(time, length)}
+        disabled={length <= 0}
+        onChange={(e) => {
+          setPlaying(false)
+          setTime(Number(e.target.value))
+        }}
+        aria-label="Position in the video"
+        className="mx-3 mt-2 block w-[calc(100%-1.5rem)] accent-[var(--color-brand)]"
+      />
+      <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-3 px-3 py-2">
+        <span className="font-mono text-[12px] text-primary">{fmt(time, true)}</span>
         <button
           type="button"
           onClick={() => setPlaying(!playing)}
           disabled={length <= 0}
-          className="btn-primary focusable grid h-9 w-9 shrink-0 place-items-center rounded-full disabled:opacity-50"
+          className="btn-primary focusable grid h-9 w-9 place-items-center rounded-full disabled:opacity-50"
           aria-label={playing ? 'Pause' : 'Play'}
+          title="Play or pause (Space)"
         >
-          {playing ? '❚❚' : '▶'}
+          <EditorIcon name={playing ? 'pause' : 'play'} className="h-4 w-4" />
         </button>
-        <span className="font-mono text-[12px] text-primary">{fmt(time, true)}</span>
-        <span className="font-mono text-[12px] text-muted">/ {fmt(length, true)}</span>
-        <span className="ml-auto hidden text-[11px] text-muted sm:inline">Space play · S split · ⌫ delete · ⌘Z undo</span>
+        <span className="text-right font-mono text-[12px] text-muted">{fmt(length, true)}</span>
       </div>
     </div>
   )
@@ -1362,37 +1633,29 @@ function Inspector({
   track,
   asset,
   onChange,
-  onSplit,
+  onTrackVolume,
   onDelete,
   onDuplicate,
   onDetach,
-  time,
 }: {
   clip: EditorClip | null
   track: EditorTrack | null
   asset?: EditorAsset
   onChange: (patch: Partial<EditorClip>) => void
-  onSplit: () => void
+  onTrackVolume: (v: number) => void
   onDelete: () => void
   onDuplicate: () => void
   /** Give a video clip's sound its own clip, so it can be cut on its own. */
   onDetach: () => void
-  time: number
 }) {
+  const box = 'card min-h-0 min-w-0 overflow-y-auto p-4 [grid-area:insp]'
   if (!clip || !track) {
     return (
-      <div className="card p-4 text-[13px] leading-relaxed text-muted">
-        <p className="font-medium text-primary">Click a clip to edit it</p>
-        <ul className="mt-2 space-y-1.5">
-          <li><span className="text-primary">Move it:</span> drag the clip along the timeline.</li>
-          <li><span className="text-primary">Shorten it:</span> drag its left or right edge.</li>
-          <li><span className="text-primary">Cut it in two:</span> put the playhead on it, press Split.</li>
-          <li><span className="text-primary">Fix a subtitle:</span> click it, then click any word.</li>
-        </ul>
+      <div className={`${box} grid place-items-center text-center text-[13px] leading-relaxed text-muted`}>
+        Click a clip on the timeline to edit it.
       </div>
     )
   }
-  const canSplit = time > clip.start + MIN_CLIP && time < clipEnd(clip) - MIN_CLIP
   const num = (label: string, value: number, set: (v: number) => void, step = 0.05, max?: number) => (
     <label className="flex items-center justify-between gap-2 text-[12px] text-muted">
       {label}
@@ -1410,11 +1673,16 @@ function Inspector({
       />
     </label>
   )
+  const slider = (label: string, value: number, set: (v: number) => void) => (
+    <label className="flex flex-col gap-1 text-[12px] text-muted">
+      <span className="flex justify-between">
+        {label} <span className="font-mono text-primary">{Math.round(value * 100)}%</span>
+      </span>
+      <input type="range" min={0} max={2} step={0.05} value={value} onChange={(e) => set(Number(e.target.value))} className="accent-[var(--color-brand)]" />
+    </label>
+  )
   const actions = (
     <div className="mt-1 flex flex-wrap gap-2">
-      <button type="button" onClick={onSplit} disabled={!canSplit} className="btn-primary focusable h-8 px-3 text-[12px] disabled:opacity-40" title="Split at the playhead (S)">
-        Split
-      </button>
       <button type="button" onClick={onDuplicate} className="btn-primary focusable h-8 px-3 text-[12px]" title="Duplicate (⌘D)">
         Duplicate
       </button>
@@ -1423,60 +1691,66 @@ function Inspector({
       </button>
     </div>
   )
+  const more = (children: ReactNode) => (
+    <details className="text-[12px] text-muted">
+      <summary className="focusable cursor-pointer py-0.5">More options</summary>
+      <div className="mt-2 flex flex-col gap-2.5">{children}</div>
+    </details>
+  )
 
   if (track.kind === 'text') {
     return (
-      <div className="card flex flex-col gap-2.5 p-4">
+      <div className={`${box} flex flex-col gap-2.5`}>
         <p className="text-sm font-medium text-primary">Subtitle</p>
-        <p className="font-mono text-[11px] text-muted">
-          {fmt(clip.start, true)} – {fmt(clipEnd(clip), true)}
-        </p>
         <SubtitleWords
           key={clip.id}
           text={clip.text ?? ''}
           onChange={(text) => onChange({ text })}
         />
-        {num('Starts at (s)', clip.start, (v) => onChange({ start: v }))}
-        {num('Length (s)', clipLen(clip), (v) => onChange({ trim_out: Math.max(0.2, v) }), 0.1, 60)}
+        {more(
+          <>
+            {num('Starts at (s)', clip.start, (v) => onChange({ start: v }))}
+            {num('Length (s)', clipLen(clip), (v) => onChange({ trim_out: Math.max(0.2, v) }), 0.1, 60)}
+          </>,
+        )}
         {actions}
       </div>
     )
   }
 
   const detached = track.kind === 'video' && !!asset?.has_audio && clip.volume === 0
+  const hasSound = track.kind !== 'video' || (!!asset?.has_audio && !detached)
 
   return (
-    <div className="card flex flex-col gap-2.5 p-4">
-      <p className="truncate text-sm font-medium text-primary" title={asset?.name}>
-        {asset?.text ?? asset?.name ?? 'Clip'}
-      </p>
-      <p className="font-mono text-[11px] text-muted">
-        {track.name} · {fmt(clipLen(clip), true)} long
-      </p>
-      {num('Starts at (s)', clip.start, (v) => onChange({ start: v }))}
-      {num('Trim in (s)', clip.trim_in, (v) => onChange({ trim_in: Math.min(v, clip.trim_out - MIN_CLIP) }), 0.05, asset?.duration)}
-      {num('Trim out (s)', clip.trim_out, (v) => onChange({ trim_out: Math.max(v, clip.trim_in + MIN_CLIP) }), 0.05, asset?.duration)}
-      {track.kind === 'video' && asset?.has_audio && !detached && (
-        <button type="button" onClick={onDetach} className="btn-primary focusable h-8 px-3 text-[12px]" title="Put this clip's sound on its own track">
-          ♪ Detach audio
-        </button>
-      )}
+    <div className={`${box} flex flex-col gap-2.5`}>
+      <div>
+        <p className="line-clamp-2 text-sm font-medium text-primary" title={asset?.name}>
+          {asset?.text ?? asset?.name ?? 'Clip'}
+        </p>
+        <p className="mt-0.5 text-[12px] text-muted">
+          {track.name} · {fmt(clipLen(clip), true)}
+        </p>
+      </div>
+      {hasSound && slider('Volume', clip.volume, (v) => onChange({ volume: v }))}
       {detached && (
-        <p className="rounded-[10px] border border-subtle bg-sunken px-3 py-2 text-[12px] leading-relaxed text-secondary">
-          This video's sound is on its own track. Cut or delete it there — the picture stays as it is.
+        <p className="text-[12px] leading-relaxed text-muted">
+          This video's sound is on its own track, so you can cut it there.
         </p>
       )}
-      {(track.kind !== 'video' || (asset?.has_audio && !detached)) && (
+      {more(
         <>
-          <label className="flex flex-col gap-1 text-[12px] text-muted">
-            <span className="flex justify-between">
-              Volume <span className="font-mono text-primary">{Math.round(clip.volume * 100)}%</span>
-            </span>
-            <input type="range" min={0} max={2} step={0.05} value={clip.volume} onChange={(e) => onChange({ volume: Number(e.target.value) })} className="accent-[var(--color-brand)]" />
-          </label>
-          {num('Fade in (s)', clip.fade_in, (v) => onChange({ fade_in: v }), 0.1, 30)}
-          {num('Fade out (s)', clip.fade_out, (v) => onChange({ fade_out: v }), 0.1, 30)}
-        </>
+          {num('Starts at (s)', clip.start, (v) => onChange({ start: v }))}
+          {num('Trim in (s)', clip.trim_in, (v) => onChange({ trim_in: Math.min(v, clip.trim_out - MIN_CLIP) }), 0.05, asset?.duration)}
+          {num('Trim out (s)', clip.trim_out, (v) => onChange({ trim_out: Math.max(v, clip.trim_in + MIN_CLIP) }), 0.05, asset?.duration)}
+          {hasSound && num('Fade in (s)', clip.fade_in, (v) => onChange({ fade_in: v }), 0.1, 30)}
+          {hasSound && num('Fade out (s)', clip.fade_out, (v) => onChange({ fade_out: v }), 0.1, 30)}
+          {track.kind !== 'video' && slider('Whole track volume', track.volume, onTrackVolume)}
+          {track.kind === 'video' && asset?.has_audio && !detached && (
+            <button type="button" onClick={onDetach} className="btn-primary focusable h-8 px-3 text-[12px]" title="Put this clip's sound on its own track">
+              Detach audio
+            </button>
+          )}
+        </>,
       )}
       {actions}
     </div>
@@ -1669,12 +1943,6 @@ function Timeline({
   onUndo,
   onRedo,
   playing,
-  setPlaying,
-  onAutoSubtitles,
-  onAddText,
-  subtitling,
-  subLang,
-  setSubLang,
 }: {
   tracks: EditorTrack[]
   assets: Map<string, EditorAsset>
@@ -1695,15 +1963,8 @@ function Timeline({
   onUndo: () => void
   onRedo: () => void
   playing: boolean
-  setPlaying: (p: boolean) => void
-  onAutoSubtitles: () => void
-  onAddText: () => void
-  /** Progress while auto subtitles are being made; null when idle. */
-  subtitling: string | null
-  subLang: string
-  setSubLang: (code: string) => void
 }) {
-  const { data: languages = [] } = useLanguages()
+  const [adding, setAdding] = useState(false)
   const pps = 36 * zoom
   const span = Math.max(length + 15, 30)
   const width = span * pps
@@ -1832,99 +2093,97 @@ function Timeline({
   }
 
   const tick = zoom >= 4 ? 1 : zoom >= 1.5 ? 2 : zoom >= 0.6 ? 5 : 15
-  const laneH = (k: TrackKind) => (k === 'video' ? 'h-16' : 'h-14')
+  const laneH = (k: TrackKind) => (k === 'video' ? 'h-14' : 'h-11')
 
   return (
-    <div className="card overflow-hidden">
+    <div className="card flex min-h-0 min-w-0 flex-col overflow-hidden [grid-area:time] xl:max-h-[300px]">
       {/* toolbar */}
-      <div className="flex flex-wrap items-center gap-2 border-b border-subtle px-3 py-2">
-        <ToolBtn onClick={() => setPlaying(!playing)} label={playing ? 'Pause' : 'Play'}>
-          {playing ? '❚❚' : '▶'}
-        </ToolBtn>
-        <ToolBtn onClick={onUndo} label="Undo (⌘Z)">↶ Undo</ToolBtn>
-        <ToolBtn onClick={onRedo} label="Redo (⇧⌘Z)">↷ Redo</ToolBtn>
+      <div className="flex items-center gap-1 border-b border-subtle px-2 py-1">
+        <ToolBtn onClick={onUndo} label="Undo (⌘Z)"><EditorIcon name="undo" /></ToolBtn>
+        <ToolBtn onClick={onRedo} label="Redo (⇧⌘Z)"><EditorIcon name="redo" /></ToolBtn>
         <span className="mx-1 h-5 w-px bg-[var(--card-edge)]" />
-        <ToolBtn onClick={onSplit} label="Split at playhead (S)" disabled={!sel}>✂ Split</ToolBtn>
-        <ToolBtn onClick={onDelete} label="Delete clip (⌫)" disabled={!sel}>🗑 Delete</ToolBtn>
+        <ToolBtn onClick={onSplit} label="Split at the playhead (S)" disabled={!sel}><EditorIcon name="split" /></ToolBtn>
+        <ToolBtn onClick={onDelete} label="Delete clip (⌫)" disabled={!sel}><EditorIcon name="trash" /></ToolBtn>
         <span className="mx-1 h-5 w-px bg-[var(--card-edge)]" />
-        <span className="text-[11px] text-muted">Add track</span>
-        {(['video', 'voice', 'music'] as const).map((k) => (
-          <ToolBtn key={k} onClick={() => onAddTrack(k)} label={`Add a ${k} track`}>
-            + {KIND_STYLE[k].label}
-          </ToolBtn>
-        ))}
-        <span className="mx-1 h-5 w-px bg-[var(--card-edge)]" />
-        <select
-          value={subLang}
-          onChange={(e) => setSubLang(e.target.value)}
-          aria-label="Spoken language for auto subtitles"
-          title="Spoken language for auto subtitles"
-          className="focusable h-8 w-auto rounded-full border border-subtle bg-sunken px-3 text-[12px] text-primary"
+        <div
+          className="relative"
+          onBlur={(e) => {
+            if (!e.currentTarget.contains(e.relatedTarget)) setAdding(false)
+          }}
         >
-          <option value="auto">Language: auto</option>
-          {languages.map((l) => (
-            <option key={l.code} value={l.code}>
-              {l.name}
-            </option>
-          ))}
-        </select>
-        <ToolBtn onClick={onAutoSubtitles} label="Make subtitles from the speech on the timeline" disabled={!!subtitling}>
-          {subtitling ?? '✦ Auto subtitles'}
-        </ToolBtn>
-        <ToolBtn onClick={onAddText} label="Add a subtitle at the playhead">
-          T+ Text
-        </ToolBtn>
-        <label className="ml-auto flex items-center gap-2 text-[11px] text-muted">
-          Zoom
-          <input type="range" min={0.3} max={10} step={0.1} value={zoom} onChange={(e) => setZoom(Number(e.target.value))} className="w-28 accent-[var(--color-brand)]" />
-        </label>
+          <ToolBtn onClick={() => setAdding(!adding)} label="Add a track"><EditorIcon name="plus" /></ToolBtn>
+          {adding && (
+            <div className="absolute left-0 top-full z-20 mt-1 flex w-32 flex-col rounded-[10px] border border-subtle bg-raised p-1 shadow-[var(--shadow-lg)]">
+              {(['video', 'voice', 'music'] as const).map((k) => (
+                <button
+                  key={k}
+                  type="button"
+                  onClick={() => {
+                    onAddTrack(k)
+                    setAdding(false)
+                  }}
+                  className="focusable rounded-[8px] px-2.5 py-1.5 text-left text-[12px] text-primary hover:bg-[var(--well)]"
+                >
+                  {KIND_STYLE[k].label} track
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+        <input
+          type="range"
+          min={0.3}
+          max={10}
+          step={0.1}
+          value={zoom}
+          onChange={(e) => setZoom(Number(e.target.value))}
+          aria-label="Zoom"
+          title="Zoom"
+          className="ml-auto mr-1 w-24 accent-[var(--color-brand)]"
+        />
       </div>
 
-      <div className="flex">
+      <div className="flex min-h-0 flex-1 overflow-y-auto">
         {/* track headers */}
-        <div className="w-[150px] shrink-0 border-r border-subtle">
+        <div className="h-fit w-[124px] shrink-0 border-r border-subtle">
           <div className="h-6 border-b border-subtle" />
           {tracks.map((t) => (
-            <div key={t.id} className={`flex flex-col justify-center gap-1 border-b border-subtle px-2 ${laneH(t.kind)}`}>
-              <div className="flex items-center gap-1.5">
-                <span className={`h-2 w-2 shrink-0 rounded-full ${KIND_STYLE[t.kind].block}`} />
-                <span className="min-w-0 flex-1 truncate text-[12px] text-primary">{t.name}</span>
-                <button type="button" onClick={() => onRemoveTrack(t.id)} className="text-[10px] text-muted hover:text-danger" aria-label={`Remove ${t.name}`}>
-                  ✕
-                </button>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => onTrack(t.id, { muted: !t.muted })}
-                  className={`rounded-full px-2 py-0.5 text-[10px] ${t.muted ? 'bg-danger/20 text-danger' : 'bg-[var(--well)] text-muted'}`}
-                  title={t.muted ? 'Unmute track' : 'Mute track'}
-                >
-                  {t.muted ? 'Muted' : t.kind === 'video' ? 'Show' : 'On'}
-                </button>
-                {t.kind !== 'video' && t.kind !== 'text' && (
-                  <input
-                    type="range"
-                    min={0}
-                    max={2}
-                    step={0.05}
-                    value={t.volume}
-                    onChange={(e) => onTrack(t.id, { volume: Number(e.target.value) })}
-                    className="w-16 accent-[var(--color-brand)]"
-                    title={`Track volume ${Math.round(t.volume * 100)}%`}
-                  />
-                )}
-              </div>
+            <div key={t.id} className={`group flex items-center gap-1.5 border-b border-subtle px-2 ${laneH(t.kind)}`}>
+              <span className={KIND_STYLE[t.kind].tint}>
+                <EditorIcon name={KIND_STYLE[t.kind].icon} className="h-4 w-4" />
+              </span>
+              <span className="min-w-0 flex-1 truncate text-[12px] text-primary" title={t.name}>{t.name}</span>
+              <button
+                type="button"
+                onClick={() => onRemoveTrack(t.id)}
+                className="text-[10px] text-muted opacity-0 hover:text-danger focus:opacity-100 group-hover:opacity-100 [@media(hover:none)]:opacity-100"
+                aria-label={`Remove ${t.name}`}
+                title={`Remove ${t.name}`}
+              >
+                ✕
+              </button>
+              <button
+                type="button"
+                onClick={() => onTrack(t.id, { muted: !t.muted })}
+                className={`focusable shrink-0 hover:text-primary ${t.muted ? 'text-danger' : 'text-muted'}`}
+                aria-label={t.muted ? `Turn ${t.name} on` : `Turn ${t.name} off`}
+                title={t.muted ? 'Turn this track on' : 'Turn this track off'}
+              >
+                <EditorIcon
+                  name={t.kind === 'video' || t.kind === 'text' ? (t.muted ? 'eyeOff' : 'eye') : t.muted ? 'soundOff' : 'sound'}
+                  className="h-4 w-4"
+                />
+              </button>
             </div>
           ))}
         </div>
 
         {/* lanes */}
-        <div ref={scroller} className="min-w-0 flex-1 overflow-x-auto">
+        <div ref={scroller} className="h-fit min-w-0 flex-1 overflow-x-auto">
           <div className="relative select-none" style={{ width }}>
             <div className="relative h-6 cursor-pointer border-b border-subtle" onPointerDown={seekFrom}>
               {Array.from({ length: Math.floor(span / tick) + 1 }, (_, i) => i * tick).map((t) => (
-                <span key={t} className="absolute top-0 h-full border-l border-subtle pl-1 font-mono text-[10px] leading-6 text-muted" style={{ left: t * pps }}>
+                <span key={t} className="absolute top-0 h-full pl-1 font-mono text-[10px] leading-6 text-muted" style={{ left: t * pps }}>
                   {fmt(t)}
                 </span>
               ))}
@@ -1942,46 +2201,49 @@ function Timeline({
                 {t.clips.map((c) => {
                   const a = assets.get(c.asset_id)
                   const isSel = sel?.clip === c.id
+                  const grip = `absolute inset-y-0 grid w-2.5 cursor-ew-resize place-items-center ${isSel ? '' : 'opacity-0 group-hover:opacity-100'}`
                   return (
                     <div
                       key={c.id}
                       onPointerDown={(e) => begin(e, t.id, c, 'move')}
                       onPointerMove={move}
                       onPointerUp={end}
-                      className={`group absolute inset-y-1 cursor-grab overflow-hidden rounded-md border active:cursor-grabbing ${KIND_STYLE[t.kind].block} ${isSel ? 'ring-2 ring-primary' : ''}`}
+                      className={`group absolute inset-y-1 cursor-grab overflow-hidden rounded-[8px] border active:cursor-grabbing ${KIND_STYLE[t.kind].block} ${isSel ? 'ring-2 ring-brand' : ''}`}
                       style={{ left: c.start * pps, width: Math.max(clipLen(c) * pps, 4) }}
                       title={a?.text ?? a?.name}
                     >
-                      {a && a.peaks.length > 0 && <Wave peaks={a.peaks} from={c.trim_in} to={c.trim_out} />}
-                      <span className="relative block truncate px-2 pt-0.5 text-[10px] font-medium text-primary">
+                      {/* A video's sound has its own track, so its picture clip draws no wave. */}
+                      {a && t.kind !== 'video' && a.peaks.length > 0 && <Wave peaks={a.peaks} from={c.trim_in} to={c.trim_out} />}
+                      <span className="relative block truncate px-3 pt-0.5 text-[11px] font-medium text-primary">
                         {c.text ?? (c.label || a?.text || a?.name || 'Clip')}
                       </span>
-                      {(c.fade_in > 0 || c.fade_out > 0) && (
-                        <span className="relative block px-2 font-mono text-[9px] text-muted">
-                          {c.fade_in > 0 ? '◢' : ''} {c.fade_out > 0 ? '◣' : ''}
-                        </span>
-                      )}
                       <span
                         onPointerDown={(e) => begin(e, t.id, c, 'left')}
                         onPointerMove={move}
                         onPointerUp={end}
-                        className="absolute inset-y-0 left-0 w-2 cursor-ew-resize bg-white/0 group-hover:bg-white/40"
-                      />
+                        className={`${grip} left-0`}
+                      >
+                        <i className="h-4 w-1 rounded-[2px] bg-white shadow-sm" />
+                      </span>
                       <span
                         onPointerDown={(e) => begin(e, t.id, c, 'right')}
                         onPointerMove={move}
                         onPointerUp={end}
-                        className="absolute inset-y-0 right-0 w-2 cursor-ew-resize bg-white/0 group-hover:bg-white/40"
-                      />
+                        className={`${grip} right-0`}
+                      >
+                        <i className="h-4 w-1 rounded-[2px] bg-white shadow-sm" />
+                      </span>
                     </div>
                   )
                 })}
               </div>
             ))}
             {!tracks.length && (
-              <p className="px-4 py-6 text-[13px] text-muted">No tracks. Add one from the toolbar.</p>
+              <p className="px-4 py-6 text-[13px] text-muted">No tracks yet. Press + above to add one.</p>
             )}
-            <span aria-hidden className="pointer-events-none absolute inset-y-0 z-10 w-0.5 bg-danger" style={{ left: time * pps }} />
+            <span aria-hidden className="pointer-events-none absolute inset-y-0 z-10 w-0.5 bg-brand" style={{ left: time * pps }}>
+              <i className="absolute -left-1 top-1 h-2.5 w-2.5 rotate-45 rounded-[2px] bg-brand" />
+            </span>
           </div>
         </div>
       </div>
@@ -2001,7 +2263,7 @@ function ToolBtn({
   disabled?: boolean
 }) {
   return (
-    <button type="button" onClick={onClick} disabled={disabled} title={label} aria-label={label} className="btn-primary focusable h-8 px-2.5 text-[12px] disabled:opacity-40">
+    <button type="button" onClick={onClick} disabled={disabled} title={label} aria-label={label} className="focusable grid h-8 w-8 place-items-center rounded-full text-secondary transition-colors hover:bg-[var(--well)] hover:text-primary disabled:opacity-35">
       {children}
     </button>
   )
@@ -2019,7 +2281,7 @@ function Wave({ peaks, from, to }: { peaks: number[]; from: number; to: number }
     return part.length ? Math.max(...part) : 0
   })
   return (
-    <svg aria-hidden viewBox={`0 0 ${n} 100`} preserveAspectRatio="none" className="absolute inset-0 h-full w-full opacity-50">
+    <svg aria-hidden viewBox={`0 0 ${n} 100`} preserveAspectRatio="none" className="absolute inset-0 h-full w-full opacity-30">
       {bars.map((v, i) => (
         <rect key={i} x={i + 0.15} width={0.7} y={50 - v * 45} height={Math.max(2, v * 90)} fill="currentColor" className="text-primary" />
       ))}
