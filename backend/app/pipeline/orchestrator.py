@@ -221,6 +221,16 @@ class Orchestrator:
                     options.source_lang if options.source_lang != "auto" else "en")
                 engine_mode = "reused"
                 st.message = "Reused from the first run"
+                # The source speaker's audio is still needed: the voice
+                # reference (_build_speaker_ref) and the emotion presets read
+                # it from this job's own wav, which only the ASR path below
+                # writes. Without it a re-voice is spoken in the engine's
+                # default voice instead of the speaker's.
+                if not await asyncio.to_thread(
+                        media.extract_audio, input_video,
+                        s.uploads_dir / f"{job.id}.wav"):
+                    log.warning("[%s] re-voice: could not extract the source "
+                                "audio — the voice will not be cloned", job.id)
             elif real_asr:
                 # Real ASR: never fabricate a transcript. If Whisper (VAD-gated)
                 # finds no speech or errors, report that honestly — do NOT fall

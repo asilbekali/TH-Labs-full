@@ -45,7 +45,10 @@ export class WorksController {
   }
 
   @Delete(':jobId')
-  @ApiOperation({ summary: 'Remove one dub from the library' })
+  @ApiOperation({
+    summary:
+      'Delete one dub: its library record, its speech-editor versions and their files',
+  })
   remove(
     @CurrentUser() user: AuthenticatedUser,
     @Param('jobId') jobId: string,
@@ -54,7 +57,9 @@ export class WorksController {
   }
 
   @Delete()
-  @ApiOperation({ summary: 'Empty the library' })
+  @ApiOperation({
+    summary: 'Delete every dub in the library, with its edits and files',
+  })
   clear(@CurrentUser() user: AuthenticatedUser) {
     return this.worksService.clear(user.id);
   }

@@ -15,3 +15,6 @@ export const SQUARED = {
   '--radius-control': '10px',
   '--radius-inner': '12px',
 } as CSSProperties
+
+// The two editors are one window of panels, so the cards inside it soften too.
+export const EDITOR_SHAPE = { ...SQUARED, '--radius-card': '14px' } as CSSProperties

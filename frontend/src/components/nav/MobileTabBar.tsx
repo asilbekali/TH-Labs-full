@@ -4,8 +4,8 @@ import { NAV, RailSvg } from './nav-items'
 
 /**
  * The bottom tab bar for < lg: a floating capsule of liquid glass, held off the
- * screen edge and above the home indicator. The active tab is filled with ink,
- * and that fill slides between tabs.
+ * screen edge and above the home indicator. The active tab is a tinted pane of
+ * glass, and that pane slides between tabs.
  *
  * Renders every NAV entry, so it grows with the rail rather than drifting out of
  * step with it. An entry flagged `soon` gets the same dot the desktop rail uses.
@@ -23,7 +23,7 @@ export default function MobileTabBar() {
           end={item.to === '/'}
           className={({ isActive }) =>
             `focusable relative flex h-[54px] w-14 flex-col items-center justify-center gap-0.5 rounded-full text-[10px] font-medium transition-colors ${
-              isActive ? 'text-[rgb(var(--c-canvas))]' : 'text-muted active:text-secondary'
+              isActive ? 'text-brand' : 'text-muted active:text-secondary'
             }`
           }
         >
@@ -33,7 +33,7 @@ export default function MobileTabBar() {
                 <motion.span
                   layoutId="tab-pill"
                   transition={{ type: 'spring', stiffness: 420, damping: 34 }}
-                  className="absolute inset-0 rounded-full bg-[rgb(var(--c-text-primary))]"
+                  className="absolute inset-0 rounded-full border border-[var(--glass-edge)] bg-brand/12 shadow-[inset_0_1px_0_var(--glass-hi)]"
                 />
               )}
               <motion.span

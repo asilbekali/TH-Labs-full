@@ -8,18 +8,20 @@
 // The dub itself is read from the dubbing pipeline; each correction is a new
 // version kept by the account API.
 //
+// The everyday job is changing the words, so the screen is the video and its
+// lines. Dragging lines on a timeline is behind "Adjust timing".
+//
 //   /editor          your dubs, to pick one
 //   /editor/:jobId   the editor; `?lines=3,4` opens with those lines selected
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { AnimatePresence, motion } from 'framer-motion'
 import Page from '../components/Page'
+import EditorIcon from '../components/EditorIcon'
 import IssuesPanel from '../components/IssuesPanel'
 import UpgradeGate from '../components/UpgradeGate'
 import WorkThumb from '../components/WorkThumb'
-import HowItWorks from '../components/HowItWorks'
-import { SQUARED } from '../lib/shape'
+import { EDITOR_SHAPE } from '../lib/shape'
 import { getJob, mediaUrl } from '../lib/api'
 import { usePlan } from '../lib/plan'
 import {
@@ -76,38 +78,14 @@ function DubList() {
   const done = works.filter((w) => w.status === 'completed')
 
   return (
-    // No pill or capsule shapes on this page (lib/shape.ts).
-    <Page className="mx-auto w-full max-w-5xl py-2 sm:py-6" style={SQUARED}>
-      <p className="eyebrow">Speech editor</p>
-      <h1 className="mt-2 text-[clamp(1.6rem,4vw,2.2rem)] font-medium leading-tight text-primary">
-        Fix a line, <span className="gradient-text">not the whole video.</span>
-      </h1>
-      <p className="mt-2 max-w-2xl text-[15px] leading-relaxed text-secondary">
-        Pick a dub. Correct a word or re-time a line, and only that section is re-voiced and
-        put back — everything else stays exactly as it was.
+    <Page className="mx-auto w-full max-w-5xl py-2 sm:py-6" style={EDITOR_SHAPE}>
+      <h1 className="text-xl font-semibold tracking-tight text-primary">Speech editor</h1>
+      <p className="mt-0.5 text-sm text-secondary">
+        Choose a dub and change a line. Only that line is voiced again.
       </p>
 
-      <HowItWorks
-        className="mt-6"
-        steps={[
-          {
-            title: 'Pick a dub',
-            body: 'Choose one of your finished dubs below. Its lines open on a timeline.',
-          },
-          {
-            title: 'Fix the line',
-            body: 'Click a line to change its words, or drag its edges to change when it is said.',
-          },
-          {
-            title: 'Re-dub just that part',
-            body: 'Press “Re-dub”. Only the changed lines are re-voiced; the rest stays as it is.',
-          },
-        ]}
-      />
-
-      <h2 className="mt-8 text-sm font-medium text-primary">Your dubs</h2>
       {!ready && done.length === 0 && (
-        <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3" aria-label="Loading your dubs">
+        <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3" aria-label="Loading your dubs">
           {[0, 1, 2].map((i) => (
             <div key={i} className="card overflow-hidden">
               <div className="shimmer aspect-video bg-sunken" />
@@ -120,7 +98,7 @@ function DubList() {
         </div>
       )}
       {ready && done.length === 0 && (
-        <div className="card mt-3 flex flex-col items-center gap-3 p-8 text-center">
+        <div className="card mt-5 flex flex-col items-center gap-3 p-8 text-center">
           <p className="text-sm font-medium text-primary">No finished dubs yet</p>
           <p className="max-w-sm text-[13px] text-secondary">
             Dub a video in the Studio first. When it is done, it shows up here, ready to fix.
@@ -130,14 +108,13 @@ function DubList() {
           </Link>
         </div>
       )}
-      <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+      <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {done.map((w) => (
           // The video, like My works: the frame is what an editor recognises
           // a dub by, not its file name.
           <Link
             key={w.id}
             to={`/editor/${w.id}`}
-            style={SQUARED}
             className="card card-hover focusable group flex flex-col overflow-hidden"
           >
             <div className="relative aspect-video w-full overflow-hidden bg-black">
@@ -147,16 +124,15 @@ function DubList() {
                   {ts(w.durationSec)}
                 </span>
               ) : null}
-              <span className="absolute inset-0 grid place-items-center bg-black/0 text-sm font-medium text-white opacity-0 transition-all duration-200 group-hover:bg-black/35 group-hover:opacity-100">
-                ✎ Edit speech
-              </span>
             </div>
-            <div className="flex flex-col gap-1 p-3.5">
-              <p className="truncate text-sm font-medium text-primary">{workTitle(w)}</p>
-              <p className="font-mono text-[12px] text-muted">
-                {w.sourceLang.toUpperCase()} → {w.targetLang.toUpperCase()} · {w.segments.length} lines ·{' '}
-                {new Date(w.createdAt).toLocaleDateString()}
-              </p>
+            <div className="flex items-center gap-2 p-3.5">
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium text-primary">{workTitle(w)}</p>
+                <p className="mt-0.5 text-[13px] text-muted">
+                  {w.sourceLang.toUpperCase()} → {w.targetLang.toUpperCase()} · {w.segments.length} lines
+                </p>
+              </div>
+              <span className="shrink-0 text-[13px] font-medium text-brand">Edit</span>
             </div>
           </Link>
         ))}
@@ -184,6 +160,7 @@ function Editor({ jobId }: { jobId: string }) {
   const [notice, setNotice] = useState<string | null>(null)
   const [time, setTime] = useState(0)
   const [zoom, setZoom] = useState(1)
+  const [showTiming, setShowTiming] = useState(false)
   const videoRef = useRef<HTMLVideoElement>(null)
   const stopAt = useRef<number | null>(null)
   const rowRefs = useRef<Record<number, HTMLLIElement | null>>({})
@@ -367,34 +344,40 @@ function Editor({ jobId }: { jobId: string }) {
   }
   if (!job) return <Page className="card mx-auto mt-6 h-64 max-w-5xl animate-pulse">{null}</Page>
 
-  const sel = view.find((s) => s.id === selected) ?? null
   const version = (current?.version ?? 0) + 1
 
   return (
-    <Page className="mx-auto flex w-full max-w-6xl flex-col gap-4 pb-28 lg:pb-6" style={SQUARED}>
+    <Page className="flex w-full min-w-0 flex-col gap-3 pb-28 lg:pb-6 xl:h-full xl:pb-0" style={EDITOR_SHAPE}>
       {/* Header */}
       <div className="flex flex-wrap items-center gap-3">
-        <Link to="/editor" className="btn-primary focusable inline-flex h-9 items-center px-3 text-[13px]">
-          ← Dubs
+        <Link to="/editor" aria-label="Back to your dubs" title="Back to your dubs" className="btn-ghost focusable grid h-9 w-9 shrink-0 place-items-center rounded-full!">
+          <EditorIcon name="back" className="h-4 w-4" />
         </Link>
         <div className="min-w-0 flex-1">
-          <h1 className="truncate text-lg font-medium text-primary">{job.filename || 'Untitled video'}</h1>
-          <p className="font-mono text-[12px] text-muted">
+          <h1 className="truncate text-[15px] font-medium text-primary">{job.filename || 'Untitled video'}</h1>
+          <p className="text-[12px] text-muted">
             {(job.result.detected_source_lang ?? job.options.source_lang).toUpperCase()} →{' '}
-            {job.options.target_lang.toUpperCase()} · {segments.length} lines · version {version}
+            {job.options.target_lang.toUpperCase()}
+            {version > 1 && ` · version ${version}`}
           </p>
         </div>
+        <button
+          type="button"
+          onClick={() => setShowTiming((v) => !v)}
+          aria-pressed={showTiming}
+          className={`btn-ghost focusable h-9 rounded-full! px-4 text-[13px] ${showTiming ? 'text-primary' : ''}`}
+        >
+          {showTiming ? 'Hide timing' : 'Adjust timing'}
+        </button>
         {videoUrl && (
-          <a href={videoUrl} download className="btn-primary focusable inline-flex h-9 items-center px-4 text-[13px]">
-            ↓ Download
+          <a href={videoUrl} download className="btn-primary focusable inline-flex h-9 items-center gap-1.5 px-4 text-[13px]">
+            <EditorIcon name="download" className="h-4 w-4" /> Download
           </a>
         )}
       </div>
 
-      <FirstTip />
-
       {editing && (
-        <div className="flex items-center gap-3 rounded-[var(--radius-control)] border border-brand/30 bg-brand/[0.07] px-4 py-3 text-sm text-primary" aria-live="polite">
+        <div className="flex items-center gap-3 rounded-[var(--radius-control)] border border-brand/30 bg-brand/[0.07] px-4 py-2.5 text-sm text-primary" aria-live="polite">
           <span className="eq" aria-hidden>
             <i /><i /><i /><i />
           </span>
@@ -402,235 +385,178 @@ function Editor({ jobId }: { jobId: string }) {
         </div>
       )}
       {notice && !editing && (
-        <div className="rounded-[var(--radius-control)] border border-success/30 bg-success/[0.07] px-4 py-3 text-sm text-primary" aria-live="polite">
+        <div className="rounded-[var(--radius-control)] border border-success/30 bg-success/[0.07] px-4 py-2.5 text-sm text-primary" aria-live="polite">
           {notice}
         </div>
       )}
       {error && (
-        <div className="rounded-[var(--radius-control)] border border-danger/30 bg-danger/10 px-4 py-3 text-sm text-secondary" role="alert">
+        <div className="rounded-[var(--radius-control)] border border-danger/30 bg-danger/10 px-4 py-2.5 text-sm text-secondary" role="alert">
           {error}
         </div>
       )}
 
-      <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
-        {/* Player + timeline */}
-        <div className="flex min-w-0 flex-col gap-4">
-          <div className="card overflow-hidden">
-            <video
-              key={videoUrl ?? ''}
-              ref={videoRef}
-              src={videoUrl}
-              controls
-              playsInline
-              onTimeUpdate={(e) => {
-                const t = e.currentTarget.currentTime
-                setTime(t)
-                if (stopAt.current !== null && t >= stopAt.current) {
-                  e.currentTarget.pause()
-                  stopAt.current = null
-                }
-              }}
-              className="block aspect-video w-full bg-black"
-            />
-          </div>
-          <LineTimeline
-            segments={view}
-            duration={duration}
-            time={time}
-            zoom={zoom}
-            onZoom={setZoom}
-            selected={selected}
-            edited={new Set(edits.map((e) => e.id))}
-            issues={issueLines}
-            onSelect={(id) => {
-              setSelected(id)
-              rowRefs.current[id]?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+      <div className="grid min-h-0 min-w-0 flex-1 gap-3 [grid-template-areas:'video'_'time'_'lines'] xl:grid-cols-[minmax(0,1fr)_380px] xl:grid-rows-[minmax(0,1fr)_auto] xl:[grid-template-areas:'video_lines'_'time_lines']">
+        <div className="card min-h-0 min-w-0 overflow-hidden bg-black [grid-area:video]">
+          <video
+            key={videoUrl ?? ''}
+            ref={videoRef}
+            src={videoUrl}
+            controls
+            playsInline
+            onTimeUpdate={(e) => {
+              const t = e.currentTarget.currentTime
+              setTime(t)
+              if (stopAt.current !== null && t >= stopAt.current) {
+                e.currentTarget.pause()
+                stopAt.current = null
+              }
             }}
-            onSeek={seek}
-            onRetime={(id, start, end) => setDraft(id, { start, end })}
-            disabled={editing}
+            className="block aspect-video w-full bg-black xl:aspect-auto xl:h-full"
           />
-          {sel && (
-            <div className="card p-4">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="text-sm font-medium text-primary">Line #{sel.id + 1}</p>
-                <div className="flex items-center gap-2">
-                  <TimeField label="Start" value={sel.start} disabled={editing} onChange={(v) => setDraft(sel.id, { start: v })} />
-                  <TimeField label="End" value={sel.end} disabled={editing} onChange={(v) => setDraft(sel.id, { end: v })} />
-                </div>
+        </div>
+        {showTiming && <LineTimeline
+          segments={view}
+          duration={duration}
+          time={time}
+          zoom={zoom}
+          onZoom={setZoom}
+          selected={selected}
+          edited={new Set(edits.map((e) => e.id))}
+          issues={issueLines}
+          onSelect={(id) => {
+            setSelected(id)
+            rowRefs.current[id]?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+          }}
+          onSeek={seek}
+          onRetime={(id, start, end) => setDraft(id, { start, end })}
+          disabled={editing}
+        />}
+
+        <div className="flex min-h-0 min-w-0 flex-col gap-3 [grid-area:lines]">
+          {/* Only there when something needs a look, and folded until asked. */}
+          {issues.length > 0 && (
+            <details className="card shrink-0 overflow-hidden">
+              <summary className="focusable cursor-pointer px-4 py-2.5 text-[13px] font-medium text-primary">
+                {issues.length} thing{issues.length === 1 ? '' : 's'} to check
+              </summary>
+              <div className="max-h-64 overflow-y-auto border-t border-subtle p-2">
+                <IssuesPanel
+                  issues={issues}
+                  segments={segments}
+                  canEditLines
+                  compact
+                  onFocusLine={(id) => {
+                    setSelected(id)
+                    const s = segments.find((x) => x.id === id)
+                    if (s) seek(s.start)
+                    rowRefs.current[id]?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+                  }}
+                />
               </div>
-              <p className="mt-2 text-[13px] text-muted">{sel.source_text}</p>
-              <textarea
-                value={sel.target_text ?? ''}
-                disabled={editing}
-                onChange={(e) => setDraft(sel.id, { target_text: e.target.value })}
-                rows={3}
-                className="field mt-2 w-full resize-none text-sm leading-relaxed"
-              />
-              <div className="mt-2 flex flex-wrap items-center gap-2">
-                <button type="button" onClick={() => playSection(sel)} className="btn-primary focusable h-8 px-3 text-[12px]">
-                  ▶ Play this section
-                </button>
-                {drafts[sel.id] && (
-                  <button type="button" onClick={() => revert(sel.id)} className="btn-primary focusable h-8 px-3 text-[12px]">
-                    Undo changes
+            </details>
+          )}
+
+          {/* Lines */}
+          <div className="card flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+            <div className="flex items-center justify-between gap-2 border-b border-subtle px-4 py-2.5">
+              <h2 className="text-sm font-medium text-primary">Lines</h2>
+              <span className="text-[13px] text-muted">Click a line to change it</span>
+            </div>
+            <ul className="min-h-0 flex-1 divide-y divide-[var(--card-edge)] overflow-y-auto">
+              {view.map((s) => {
+                const issue = issueLines.get(s.id)
+                const changed = edits.some((e) => e.id === s.id)
+                const active = selected === s.id
+                const playing = time >= s.start && time < s.end
+                return (
+                  <li
+                    key={s.id}
+                    ref={(el) => {
+                      rowRefs.current[s.id] = el
+                    }}
+                    className={`transition-colors ${active ? 'bg-brand/[0.07]' : highlighted.has(s.id) ? 'bg-warn/[0.06]' : ''}`}
+                  >
+                    <button type="button" onClick={() => setSelected(s.id)} className="focusable block w-full px-4 pb-1 pt-3 text-left">
+                      <span className="flex items-center gap-2">
+                        <span className={`text-[12px] ${playing ? 'text-brand' : 'text-muted'}`}>{ts(s.start)}</span>
+                        {issue && (
+                          <span className={`h-1.5 w-1.5 rounded-full ${issue === 'error' ? 'bg-danger' : issue === 'warning' ? 'bg-warn' : 'bg-info'}`} />
+                        )}
+                        {changed && <span className="chip ml-auto px-1.5 py-0 text-[11px] text-brand">Changed</span>}
+                        {current?.changed.includes(s.id) && !changed && (
+                          <span className="chip ml-auto px-1.5 py-0 text-[11px] text-success">Fixed</span>
+                        )}
+                      </span>
+                      {!active && (
+                        <span className={`mt-1 block pb-2 text-[13px] leading-relaxed ${s.target_text ? 'text-primary' : 'italic text-danger'}`}>
+                          {s.target_text || 'Nothing is spoken here'}
+                        </span>
+                      )}
+                    </button>
+                    {active && (
+                      <div className="flex flex-col gap-2 px-4 pb-3">
+                        <p className="text-[13px] leading-relaxed text-muted">{s.source_text}</p>
+                        <textarea
+                          value={s.target_text ?? ''}
+                          disabled={editing}
+                          onChange={(e) => setDraft(s.id, { target_text: e.target.value })}
+                          rows={3}
+                          autoFocus
+                          className="field w-full rounded-[12px]! resize-none text-[13px] leading-relaxed"
+                        />
+                        <div className="flex flex-wrap items-center gap-2">
+                          <button type="button" onClick={() => playSection(s)} className="btn-ghost focusable inline-flex h-8 items-center gap-1.5 rounded-full! px-3.5 text-[12px]">
+                            <EditorIcon name="play" className="h-3 w-3" /> Play
+                          </button>
+                          {drafts[s.id] && (
+                            <button type="button" onClick={() => revert(s.id)} className="btn-ghost focusable h-8 rounded-full! px-3.5 text-[12px]">
+                              Undo
+                            </button>
+                          )}
+                        </div>
+                        <details className="text-[12px] text-muted">
+                          <summary className="focusable cursor-pointer py-0.5">Exact timing</summary>
+                          <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                            <TimeField label="Start" value={s.start} disabled={editing} onChange={(v) => setDraft(s.id, { start: v })} />
+                            <TimeField label="End" value={s.end} disabled={editing} onChange={(v) => setDraft(s.id, { end: v })} />
+                          </div>
+                        </details>
+                      </div>
+                    )}
+                  </li>
+                )
+              })}
+            </ul>
+          </div>
+
+          {/* Apply bar: only once there is something to apply. */}
+          {(edits.length > 0 || editing) && (
+            <div className="fixed inset-x-3 bottom-[calc(env(safe-area-inset-bottom)+6.5rem)] z-30 shrink-0 lg:sticky lg:inset-x-auto lg:bottom-2 xl:static">
+              <div className="card flex flex-col gap-2 p-3 shadow-[var(--shadow-lg)] xl:shadow-none">
+                <p className="text-[12px] leading-relaxed text-secondary">
+                  Only {edits.length === 1 ? 'this line changes' : 'these lines change'}. It uses the standard voice and costs the same as text to speech.
+                </p>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={apply}
+                    disabled={!edits.length || editing}
+                    className="btn-primary focusable h-10 flex-1 px-5 text-sm disabled:opacity-50"
+                  >
+                    {editing ? 'Saving…' : `Save ${edits.length} line${edits.length === 1 ? '' : 's'}`}
                   </button>
-                )}
-                <span className="text-[12px] text-muted">
-                  {(sel.end - sel.start).toFixed(2)} s · {((sel.target_text ?? '').length / Math.max(sel.end - sel.start, 0.3)).toFixed(0)} chars/s
-                </span>
+                  {!editing && (
+                    <button type="button" onClick={() => setDrafts({})} className="focusable px-2 text-[13px] text-muted hover:text-primary">
+                      Discard
+                    </button>
+                  )}
+                </div>
               </div>
             </div>
           )}
-          <IssuesPanel
-            issues={issues}
-            segments={segments}
-            canEditLines
-            compact
-            onFocusLine={(id) => {
-              setSelected(id)
-              const s = segments.find((x) => x.id === id)
-              if (s) seek(s.start)
-              rowRefs.current[id]?.scrollIntoView({ block: 'center', behavior: 'smooth' })
-            }}
-          />
-        </div>
-
-        {/* Lines */}
-        <div className="card flex min-h-0 min-w-0 flex-col overflow-hidden lg:max-h-[calc(100dvh-12rem)]">
-          <div className="flex items-center justify-between gap-2 border-b border-subtle px-4 py-3">
-            <h2 className="text-sm font-semibold text-primary">Lines</h2>
-            <span className="text-xs text-muted">
-              {edits.length ? `${edits.length} changed` : 'Click a line to edit it'}
-            </span>
-          </div>
-          <ul className="min-h-0 flex-1 divide-y divide-[var(--card-edge)] overflow-y-auto">
-            {view.map((s) => {
-              const issue = issueLines.get(s.id)
-              const changed = edits.some((e) => e.id === s.id)
-              const active = selected === s.id
-              const playing = time >= s.start && time < s.end
-              return (
-                <li
-                  key={s.id}
-                  ref={(el) => {
-                    rowRefs.current[s.id] = el
-                  }}
-                  className={`px-4 py-3 transition-colors ${active ? 'bg-brand/[0.07]' : highlighted.has(s.id) ? 'bg-warn/[0.06]' : ''}`}
-                >
-                  <button type="button" onClick={() => setSelected(s.id)} className="focusable flex w-full items-center gap-2 text-left">
-                    <span className={`font-mono text-[11px] ${playing ? 'text-brand' : 'text-muted'}`}>
-                      #{s.id + 1} · {ts(s.start)}–{ts(s.end)}
-                    </span>
-                    {issue && (
-                      <span className={`h-1.5 w-1.5 rounded-full ${issue === 'error' ? 'bg-danger' : issue === 'warning' ? 'bg-warn' : 'bg-info'}`} />
-                    )}
-                    {changed && <span className="chip ml-auto px-1.5 py-0 text-[10px] text-brand">edited</span>}
-                    {current?.changed.includes(s.id) && !changed && (
-                      <span className="chip ml-auto px-1.5 py-0 text-[10px] text-success">re-dubbed</span>
-                    )}
-                  </button>
-                  <p className="mt-1 line-clamp-2 text-[12px] text-muted">{s.source_text}</p>
-                  {active ? (
-                    <textarea
-                      value={s.target_text ?? ''}
-                      disabled={editing}
-                      onChange={(e) => setDraft(s.id, { target_text: e.target.value })}
-                      rows={2}
-                      autoFocus
-                      className="field mt-1.5 w-full resize-none text-[13px] leading-relaxed"
-                    />
-                  ) : (
-                    <p className={`mt-1 text-[13px] leading-relaxed ${s.target_text ? 'text-primary' : 'italic text-danger'}`}>
-                      {s.target_text || 'No translation — nothing is spoken here'}
-                    </p>
-                  )}
-                </li>
-              )
-            })}
-          </ul>
-        </div>
-      </div>
-
-      {/* Apply bar */}
-      <div className="fixed inset-x-3 bottom-[calc(env(safe-area-inset-bottom)+6.5rem)] z-30 lg:static lg:inset-auto">
-        <div className="deep-card grain flex flex-wrap items-center gap-3 px-4 py-3">
-          <span className="above min-w-0 flex-1 text-sm text-white">
-            {edits.length
-              ? `${edits.length} line${edits.length > 1 ? 's' : ''} changed — only ${edits.length > 1 ? 'those sections' : 'that section'} will be re-dubbed, in the standard voice for the language. Priced like text to speech.`
-              : 'Change a line’s words or drag it on the timeline, then re-dub just that part.'}
-          </span>
-          {edits.length > 0 && !editing && (
-            <button type="button" onClick={() => setDrafts({})} className="btn-primary focusable above h-10 px-4 text-[13px] opacity-80">
-              Discard
-            </button>
-          )}
-          <button
-            type="button"
-            onClick={apply}
-            disabled={!edits.length || editing}
-            className="btn-primary focusable above h-10 px-5 text-sm disabled:opacity-50"
-          >
-            {editing
-              ? 'Re-dubbing…'
-              : edits.length
-                ? `Re-dub ${edits.length} line${edits.length === 1 ? '' : 's'}`
-                : 'Re-dub lines'}
-          </button>
         </div>
       </div>
     </Page>
-  )
-}
-
-const TIP_KEY = 'th-labs.tip.speech-editor'
-
-/**
- * How to fix a line, in three steps — shown until the customer closes it, and
- * never again after that on this device.
- */
-function FirstTip() {
-  const [open, setOpen] = useState(() => {
-    try {
-      return localStorage.getItem(TIP_KEY) !== 'closed'
-    } catch {
-      return true
-    }
-  })
-  const close = () => {
-    setOpen(false)
-    try {
-      localStorage.setItem(TIP_KEY, 'closed')
-    } catch {
-      /* the tip simply shows again next time */
-    }
-  }
-  return (
-    <AnimatePresence initial={false}>
-      {open && (
-        <motion.div
-          initial={{ opacity: 0, height: 0 }}
-          animate={{ opacity: 1, height: 'auto' }}
-          exit={{ opacity: 0, height: 0 }}
-          transition={{ duration: 0.25 }}
-          className="overflow-hidden"
-        >
-          <div className="flex flex-wrap items-start gap-x-6 gap-y-2 rounded-[14px] border border-brand/25 bg-brand/[0.06] px-4 py-3 text-[13px] text-secondary">
-            <p className="font-medium text-primary">How to fix a line</p>
-            <p><span className="font-mono text-brand">1</span> Click the line on the right or on the timeline.</p>
-            <p><span className="font-mono text-brand">2</span> Change its words, or drag its edges to move it.</p>
-            <p><span className="font-mono text-brand">3</span> Press “Re-dub” — only that part is re-voiced.</p>
-            <button
-              type="button"
-              onClick={close}
-              className="focusable ml-auto text-[12px] font-medium text-primary underline-offset-4 hover:underline"
-            >
-              Got it
-            </button>
-          </div>
-        </motion.div>
-      )}
-    </AnimatePresence>
   )
 }
 
@@ -755,20 +681,28 @@ function LineTimeline({
     onRetime(d.id, Number(start.toFixed(3)), Number(end.toFixed(3)))
   }
 
-  const tick = total > 600 ? 60 : total > 120 ? 10 : total > 30 ? 5 : 1
+  // Labels at least 48px apart, whatever the screen and the zoom.
+  const tick = [1, 2, 5, 10, 30, 60, 120, 300].find((t) => t * pps >= 48) ?? 600
 
   return (
-    <div className="card p-3">
-      <div className="mb-2 flex items-center justify-between gap-3 px-1">
-        <span className="text-[12px] text-muted">Timeline · drag a line to move it, its edges to re-time it</span>
-        <label className="flex items-center gap-2 text-[11px] text-muted">
-          Zoom
-          <input type="range" min={1} max={12} step={0.5} value={zoom} onChange={(e) => onZoom(Number(e.target.value))} className="w-24 accent-[var(--color-brand)]" />
-        </label>
+    <div className="card flex min-w-0 flex-col overflow-hidden [grid-area:time]">
+      <div className="flex items-center justify-between gap-3 border-b border-subtle px-3 py-1.5">
+        <span className="text-[12px] text-muted">Drag a line to move it</span>
+        <input
+          type="range"
+          min={1}
+          max={12}
+          step={0.5}
+          value={zoom}
+          onChange={(e) => onZoom(Number(e.target.value))}
+          aria-label="Zoom"
+          title="Zoom"
+          className="w-24 accent-[var(--color-brand)]"
+        />
       </div>
       <div ref={wrap} className="no-scrollbar overflow-x-auto">
         <div
-          className="relative h-[86px] select-none"
+          className="relative h-[84px] select-none"
           style={{ width: Math.max(inner, width) }}
           onPointerDown={(e) => {
             const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
@@ -776,9 +710,9 @@ function LineTimeline({
           }}
         >
           {/* ruler */}
-          <div className="absolute inset-x-0 top-0 h-5 border-b border-subtle">
+          <div className="absolute inset-x-0 top-0 h-6 border-b border-subtle">
             {Array.from({ length: Math.floor(total / tick) + 1 }, (_, i) => i * tick).map((t) => (
-              <span key={t} className="absolute top-0 font-mono text-[10px] text-muted" style={{ left: t * pps + 2 }}>
+              <span key={t} className="absolute top-0 font-mono text-[10px] leading-6 text-muted" style={{ left: t * pps + 4 }}>
                 {ts(t)}
               </span>
             ))}
@@ -794,35 +728,41 @@ function LineTimeline({
                 : issue === 'warning'
                   ? 'border-warn/70 bg-warn/15'
                   : 'border-[var(--card-edge)] bg-[var(--well)]'
+            const grip = isSel ? '' : 'opacity-0 group-hover:opacity-100'
             return (
               <div
                 key={s.id}
                 onPointerDown={(e) => begin(e, s, 'move')}
                 onPointerMove={move}
                 onPointerUp={() => (drag.current = null)}
-                className={`group absolute top-7 h-[50px] cursor-grab overflow-hidden rounded-lg border px-2 py-1 active:cursor-grabbing ${tone} ${isSel ? 'ring-2 ring-brand' : ''}`}
+                className={`group absolute top-[34px] h-10 cursor-grab overflow-hidden rounded-[8px] border active:cursor-grabbing ${tone} ${isSel ? 'ring-2 ring-brand' : ''}`}
                 style={{ left: s.start * pps, width: Math.max((s.end - s.start) * pps, 6) }}
                 title={s.target_text ?? ''}
               >
-                <span className="block truncate font-mono text-[10px] text-muted">#{s.id + 1}</span>
-                <span className="block truncate text-[11px] text-primary">{s.target_text || '—'}</span>
+                <span className="block truncate px-3 text-[12px] leading-[38px] text-primary">{s.target_text || '—'}</span>
                 {!disabled && (
                   <>
                     <span
                       onPointerDown={(e) => begin(e, s, 'start')}
-                      className="absolute inset-y-0 left-0 w-2 cursor-ew-resize bg-brand/0 group-hover:bg-brand/50"
-                    />
+                      className={`absolute inset-y-0 left-0 grid w-2.5 cursor-ew-resize place-items-center ${grip}`}
+                    >
+                      <i className="h-4 w-1 rounded-[2px] bg-white shadow-sm" />
+                    </span>
                     <span
                       onPointerDown={(e) => begin(e, s, 'end')}
-                      className="absolute inset-y-0 right-0 w-2 cursor-ew-resize bg-brand/0 group-hover:bg-brand/50"
-                    />
+                      className={`absolute inset-y-0 right-0 grid w-2.5 cursor-ew-resize place-items-center ${grip}`}
+                    >
+                      <i className="h-4 w-1 rounded-[2px] bg-white shadow-sm" />
+                    </span>
                   </>
                 )}
               </div>
             )
           })}
           {/* playhead */}
-          <span aria-hidden className="pointer-events-none absolute inset-y-0 w-px bg-brand" style={{ left: time * pps }} />
+          <span aria-hidden className="pointer-events-none absolute inset-y-0 z-10 w-0.5 bg-brand" style={{ left: time * pps }}>
+            <i className="absolute -left-1 top-1 h-2.5 w-2.5 rotate-45 rounded-[2px] bg-brand" />
+          </span>
         </div>
       </div>
     </div>

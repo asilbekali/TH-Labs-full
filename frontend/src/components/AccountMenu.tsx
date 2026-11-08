@@ -104,7 +104,7 @@ export default function AccountMenu({ variant = 'bar' }: { variant?: 'bar' | 'ra
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -6 }}
             transition={{ duration: 0.14 }}
-            className={`absolute z-50 w-72 overflow-hidden rounded-[24px] border border-[var(--card-edge)] bg-raised p-1.5 shadow-[var(--shadow-lg)] ${menuPos}`}
+            className={`absolute z-50 w-72 overflow-hidden rounded-[24px] border border-[var(--card-edge)] glass-thick p-1.5 shadow-[var(--shadow-lg)] ${menuPos}`}
           >
             <div className="flex items-center gap-3 rounded-full px-3 py-2.5">
               <span

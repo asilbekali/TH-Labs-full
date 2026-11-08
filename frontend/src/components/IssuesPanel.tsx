@@ -62,14 +62,16 @@ export default function IssuesPanel({
   const serious = issues.filter((i) => i.severity !== 'info').length
 
   return (
-    <div className="card overflow-hidden" style={SQUARED}>
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-subtle px-5 py-3.5">
-        <h3 className="text-sm font-semibold text-primary">
-          {serious ? `${serious} thing${serious > 1 ? 's' : ''} to fix` : 'Notes on this dub'}
-        </h3>
-        <span className="text-xs text-muted">Found automatically after dubbing</span>
-      </div>
-      <ul className="flex flex-col gap-2.5 p-3 sm:p-4">
+    <div className={compact ? '' : 'card overflow-hidden'} style={SQUARED}>
+      {!compact && (
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-subtle px-5 py-3.5">
+          <h3 className="text-sm font-semibold text-primary">
+            {serious ? `${serious} thing${serious > 1 ? 's' : ''} to fix` : 'Notes on this dub'}
+          </h3>
+          <span className="text-xs text-muted">Found automatically after dubbing</span>
+        </div>
+      )}
+      <ul className={`flex flex-col gap-2.5 ${compact ? '' : 'p-3 sm:p-4'}`}>
         {issues.map((issue) => {
           const tone = TONE[issue.severity]
           const lines = issue.segment_ids.map((id) => byId.get(id)).filter(Boolean) as Segment[]

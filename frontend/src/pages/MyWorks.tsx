@@ -10,6 +10,7 @@ import type { ReactNode } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { AnimatePresence, LayoutGroup, motion } from 'framer-motion'
 import Page from '../components/Page'
+import { useConfirm } from '../components/ConfirmDialog'
 import ScrollColumn from '../components/layout/ScrollColumn'
 import AnimatedNumber from '../components/AnimatedNumber'
 import LogoMark from '../components/brand/LogoMark'
@@ -50,6 +51,7 @@ export default function MyWorks() {
   const isDesktop = useIsDesktop()
   const isMd = useMediaQuery('(min-width: 768px)')
   const { works, removeWork } = useWorks()
+  const [confirmDialog, confirm] = useConfirm()
 
   const [view, setView] = useState<'grid' | 'list'>('grid')
   const [status, setStatus] = useState<StatusFilter>('all')
@@ -107,7 +109,28 @@ export default function MyWorks() {
     setSort((s) => (s.col === col ? { col, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { col, dir: col === 'title' ? 'asc' : 'desc' }))
   }
 
-  function onDelete(id: string) {
+  // Deleting is for good: the account API drops the record, its speech-editor
+  // versions and their files (DELETE /v1/works/:jobId). A running dub is
+  // cancelled the same way — this account stops following it and it is gone.
+  async function onDelete(id: string) {
+    const running = works.find((w) => w.id === id)?.status === 'processing'
+    const ok = await confirm(
+      running
+        ? {
+            title: 'Cancel this dub?',
+            body: 'It stops showing here and is deleted from your account. Tokens already charged for it are not returned.',
+            confirmLabel: 'Cancel dub',
+            cancelLabel: 'Keep it',
+            danger: true,
+          }
+        : {
+            title: 'Delete this dub?',
+            body: 'The video, its transcript and any speech-editor versions are deleted for good. This cannot be undone.',
+            confirmLabel: 'Delete',
+            danger: true,
+          },
+    )
+    if (!ok) return
     if (selectedId === id) setSelectedId(null)
     removeWork(id)
   }
@@ -172,6 +195,7 @@ export default function MyWorks() {
           <ScrollColumn className="pr-0.5">{results}</ScrollColumn>
         </div>
         {drawer}
+        {confirmDialog}
       </Page>
     )
   }
@@ -183,6 +207,7 @@ export default function MyWorks() {
       {filterBar}
       {results}
       {drawer}
+      {confirmDialog}
     </Page>
   )
 }
@@ -643,7 +668,11 @@ function Kebab({
   const items: { label: string; href?: string; onClick?: () => void; danger?: boolean }[] = [
     ...(output ? [{ label: 'Download', href: output }] : []),
     { label: 'Duplicate settings', onClick: () => navigate('/studio', { state: duplicateState(work) }) },
-    { label: 'Remove from library', onClick: () => onDelete(work.id), danger: true },
+    {
+      label: work.status === 'processing' ? 'Cancel dubbing' : 'Delete',
+      onClick: () => onDelete(work.id),
+      danger: true,
+    },
   ]
   return (
     <div className="relative">

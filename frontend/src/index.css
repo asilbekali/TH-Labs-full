@@ -1171,9 +1171,9 @@ body[data-shell='fixed'] {
   --c-danger: 179 65 43;
   --c-info: 168 85 42;
 
-  --blob-1: rgb(240 150 95 / 0.55);
-  --blob-2: rgb(255 206 160 / 0.85);
-  --blob-3: rgb(255 236 214 / 0.95);
+  --blob-1: rgb(240 140 85 / 0.8);
+  --blob-2: rgb(250 190 140 / 0.9);
+  --blob-3: rgb(235 150 105 / 0.65);
   --glow-1: rgb(232 140 85 / 0.3);
   --glow-2: rgb(242 220 192 / 0.7);
 
@@ -1191,8 +1191,8 @@ body[data-shell='fixed'] {
   --hatch-1: rgb(20 18 16 / 0.1);
   --hatch-2: rgb(20 18 16 / 0.02);
 
-  --glass: linear-gradient(160deg, rgb(255 255 255 / 0.78) 0%, rgb(255 255 255 / 0.42) 100%);
-  --glass-edge: rgb(255 255 255 / 0.95);
+  --glass: linear-gradient(160deg, rgb(255 255 255 / 0.62) 0%, rgb(255 255 255 / 0.32) 100%);
+  --glass-edge: rgb(255 255 255 / 0.8);
   --glass-hi: rgb(255 255 255 / 1);
   --glass-shadow: rgb(80 50 20 / 0.14);
   --glass-in: rgb(255 255 255 / 0.55);
@@ -1363,8 +1363,8 @@ h1, h2, h3 { letter-spacing: -0.03em; }
   .glass {
     background: var(--glass);
     border: 1px solid var(--glass-edge);
-    -webkit-backdrop-filter: blur(28px) saturate(180%);
-    backdrop-filter: blur(28px) saturate(180%);
+    -webkit-backdrop-filter: blur(40px) saturate(190%);
+    backdrop-filter: blur(40px) saturate(190%);
     box-shadow:
       inset 0 1px 0 var(--glass-hi),
       inset 0 -1px 0 rgb(255 255 255 / 0.06),
@@ -1374,8 +1374,8 @@ h1, h2, h3 { letter-spacing: -0.03em; }
   .tile {
     background: var(--glass);
     border-color: var(--glass-edge);
-    -webkit-backdrop-filter: blur(28px) saturate(180%);
-    backdrop-filter: blur(28px) saturate(180%);
+    -webkit-backdrop-filter: blur(40px) saturate(190%);
+    backdrop-filter: blur(40px) saturate(190%);
     box-shadow:
       inset 0 1px 0 var(--glass-hi),
       inset 0 -1px 0 rgb(255 255 255 / 0.06),
@@ -1396,8 +1396,8 @@ h1, h2, h3 { letter-spacing: -0.03em; }
   .bar-btn {
     background: var(--glass);
     border-color: var(--glass-edge);
-    -webkit-backdrop-filter: blur(28px) saturate(180%);
-    backdrop-filter: blur(28px) saturate(180%);
+    -webkit-backdrop-filter: blur(40px) saturate(190%);
+    backdrop-filter: blur(40px) saturate(190%);
     box-shadow: inset 0 1px 0 var(--glass-hi), 0 10px 24px var(--glass-shadow);
   }
 
@@ -1406,6 +1406,37 @@ h1, h2, h3 { letter-spacing: -0.03em; }
     border: 1px solid var(--deep-edge);
     box-shadow: var(--shadow-lg), inset 0 1px 0 rgb(255 255 255 / 0.06);
   }
+  /* The Studio's run card. Dark would be a hard block on warm paper, so in
+     light mode it is warm paper too; the deep tokens keep it one component. */
+  :root[data-theme='light'] .run-card {
+    --deep: linear-gradient(135deg, rgb(255 244 232 / 0.72) 0%, rgb(248 208 172 / 0.55) 100%);
+    --deep-edge: rgb(255 255 255 / 0.8);
+    --on-deep: 20 18 16;
+    --on-deep-dim: 80 75 69;
+    -webkit-backdrop-filter: blur(40px) saturate(190%);
+    backdrop-filter: blur(40px) saturate(190%);
+    box-shadow: inset 0 1px 0 var(--glass-hi), 0 18px 40px var(--glass-shadow);
+  }
+
+  /* Thick glass, for what floats over the page: lists, menus and dialogs. It
+     stays mostly opaque, because text behind a menu must not show through it. */
+  .glass-thick {
+    background: color-mix(in srgb, rgb(var(--c-raised)) 90%, transparent);
+    -webkit-backdrop-filter: blur(40px) saturate(190%);
+    backdrop-filter: blur(40px) saturate(190%);
+  }
+
+  @media (prefers-reduced-transparency: reduce) {
+    .card,
+    .tile,
+    .glass,
+    .glass-thick {
+      background: rgb(var(--c-raised));
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+    }
+  }
+
   .aurora::before { opacity: 0.55; }
 
   .promo {
@@ -1693,8 +1724,8 @@ h1, h2, h3 { letter-spacing: -0.03em; }
   .composer {
     background: var(--glass);
     border-color: var(--glass-edge);
-    -webkit-backdrop-filter: blur(28px) saturate(180%);
-    backdrop-filter: blur(28px) saturate(180%);
+    -webkit-backdrop-filter: blur(40px) saturate(190%);
+    backdrop-filter: blur(40px) saturate(190%);
     box-shadow: inset 0 1px 0 var(--glass-hi), 0 18px 40px var(--glass-shadow);
   }
 }

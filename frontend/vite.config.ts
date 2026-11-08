@@ -17,10 +17,12 @@ import tailwindcss from '@tailwindcss/vite'
 // and every route on it is listed under /v1. Pointing the app at /docs makes
 // each call land on /docs/payments/plans, which is a 404 with no CORS headers.
 
-const DUB_HOST = '46.224.138.121'
-// Where `vite dev` sends /api and /media. To develop against a pipeline on this
-// machine: DUB_API_PROXY=http://localhost:8000 npm run dev
-const DUB_API = process.env.DUB_API_PROXY || `http://${DUB_HOST}:8000`
+// Where `vite dev` sends /api and /media: the deployed pipeline on Modal, the
+// same one the real Studio uses. (The old box at 46.224.138.121:8000 no longer
+// answers, so every /api call through it was a 502.) To develop against a
+// pipeline on this machine: DUB_API_PROXY=http://localhost:8000 npm run dev
+const DUB_API =
+  process.env.DUB_API_PROXY || 'https://isoqovjorabek2--th-labs-dubbing-web.modal.run'
 // Where `vite dev` sends /v1. The deployed API by default; to develop against a
 // NestJS on this machine: ACCOUNT_API_PROXY=http://localhost:3001 npm run dev
 const ACCOUNT_API = process.env.ACCOUNT_API_PROXY || 'https://th-labs.uz'

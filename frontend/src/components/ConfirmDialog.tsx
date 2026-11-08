@@ -95,7 +95,7 @@ function ConfirmDialog({
             aria-modal="true"
             aria-labelledby="confirm-title"
             style={SQUARED}
-            className="relative w-full max-w-sm rounded-[18px] border border-subtle bg-raised p-5 shadow-(--shadow-lg)"
+            className="relative w-full max-w-sm rounded-[18px] border border-subtle glass-thick p-5 shadow-(--shadow-lg)"
             initial={{ opacity: 0, scale: 0.92, y: 12 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.96, y: 6, transition: { duration: 0.14, ease: 'easeIn' } }}

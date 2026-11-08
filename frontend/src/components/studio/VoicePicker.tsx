@@ -141,7 +141,7 @@ export default function VoicePicker({
                     // no change event and the clip silently never comes back.
                     if (inputRef.current) inputRef.current.value = ''
                   }}
-                  className="btn-ghost focusable px-3 py-1.5 font-mono text-xs"
+                  className="btn-ghost focusable rounded-full! px-3.5 py-1.5 text-xs"
                 >
                   Remove
                 </button>
@@ -149,7 +149,7 @@ export default function VoicePicker({
               <button
                 type="button"
                 onClick={() => inputRef.current?.click()}
-                className="btn-ghost focusable px-3 py-1.5 font-mono text-xs"
+                className="btn-ghost focusable rounded-full! px-3.5 py-1.5 text-xs"
               >
                 {reference ? 'Replace' : 'Choose file'}
               </button>
