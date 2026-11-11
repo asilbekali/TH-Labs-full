@@ -5,8 +5,15 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { CreditPack, Plan, PlanTier, Prisma } from '@prisma/client';
+import {
+  CreditPack,
+  CreditReason,
+  Plan,
+  PlanTier,
+  Prisma,
+} from '@prisma/client';
 
+import type { AuthenticatedUser } from '../common/decorators/current-user.decorator';
 import { PrismaService } from '../prisma/prisma.service';
 import { LemonSqueezyService } from './lemonsqueezy.service';
 import { PaymentService } from './payment.service';
@@ -14,6 +21,7 @@ import { CREDITS_PER_MINUTE, QUALITY_MULTIPLIER } from './credit-packs';
 import { CREDITS_PER_MINUTE_BY_QUALITY } from './quality-cost';
 import {
   CreateCreditPackDto,
+  GiftCreditsDto,
   UpdateCreditPackDto,
   UpdatePlanDto,
 } from './dto/admin-billing.dto';
@@ -372,5 +380,41 @@ export class AdminBillingService {
         'Pack deleted. Any checkout already open for it will arrive with no ' +
         'pack to match and will not grant credits.',
     };
+  }
+
+  // ── Gifts ───────────────────────────────────────────────────────────────
+  /**
+   * Add free credits to an account, as a real ADMIN_ADJUSTMENT ledger entry.
+   *
+   * It goes through the same grantCredits every purchase does, so the cached
+   * balance and the ledger move together and /payments/credits/reconcile has
+   * nothing to report. `refId` records who gave it; the note is the user's to
+   * read in their own history, so the giver's email stays out of it.
+   */
+  async giftCredits(
+    userId: number,
+    dto: GiftCreditsDto,
+    actor: AuthenticatedUser,
+  ) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, email: true, name: true },
+    });
+    if (!user) throw new NotFoundException(`User #${userId} not found`);
+
+    const reason = dto.note?.trim();
+    const balance = await this.payments.grantCredits(
+      userId,
+      dto.credits,
+      CreditReason.ADMIN_ADJUSTMENT,
+      `admin:${actor.id}`,
+      reason ? `Gift: ${reason}` : 'Gift',
+    );
+
+    this.logger.log(
+      `${actor.email} gifted ${dto.credits} credits to ${user.email} (balance ${balance})`,
+    );
+
+    return { user, granted: dto.credits, balance };
   }
 }

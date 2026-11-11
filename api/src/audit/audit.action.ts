@@ -178,6 +178,13 @@ const RULES: ActionRule[] = [
     summary: 'Deleted the :target credit pack',
     target: (p) => ({ type: 'creditPack', id: p.id }),
   },
+  {
+    method: 'POST',
+    pattern: '/admin/billing/users/:id/credits',
+    action: 'billing.credits.gift',
+    summary: 'Gifted credits to :target',
+    target: (p) => ({ type: 'user', id: p.id }),
+  },
 
   // ── Catalog ─────────────────────────────────────────────────────────────
   {
