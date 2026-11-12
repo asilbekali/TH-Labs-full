@@ -27,6 +27,11 @@ export interface Work {
   status: WorkStatus
   /** Original upload name; null for a run against the built-in sample clip. */
   filename: string | null
+  /**
+   * The name the user gave this video. Saved to the account with the rest of
+   * the record (PUT /v1/works/:id). Unset → the name comes from `filename`.
+   */
+  title?: string | null
   sourceLang: string
   targetLang: string
   /** Real output length in seconds, as measured by the pipeline. */
@@ -112,6 +117,7 @@ function migrate(raw: unknown): Work | null {
     createdAt: typeof r.createdAt === 'number' ? r.createdAt : Date.now(),
     status: (r.status as WorkStatus) ?? 'completed',
     filename: (r.filename as string | null) ?? null,
+    title: typeof r.title === 'string' ? r.title : null,
     sourceLang: (r.sourceLang as string) ?? 'auto',
     targetLang: (r.targetLang as string) ?? '',
     durationSec: (r.durationSec as number | null) ?? null,
@@ -352,8 +358,18 @@ export function useWorks(): WorksContextValue {
 
 /** A dub has no title of its own — use the source file, or say it was the sample. */
 export function workTitle(w: Work): string {
+  if (w.title) return w.title
   if (!w.filename) return 'Sample clip'
   return w.filename.replace(/\.[a-z0-9]{2,4}$/i, '')
+}
+
+/**
+ * What a rename typed by the user becomes before it is saved. Returning null
+ * clears the custom name, so the video goes back to being named after its file.
+ */
+export function cleanTitle(raw: string): string | null {
+  // TODO(human): turn the typed text into the saved title (or null).
+  return raw || null
 }
 
 export function workPair(w: Work): string {
