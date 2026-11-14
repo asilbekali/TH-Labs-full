@@ -4,6 +4,7 @@ import {
   Delete,
   Get,
   Param,
+  ParseIntPipe,
   Patch,
   Post,
   UseGuards,
@@ -20,8 +21,11 @@ import { AdminBillingService } from './admin-billing.service';
 import { Roles } from '../common/decorators/roles.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../common/guards/roles.guard';
+import type { AuthenticatedUser } from '../common/decorators/current-user.decorator';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
 import {
   CreateCreditPackDto,
+  GiftCreditsDto,
   UpdateCreditPackDto,
   UpdatePlanDto,
 } from './dto/admin-billing.dto';
@@ -107,5 +111,25 @@ export class AdminBillingController {
   })
   deleteCreditPack(@Param('id') id: string) {
     return this.billing.deleteCreditPack(id);
+  }
+
+  // ── Gifts ───────────────────────────────────────────────────────────────
+  // The one route here that moves credits without a payment behind it, so it
+  // is SUPERADMIN only: an ADMIN prices what is sold, it does not give it away.
+  @Post('users/:id/credits')
+  @Roles(Role.SUPERADMIN)
+  @ApiOperation({
+    summary: 'Gift free credits to a user (SUPERADMIN)',
+  })
+  @ApiOkResponse({
+    description:
+      '`{ user, granted, balance }` — the account, what was added, and its new balance.',
+  })
+  giftCredits(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: GiftCreditsDto,
+    @CurrentUser() actor: AuthenticatedUser,
+  ) {
+    return this.billing.giftCredits(id, dto, actor);
   }
 }

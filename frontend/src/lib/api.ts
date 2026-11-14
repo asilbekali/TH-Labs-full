@@ -227,9 +227,19 @@ export async function revoiceJob(
   return (await r.json()).job
 }
 
+// The dubbing server no longer has this job: it was deleted, or the server
+// restarted and its job store went with it. Retrying will not bring it back.
+export class JobNotFoundError extends Error {
+  constructor() {
+    super('This dub is no longer on the dubbing server.')
+    this.name = 'JobNotFoundError'
+  }
+}
+
 export async function getJob(jobId: string): Promise<Job> {
   const r = await authFetchUrl(`${BASE}/jobs/${jobId}`)
   if (r.status === 401) throw new AuthRequiredError()
+  if (r.status === 404) throw new JobNotFoundError()
   if (!r.ok) throw new Error('job fetch failed')
   return (await r.json()).job
 }
@@ -247,8 +257,9 @@ export function pollJob(
       const job = await getJob(jobId)
       onUpdate(job)
       if (job.status === 'completed' || job.status === 'failed') return
-    } catch {
-      /* keep polling */
+    } catch (e) {
+      // A missing job never comes back; anything else may be a blip.
+      if (e instanceof JobNotFoundError) return
     }
     if (!stopped) setTimeout(tick, intervalMs)
   }

@@ -22,7 +22,7 @@ import IssuesPanel from '../components/IssuesPanel'
 import UpgradeGate from '../components/UpgradeGate'
 import WorkThumb from '../components/WorkThumb'
 import { EDITOR_SHAPE } from '../lib/shape'
-import { getJob, mediaUrl } from '../lib/api'
+import { getJob, JobNotFoundError, mediaUrl } from '../lib/api'
 import { usePlan } from '../lib/plan'
 import {
   accountMediaUrl,
@@ -179,9 +179,11 @@ function Editor({ jobId }: { jobId: string }) {
       return v
     } catch (e) {
       setLoadError(
-        e instanceof Error
-          ? `${e.message} — this dub is no longer on the dubbing server, so it cannot be edited.`
-          : 'Could not open this dub.',
+        e instanceof JobNotFoundError
+          ? 'This dub is no longer on the dubbing server, so it cannot be edited. Dub the video again to edit it.'
+          : e instanceof Error
+            ? e.message
+            : 'Could not open this dub.',
       )
       return null
     }
@@ -217,14 +219,17 @@ function Editor({ jobId }: { jobId: string }) {
 
   useEffect(() => {
     void load().then((v) => {
-      if (v?.[0] && (v[0].status === 'QUEUED' || v[0].status === 'RUNNING')) {
+      // The report reads the same job, so a dub that failed to load would
+      // only 404 a second time.
+      if (!v) return
+      if (v[0] && (v[0].status === 'QUEUED' || v[0].status === 'RUNNING')) {
         setSubmitting(true)
         watch()
       }
+      getDubIssues(jobId)
+        .then(setIssues)
+        .catch(() => setIssues([]))
     })
-    getDubIssues(jobId)
-      .then(setIssues)
-      .catch(() => setIssues([]))
     return () => {
       if (poll.current) window.clearTimeout(poll.current)
     }

@@ -21,6 +21,7 @@ import { SQUARED } from '../lib/shape'
 import WorkThumb from '../components/WorkThumb'
 import { usePointerSpotlight } from '../hooks/usePointerSpotlight'
 import {
+  cleanTitle,
   relTime,
   useWorks,
   workPair,
@@ -448,6 +449,68 @@ function Results({
   )
 }
 
+/* ── Rename ─────────────────────────────────────────────────────────────── */
+
+// The video's name, or a field to rename it while `editing`. Enter or leaving
+// the field saves; Escape cancels. The new name goes through updateWork, which
+// saves the record to the account (PUT /v1/works/:id), so every device sees it.
+function TitleField({
+  work,
+  editing,
+  onDone,
+  className,
+}: {
+  work: Work
+  editing: boolean
+  onDone: () => void
+  className: string
+}) {
+  const { updateWork } = useWorks()
+  const [draft, setDraft] = useState('')
+  const inputRef = useRef<HTMLInputElement>(null)
+  // Removing a focused input can still fire blur, which would save a draft
+  // that Escape just threw away.
+  const cancelled = useRef(false)
+
+  useEffect(() => {
+    if (!editing) return
+    cancelled.current = false
+    setDraft(workTitle(work))
+    requestAnimationFrame(() => inputRef.current?.select())
+    // Only when editing starts — a sync landing mid-edit must not wipe the draft.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editing])
+
+  if (!editing) return <span className={`block truncate ${className}`}>{workTitle(work)}</span>
+
+  const save = () => {
+    if (cancelled.current) return
+    const title = cleanTitle(draft)
+    if (title !== (work.title ?? null)) updateWork(work.id, { title })
+    onDone()
+  }
+  return (
+    <input
+      ref={inputRef}
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={save}
+      onClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => {
+        // Kept from the drawer, whose Escape closes it.
+        e.stopPropagation()
+        if (e.key === 'Enter') e.currentTarget.blur()
+        if (e.key === 'Escape') {
+          cancelled.current = true
+          onDone()
+        }
+      }}
+      aria-label="Video name"
+      className={`w-full min-w-0 rounded-[6px] border border-strong bg-surface px-1.5 outline-none focus:border-brand ${className}`}
+    />
+  )
+}
+
 /* ── Grid card ──────────────────────────────────────────────────────────── */
 
 function GridCard({
@@ -462,6 +525,7 @@ function GridCard({
   const navigate = useNavigate()
   const spot = usePointerSpotlight<HTMLDivElement>()
   const [menuOpen, setMenuOpen] = useState(false)
+  const [renaming, setRenaming] = useState(false)
   const failed = work.status === 'failed'
   const processing = work.status === 'processing'
 
@@ -529,13 +593,20 @@ function GridCard({
 
       {/* Kebab */}
       <div className="absolute right-2 top-2 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
-        <Kebab open={menuOpen} onToggle={setMenuOpen} work={work} onDelete={onDelete} />
+        <Kebab open={menuOpen} onToggle={setMenuOpen} work={work} onDelete={onDelete} onRename={() => setRenaming(true)} />
       </div>
 
       {/* Body */}
       <div className="flex flex-1 flex-col gap-2 p-4">
         <div className="flex items-start justify-between gap-2">
-          <span className="min-w-0 truncate font-mono text-sm font-medium text-primary">{workTitle(work)}</span>
+          <div className="min-w-0 flex-1">
+            <TitleField
+              work={work}
+              editing={renaming}
+              onDone={() => setRenaming(false)}
+              className="font-mono text-sm font-medium text-primary"
+            />
+          </div>
           <StatusPill status={work.status} />
         </div>
         {failed ? (
@@ -599,6 +670,7 @@ function ListRow({
   onDelete: (id: string) => void
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
+  const [renaming, setRenaming] = useState(false)
   const output = mediaUrl(work.outputUrl)
   return (
     <motion.div
@@ -617,10 +689,24 @@ function ListRow({
       >
         <WorkThumb work={work} rounded />
       </button>
-      <button onClick={onOpen} className="min-w-0 text-left">
-        <div className="truncate font-mono text-sm font-medium text-primary">{workTitle(work)}</div>
-        <div className="truncate text-xs text-muted">{work.filename ?? 'built-in sample clip'}</div>
-      </button>
+      {/* A div, not a button, while renaming: an input inside a button
+          cannot take a space or be clicked into. */}
+      {renaming ? (
+        <div className="min-w-0">
+          <TitleField
+            work={work}
+            editing
+            onDone={() => setRenaming(false)}
+            className="font-mono text-sm font-medium text-primary"
+          />
+          <div className="truncate text-xs text-muted">{work.filename ?? 'built-in sample clip'}</div>
+        </div>
+      ) : (
+        <button onClick={onOpen} className="min-w-0 text-left">
+          <div className="truncate font-mono text-sm font-medium text-primary">{workTitle(work)}</div>
+          <div className="truncate text-xs text-muted">{work.filename ?? 'built-in sample clip'}</div>
+        </button>
+      )}
       <span className="font-mono text-xs text-secondary">{workPair(work)}</span>
       <span className="font-mono text-xs text-secondary">{fmtDur(duration(work))}</span>
       <StatusPill status={work.status} />
@@ -640,7 +726,14 @@ function ListRow({
             <DownloadIcon />
           </a>
         )}
-        <Kebab open={menuOpen} onToggle={setMenuOpen} work={work} onDelete={onDelete} align="right" />
+        <Kebab
+          open={menuOpen}
+          onToggle={setMenuOpen}
+          work={work}
+          onDelete={onDelete}
+          onRename={() => setRenaming(true)}
+          align="right"
+        />
       </div>
     </motion.div>
   )
@@ -653,12 +746,14 @@ function Kebab({
   onToggle,
   work,
   onDelete,
+  onRename,
   align = 'right',
 }: {
   open: boolean
   onToggle: (v: boolean) => void
   work: Work
   onDelete: (id: string) => void
+  onRename: () => void
   align?: 'left' | 'right'
 }) {
   const navigate = useNavigate()
@@ -667,6 +762,7 @@ function Kebab({
   // this dub (no output file yet) is left out rather than shown inert.
   const items: { label: string; href?: string; onClick?: () => void; danger?: boolean }[] = [
     ...(output ? [{ label: 'Download', href: output }] : []),
+    { label: 'Rename', onClick: onRename },
     { label: 'Duplicate settings', onClick: () => navigate('/studio', { state: duplicateState(work) }) },
     {
       label: work.status === 'processing' ? 'Cancel dubbing' : 'Delete',
@@ -737,6 +833,7 @@ function DetailPanel({ work, isSheet, onClose }: { work: Work; isSheet: boolean;
   const navigate = useNavigate()
   const [side, setSide] = useState<'source' | 'dubbed'>('dubbed')
   const [playT, setPlayT] = useState(0)
+  const [renaming, setRenaming] = useState(false)
   const videoRef = useRef<HTMLVideoElement>(null)
 
   const sourceUrl = mediaUrl(work.sourceUrl)
@@ -809,8 +906,29 @@ function DetailPanel({ work, isSheet, onClose }: { work: Work; isSheet: boolean;
         )}
         {/* Title row */}
         <div className="flex items-start justify-between gap-3 px-5 pb-4 pt-4">
-          <div className="min-w-0">
-            <h3 className="truncate font-mono text-lg font-medium text-primary">{workTitle(work)}</h3>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1.5">
+              <h3 className="min-w-0 flex-1">
+                <TitleField
+                  work={work}
+                  editing={renaming}
+                  onDone={() => setRenaming(false)}
+                  className="font-mono text-lg font-medium text-primary"
+                />
+              </h3>
+              {!renaming && (
+                <button
+                  onClick={() => setRenaming(true)}
+                  aria-label="Rename video"
+                  className="focusable grid h-7 w-7 shrink-0 place-items-center rounded-[8px] text-muted hover:bg-sunken hover:text-primary"
+                >
+                  <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M12 20h9" />
+                    <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                  </svg>
+                </button>
+              )}
+            </div>
             <p className="mt-0.5 truncate font-mono text-xs text-muted">
               {work.filename ?? 'built-in sample clip'} · {workPair(work)} · {fmtDur(duration(work))}
             </p>

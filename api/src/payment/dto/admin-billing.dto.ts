@@ -6,6 +6,7 @@ import {
   IsString,
   Matches,
   Max,
+  MaxLength,
   Min,
   MinLength,
 } from 'class-validator';
@@ -235,4 +236,30 @@ export class UpdateCreditPackDto {
   @IsOptional()
   @IsBoolean()
   active?: boolean;
+}
+
+// One gift is capped well below CREDITS_MAX: this is a typo guard on a route
+// that hands out what everyone else pays for, not a pricing limit. A bigger
+// gift is two requests, and two rows in the activity log.
+const GIFT_MAX = 100_000;
+
+export class GiftCreditsDto {
+  @ApiProperty({
+    description: `Credits to add to the account's balance (1–${GIFT_MAX}).`,
+    example: 500,
+  })
+  @IsInt()
+  @Min(1)
+  @Max(GIFT_MAX)
+  credits!: number;
+
+  @ApiPropertyOptional({
+    description:
+      'Why. Stored on the ledger entry, which the user sees in their own credit history — write it for them.',
+    example: 'Thanks for the bug reports',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  note?: string;
 }
