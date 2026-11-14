@@ -83,6 +83,14 @@ services:
       # the moment LS marks it paid; without it the success page and the cron
       # still credit it.
       LEMONSQUEEZY_WEBHOOK_SECRET: ${LEMONSQUEEZY_WEBHOOK_SECRET:-}
+      # ── Live translation (Realtime page) ─────────────────────────────────
+      # Optional. Without GEMINI_API_KEY, POST /v1/realtime/session answers 503
+      # and the page stays a preview. The key mints one-use Gemini tokens
+      # server-side; it never reaches the browser. The two limits bound the
+      # Google bill while the feature is free.
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      REALTIME_SESSION_SECONDS: ${REALTIME_SESSION_SECONDS:-300}
+      REALTIME_DAILY_SECONDS: ${REALTIME_DAILY_SECONDS:-900}
       # The dubbing pipeline's origin (the Modal web URL). GET /v1/health probes
       # <this>/api/health and reports `pipeline: up|down`; unset reports
       # `not_configured`, which the Studio shows as "unreachable". The probe hits

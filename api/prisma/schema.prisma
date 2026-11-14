@@ -124,6 +124,7 @@ model User {
   works          Work[]
   speechEdits    SpeechEdit[]
   editorProjects EditorProject[]
+  realtimeSessions RealtimeSession[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @default(now()) @updatedAt
@@ -556,4 +557,21 @@ model EditorProject {
   updatedAt DateTime @default(now()) @updatedAt
 
   @@index([userId, updatedAt])
+}
+
+/// One live-translation session handed out by POST /v1/realtime/session.
+/// The browser talks to Google directly, so the server never learns how long a
+/// session really ran: `grantedSeconds` (the token's lifetime) is what the
+/// daily allowance is summed from.
+model RealtimeSession {
+  id             String   @id @default(cuid())
+  userId         Int
+  /// Google's BCP-47 code the token was locked to (e.g. "uz", "zh-Hans").
+  targetLanguage String
+  grantedSeconds Int
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
 }

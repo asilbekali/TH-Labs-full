@@ -66,6 +66,20 @@ export interface AppEnv {
    */
   LEMONSQUEEZY_WEBHOOK_SECRET?: string;
 
+  // ── Live translation (Realtime page) ─────────────────────────────────────
+  /**
+   * Gemini API key (Google AI Studio). Optional: without it
+   * POST /v1/realtime/session answers 503 and the Realtime page stays a
+   * preview. Used server-side only, to mint one-use ephemeral tokens.
+   */
+  GEMINI_API_KEY?: string;
+  /** Live Translate model id. */
+  REALTIME_MODEL: string;
+  /** Longest single session, seconds. */
+  REALTIME_SESSION_SECONDS: number;
+  /** Seconds a user may be granted per UTC day. */
+  REALTIME_DAILY_SECONDS: number;
+
   // ── Audit log ────────────────────────────────────────────────────────────
   /** 'true' records GET reads as well as mutations. A lot of rows. */
   AUDIT_LOG_READS: boolean;
@@ -131,6 +145,12 @@ export function validateEnv(config: RawEnv): AppEnv {
     LEMONSQUEEZY_STORE_ID: lsStore || undefined,
     LEMONSQUEEZY_WEBHOOK_SECRET:
       config.LEMONSQUEEZY_WEBHOOK_SECRET?.trim() || undefined,
+
+    GEMINI_API_KEY: config.GEMINI_API_KEY?.trim() || undefined,
+    REALTIME_MODEL:
+      config.REALTIME_MODEL?.trim() || 'gemini-3.5-live-translate-preview',
+    REALTIME_SESSION_SECONDS: toInt(config.REALTIME_SESSION_SECONDS, 300),
+    REALTIME_DAILY_SECONDS: toInt(config.REALTIME_DAILY_SECONDS, 900),
 
     AUDIT_LOG_READS: config.AUDIT_LOG_READS?.trim() === 'true',
     AUDIT_LOG_RETENTION_DAYS: toInt(config.AUDIT_LOG_RETENTION_DAYS, 90),

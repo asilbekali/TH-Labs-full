@@ -44,9 +44,38 @@ export function allowance(
 // The app's 32 catalog languages (backend/app/languages.py). Google takes
 // BCP-47; all but two of ours are already valid there.
 const CATALOG = [
-  'en', 'uz', 'ru', 'es', 'fr', 'de', 'it', 'pt', 'nl', 'pl', 'tr', 'ar',
-  'fa', 'hi', 'bn', 'ur', 'zh', 'ja', 'ko', 'vi', 'id', 'th', 'uk', 'kk',
-  'az', 'sv', 'cs', 'el', 'he', 'ro', 'hu', 'fi',
+  'en',
+  'uz',
+  'ru',
+  'es',
+  'fr',
+  'de',
+  'it',
+  'pt',
+  'nl',
+  'pl',
+  'tr',
+  'ar',
+  'fa',
+  'hi',
+  'bn',
+  'ur',
+  'zh',
+  'ja',
+  'ko',
+  'vi',
+  'id',
+  'th',
+  'uk',
+  'kk',
+  'az',
+  'sv',
+  'cs',
+  'el',
+  'he',
+  'ro',
+  'hu',
+  'fi',
 ] as const;
 const GOOGLE_SPELLING: Record<string, string> = {
   zh: 'zh-Hans', // Google lists Simplified and Traditional; NLLB's zho_Hans
@@ -57,6 +86,21 @@ const GOOGLE_SPELLING: Record<string, string> = {
 export function toGoogleLanguage(code: string): string | null {
   if (!(CATALOG as readonly string[]).includes(code)) return null;
   return GOOGLE_SPELLING[code] ?? code;
+}
+
+export interface TokenRequest {
+  uses: number;
+  newSessionExpireTime: string;
+  expireTime: string;
+  bidiGenerateContentSetup: {
+    model: string;
+    generationConfig: {
+      responseModalities: string[];
+      translationConfig: { targetLanguageCode: string };
+    };
+    inputAudioTranscription: Record<string, never>;
+    outputAudioTranscription: Record<string, never>;
+  };
 }
 
 /**
@@ -71,7 +115,7 @@ export function tokenRequestBody(
   model: string,
   targetLanguage: string,
   grantSeconds: number,
-): object {
+): TokenRequest {
   const at = (s: number) => new Date(now.getTime() + s * 1000).toISOString();
   return {
     uses: 1,

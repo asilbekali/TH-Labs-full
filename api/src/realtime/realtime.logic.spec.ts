@@ -38,12 +38,12 @@ describe('allowance', () => {
 
 describe('utcDayStart', () => {
   it('is midnight UTC of the instant’s UTC day', () => {
-    expect(utcDayStart(new Date('2026-11-14T23:30:00+05:00')).toISOString()).toBe(
-      '2026-11-14T00:00:00.000Z',
-    );
-    expect(utcDayStart(new Date('2026-11-15T02:00:00+05:00')).toISOString()).toBe(
-      '2026-11-14T00:00:00.000Z',
-    );
+    expect(
+      utcDayStart(new Date('2026-11-14T23:30:00+05:00')).toISOString(),
+    ).toBe('2026-11-14T00:00:00.000Z');
+    expect(
+      utcDayStart(new Date('2026-11-15T02:00:00+05:00')).toISOString(),
+    ).toBe('2026-11-14T00:00:00.000Z');
   });
 });
 
@@ -66,7 +66,7 @@ describe('toGoogleLanguage', () => {
 
 describe('tokenRequestBody', () => {
   const now = new Date('2026-11-14T10:00:00.000Z');
-  const body = tokenRequestBody(now, 'gemini-x', 'uz', 300) as any;
+  const body = tokenRequestBody(now, 'gemini-x', 'uz', 300);
 
   it('is single-use, short-lived and bounded by the granted seconds', () => {
     expect(body.uses).toBe(1);
