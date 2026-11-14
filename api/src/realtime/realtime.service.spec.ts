@@ -12,20 +12,44 @@ import { RealtimeService } from './realtime.service';
 const KEY = 'test-gemini-key-must-not-leak';
 
 function setup(
-  opts: { key?: string; usedToday?: number; google?: Response } = {},
+  opts: {
+    key?: string;
+    usedToday?: number;
+    google?: Response;
+    googleDelayMs?: number;
+  } = {},
 ) {
   type Row = { userId: number; targetLanguage: string; grantedSeconds: number };
-  const rows: Row[] = [];
+  const rows: (Row & { id: string })[] = [];
+  // A stand-in that behaves like the database where it matters: the sum
+  // reflects rows actually written, and transactions run one at a time (the
+  // per-user advisory lock serialises them in Postgres).
+  let chain: Promise<unknown> = Promise.resolve();
+  const table = {
+    aggregate: jest.fn(() => {
+      const sum =
+        (opts.usedToday ?? 0) + rows.reduce((s, r) => s + r.grantedSeconds, 0);
+      return Promise.resolve({ _sum: { grantedSeconds: sum || null } });
+    }),
+    create: jest.fn(({ data }: { data: Row }) => {
+      const row = { id: `r${rows.length + 1}`, ...data };
+      rows.push(row);
+      return Promise.resolve(row);
+    }),
+    delete: jest.fn(({ where }: { where: { id: string } }) => {
+      const i = rows.findIndex((r) => r.id === where.id);
+      if (i >= 0) rows.splice(i, 1);
+      return Promise.resolve({});
+    }),
+  };
+  const tx = { realtimeSession: table, $executeRaw: jest.fn(() => 1) };
   const prisma = {
-    realtimeSession: {
-      aggregate: jest.fn(() =>
-        Promise.resolve({ _sum: { grantedSeconds: opts.usedToday ?? null } }),
-      ),
-      create: jest.fn(({ data }: { data: Row }) => {
-        rows.push(data);
-        return Promise.resolve({ id: 'r1', ...data });
-      }),
-    },
+    realtimeSession: table,
+    $transaction: jest.fn(<T>(fn: (t: typeof tx) => Promise<T>): Promise<T> => {
+      const run = chain.then(() => fn(tx));
+      chain = run.catch(() => undefined);
+      return run;
+    }),
   };
   const env: Record<string, unknown> = {
     GEMINI_API_KEY: 'key' in opts ? opts.key : KEY,
@@ -38,13 +62,18 @@ function setup(
     prisma as unknown as PrismaService,
     config as unknown as ConfigService,
   );
-  const fetchImpl = jest.fn<Promise<Response>, [string, RequestInit]>(() =>
-    Promise.resolve(
-      opts.google ??
+  const fetchImpl = jest.fn<Promise<Response>, [string, RequestInit]>(
+    async () => {
+      if (opts.googleDelayMs) {
+        await new Promise((r) => setTimeout(r, opts.googleDelayMs));
+      }
+      return (
+        opts.google ??
         new Response(JSON.stringify({ name: 'auth_tokens/abc123' }), {
           status: 200,
-        }),
-    ),
+        })
+      );
+    },
   );
   service.fetchImpl = fetchImpl;
   return { service, prisma, fetchImpl, rows };
@@ -82,6 +111,27 @@ describe('RealtimeService.startSession', () => {
     expect(grant.targetLanguage).toBe('uz');
   });
 
+  it('cannot be raced: simultaneous requests get only what the day has left', async () => {
+    // 600 s used, 300 s left: of three requests in flight at once (Google
+    // answering slowly), exactly one may get a session.
+    const { service, rows } = setup({ usedToday: 600, googleDelayMs: 30 });
+    const results = await Promise.allSettled([
+      service.startSession(7, 'uz'),
+      service.startSession(7, 'uz'),
+      service.startSession(7, 'uz'),
+    ]);
+    const granted = results.filter((r) => r.status === 'fulfilled');
+    const refused = results.filter(
+      (r) =>
+        r.status === 'rejected' &&
+        r.reason instanceof HttpException &&
+        r.reason.getStatus() === 429,
+    );
+    expect(granted).toHaveLength(1);
+    expect(refused).toHaveLength(2);
+    expect(rows.reduce((s, r) => s + r.grantedSeconds, 0)).toBe(300);
+  });
+
   it('refuses a fourth session in a day without asking Google', async () => {
     const { service, fetchImpl, rows } = setup({ usedToday: 900 });
     const err: unknown = await service
@@ -96,6 +146,16 @@ describe('RealtimeService.startSession', () => {
   it('records nothing when Google refuses the token', async () => {
     const { service, rows } = setup({
       google: new Response('{"error":{"code":402}}', { status: 402 }),
+    });
+    await expect(service.startSession(7, 'uz')).rejects.toBeInstanceOf(
+      BadGatewayException,
+    );
+    expect(rows).toEqual([]);
+  });
+
+  it('treats a garbled reply from Google as a refusal, and keeps nothing', async () => {
+    const { service, rows } = setup({
+      google: new Response('<html>oops</html>', { status: 200 }),
     });
     await expect(service.startSession(7, 'uz')).rejects.toBeInstanceOf(
       BadGatewayException,

@@ -25,6 +25,10 @@ const SOCKET_ENDPOINT =
   'wss://generativelanguage.googleapis.com/ws/' +
   'google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained';
 
+// First key of the two-int advisory lock, so this lock can never collide with
+// another feature locking on a bare user id. Arbitrary, but fixed.
+const LOCK_NAMESPACE = 0x52_54_4c; // "RTL"
+
 export interface RealtimeGrant {
   token: string;
   model: string;
@@ -86,8 +90,12 @@ export class RealtimeService {
     return Number(this.config.get('REALTIME_DAILY_SECONDS')) || 900;
   }
 
-  private async usedToday(userId: number, now: Date): Promise<number> {
-    const agg = await this.prisma.realtimeSession.aggregate({
+  private async usedToday(
+    userId: number,
+    now: Date,
+    db: Pick<PrismaService, 'realtimeSession'> = this.prisma,
+  ): Promise<number> {
+    const agg = await db.realtimeSession.aggregate({
       where: { userId, createdAt: { gte: utcDayStart(now) } },
       _sum: { grantedSeconds: true },
     });
@@ -118,9 +126,28 @@ export class RealtimeService {
     }
 
     const now = new Date();
-    const used = await this.usedToday(userId, now);
-    const left = allowance(used, this.dailySeconds, this.sessionSeconds);
-    if (!left.ok) {
+    // Reserve before asking Google. Reading the day's total, checking it and
+    // writing the row happen under a per-user advisory lock, so simultaneous
+    // requests (two tabs, a script) queue instead of all reading the same
+    // total — the allowance is the only brake on Google spend. The row is
+    // removed again if Google refuses, so a failed start costs nothing.
+    const { left, reservation } = await this.prisma.$transaction(async (tx) => {
+      // ::int casts are required: Prisma sends numbers as bigint, and the
+      // two-key pg_advisory_xact_lock only exists for (int, int).
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(${LOCK_NAMESPACE}::int, ${userId}::int)`;
+      const used = await this.usedToday(userId, now, tx);
+      const left = allowance(used, this.dailySeconds, this.sessionSeconds);
+      if (!left.ok) return { left, reservation: null };
+      const reservation = await tx.realtimeSession.create({
+        data: {
+          userId,
+          targetLanguage: target,
+          grantedSeconds: left.grantSeconds,
+        },
+      });
+      return { left, reservation };
+    });
+    if (!reservation) {
       throw new HttpException(
         {
           statusCode: HttpStatus.TOO_MANY_REQUESTS,
@@ -130,6 +157,12 @@ export class RealtimeService {
         HttpStatus.TOO_MANY_REQUESTS,
       );
     }
+    const release = () =>
+      this.prisma.realtimeSession
+        .delete({ where: { id: reservation.id } })
+        .catch((err: unknown) =>
+          this.logger.error(`Could not release a reservation: ${String(err)}`),
+        );
 
     let res: Response;
     try {
@@ -141,16 +174,21 @@ export class RealtimeService {
         ),
       });
     } catch (err) {
+      await release();
       this.logger.error(`Gemini token request failed: ${String(err)}`);
       throw new BadGatewayException(
         'Live translation is unavailable right now',
       );
     }
     const text = await res.text();
-    const token = res.ok
-      ? (JSON.parse(text) as { name?: string }).name
-      : undefined;
+    let token: string | undefined;
+    try {
+      token = res.ok ? (JSON.parse(text) as { name?: string }).name : undefined;
+    } catch {
+      token = undefined; // a garbled 200 is a refusal like any other
+    }
     if (!token) {
+      await release();
       // Google's error body names the cause (402 = out of prepaid credit,
       // 429 = rate limit). It never contains our key; the request header does.
       this.logger.error(
@@ -160,16 +198,6 @@ export class RealtimeService {
         'Live translation is unavailable right now',
       );
     }
-
-    // Recorded only once Google has issued the token: a refused request must
-    // not use up anyone's allowance.
-    await this.prisma.realtimeSession.create({
-      data: {
-        userId,
-        targetLanguage: target,
-        grantedSeconds: left.grantSeconds,
-      },
-    });
 
     return {
       token,
