@@ -120,7 +120,7 @@ export default function Realtime() {
     getRealtimeUsage()
       .then((u) => {
         setUsage(u)
-        setLeftToday(Math.max(0, u.dailySeconds - u.usedSecondsToday))
+        setLeftToday(u.unlimited ? null : Math.max(0, u.dailySeconds - u.usedSecondsToday))
       })
       .catch(() => setUsage(null)) // no API, or no route yet: stay a preview
   }, [])
@@ -219,7 +219,7 @@ export default function Realtime() {
       alive: () => mountedRef.current,
       open: (grant, stream) => {
         setSecondsLeft(grant.maxSeconds)
-        setLeftToday(grant.remainingSecondsToday)
+        setLeftToday(grant.unlimited ? null : grant.remainingSecondsToday)
         lastPieceRef.current = 0
         const session = new LiveTranslateSession(grant, stream, {
           onState: (state) => {
@@ -428,7 +428,7 @@ export default function Realtime() {
         <span className="chip px-2 py-0.5 text-[12px] text-primary">Preview</span>
         <p className="order-last min-w-0 basis-full text-[13px] text-muted sm:order-none sm:flex-1 sm:basis-0 sm:truncate">
           {liveMode
-            ? 'Preview — powered by Google Gemini Live Translate. Translations and voices may be imperfect.'
+            ? 'Preview. Translations and voices may be imperfect.'
             : 'Sample lines only. Nothing you say is sent.'}
         </p>
         {liveMode && live && secondsLeft != null && (
@@ -577,10 +577,14 @@ export default function Realtime() {
           <span className="chip px-2 py-0.5 text-[12px] text-primary">Free preview</span>
           <p className="mt-2.5 text-sm font-medium text-primary">Live translation is free while we test it</p>
           <p className="mt-1 text-[13px] leading-relaxed text-secondary">
-            Up to {Math.round(usage.sessionSeconds / 60)} minutes a session and {Math.round(usage.dailySeconds / 60)} minutes a
-            day. Your speech goes to Google to be translated and is not stored by us.
+            {usage.unlimited
+              ? `Up to ${Math.round(usage.sessionSeconds / 60)} minutes a session, with no daily limit on this account.`
+              : `Up to ${Math.round(usage.sessionSeconds / 60)} minutes a session and ${Math.round(usage.dailySeconds / 60)} minutes a day.`}{' '}
+            Your speech is sent to our translation provider and is not stored by us.
           </p>
-          {leftToday != null && (
+          {usage.unlimited ? (
+            <p className="mt-3 text-[13px] text-primary">No daily limit</p>
+          ) : leftToday != null && (
             <p className="mt-3 text-[13px] text-primary" aria-live="polite">
               {leftToday > 0 ? `${Math.floor(leftToday / 60)} min left today` : 'You’ve used today’s minutes. Come back tomorrow.'}
             </p>

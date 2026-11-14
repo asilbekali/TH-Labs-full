@@ -12,6 +12,7 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   allowance,
+  isUnlimited,
   toGoogleLanguage,
   tokenRequestBody,
   utcDayStart,
@@ -37,10 +38,13 @@ export interface RealtimeGrant {
   expiresAt: string;
   maxSeconds: number;
   remainingSecondsToday: number;
+  /** No daily allowance for this account (REALTIME_UNLIMITED_EMAILS). */
+  unlimited: boolean;
 }
 
 export interface RealtimeUsage {
   configured: boolean;
+  unlimited: boolean;
   usedSecondsToday: number;
   dailySeconds: number;
   sessionSeconds: number;
@@ -90,6 +94,13 @@ export class RealtimeService {
     return Number(this.config.get('REALTIME_DAILY_SECONDS')) || 900;
   }
 
+  private unlimited(email: string | undefined): boolean {
+    return isUnlimited(
+      email,
+      this.config.get<string>('REALTIME_UNLIMITED_EMAILS'),
+    );
+  }
+
   private async usedToday(
     userId: number,
     now: Date,
@@ -102,16 +113,21 @@ export class RealtimeService {
     return agg._sum.grantedSeconds ?? 0;
   }
 
-  async usage(userId: number): Promise<RealtimeUsage> {
+  async usage(userId: number, email?: string): Promise<RealtimeUsage> {
     return {
       configured: Boolean(this.key),
+      unlimited: this.unlimited(email),
       usedSecondsToday: await this.usedToday(userId, new Date()),
       dailySeconds: this.dailySeconds,
       sessionSeconds: this.sessionSeconds,
     };
   }
 
-  async startSession(userId: number, language: string): Promise<RealtimeGrant> {
+  async startSession(
+    userId: number,
+    language: string,
+    email?: string,
+  ): Promise<RealtimeGrant> {
     const key = this.key;
     if (!key) {
       throw new ServiceUnavailableException(
@@ -126,6 +142,9 @@ export class RealtimeService {
     }
 
     const now = new Date();
+    // Listed testers skip the daily allowance, not the session length; their
+    // sessions are still recorded so the spend stays visible.
+    const unlimited = this.unlimited(email);
     // Reserve before asking Google. Reading the day's total, checking it and
     // writing the row happen under a per-user advisory lock, so simultaneous
     // requests (two tabs, a script) queue instead of all reading the same
@@ -136,7 +155,13 @@ export class RealtimeService {
       // two-key pg_advisory_xact_lock only exists for (int, int).
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(${LOCK_NAMESPACE}::int, ${userId}::int)`;
       const used = await this.usedToday(userId, now, tx);
-      const left = allowance(used, this.dailySeconds, this.sessionSeconds);
+      const left = unlimited
+        ? {
+            ok: true,
+            remainingSeconds: this.sessionSeconds,
+            grantSeconds: this.sessionSeconds,
+          }
+        : allowance(used, this.dailySeconds, this.sessionSeconds);
       if (!left.ok) return { left, reservation: null };
       const reservation = await tx.realtimeSession.create({
         data: {
@@ -212,6 +237,7 @@ export class RealtimeService {
         0,
         left.remainingSeconds - left.grantSeconds,
       ),
+      unlimited,
     };
   }
 }

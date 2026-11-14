@@ -56,6 +56,7 @@ function setup(
     REALTIME_MODEL: 'gemini-3.5-live-translate-preview',
     REALTIME_SESSION_SECONDS: 300,
     REALTIME_DAILY_SECONDS: 900,
+    REALTIME_UNLIMITED_EMAILS: 'Tester@Example.com, other@example.com',
   };
   const config = { get: (k: string) => env[k] };
   const service = new RealtimeService(
@@ -179,11 +180,39 @@ describe('RealtimeService.startSession', () => {
   });
 });
 
+describe('RealtimeService unlimited testers', () => {
+  it('lets a listed account start sessions past the daily allowance', async () => {
+    const { service, rows } = setup({ usedToday: 900 });
+    const grant = await service.startSession(7, 'uz', 'tester@example.com');
+    expect(grant.maxSeconds).toBe(300);
+    expect(grant.unlimited).toBe(true);
+    // still recorded, so the spend stays visible
+    expect(rows).toEqual([expect.objectContaining({ grantedSeconds: 300 })]);
+  });
+
+  it('still limits everyone else', async () => {
+    const { service } = setup({ usedToday: 900 });
+    const err: unknown = await service
+      .startSession(7, 'uz', 'someone@example.com')
+      .catch((e: unknown) => e);
+    expect((err as HttpException).getStatus()).toBe(429);
+  });
+
+  it('reports a listed account as unlimited', async () => {
+    const { service } = setup({ usedToday: 900 });
+    expect((await service.usage(7, 'TESTER@example.com')).unlimited).toBe(true);
+    expect((await service.usage(7, 'someone@example.com')).unlimited).toBe(
+      false,
+    );
+  });
+});
+
 describe('RealtimeService.usage', () => {
   it('reports configuration and seconds used today', async () => {
     const { service } = setup({ usedToday: 300 });
     await expect(service.usage(7)).resolves.toEqual({
       configured: true,
+      unlimited: false,
       usedSecondsToday: 300,
       dailySeconds: 900,
       sessionSeconds: 300,

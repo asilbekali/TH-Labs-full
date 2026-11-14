@@ -6,6 +6,23 @@
 /** A session shorter than this is not worth handing out. */
 export const MIN_GRANT_SECONDS = 30;
 
+/**
+ * Whether `email` is on the comma-separated list of accounts with no daily
+ * allowance (REALTIME_UNLIMITED_EMAILS) — testers and staff. Case and spacing
+ * do not matter; an empty list matches nobody.
+ */
+export function isUnlimited(
+  email: string | undefined,
+  list: string | undefined,
+): boolean {
+  const me = email?.trim().toLowerCase();
+  if (!me || !list) return false;
+  return list
+    .split(',')
+    .map((e) => e.trim().toLowerCase())
+    .includes(me);
+}
+
 /** How long a minted token may be used to OPEN a session. */
 const OPEN_WINDOW_SECONDS = 60;
 
