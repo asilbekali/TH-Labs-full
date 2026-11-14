@@ -22,5 +22,8 @@
     "erasableSyntaxOnly": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src"]
+  "include": ["src"],
+  // Unit tests run on Node's own runner (node --test), not in the browser
+  // bundle, so they are not type-checked against the DOM-only app config.
+  "exclude": ["src/**/*.test.ts"]
 }

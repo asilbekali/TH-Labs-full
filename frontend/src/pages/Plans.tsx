@@ -235,10 +235,6 @@ export default function Plans() {
   const checkoutBlocked = checkoutUnavailableReason(checkoutInfo);
   const missingProducts = unbuyablePlans(checkoutInfo);
 
-  // The server reads the mode off the catalog's own LS products, so a live
-  // site still selling test products shows it here.
-  const inTestCheckout = checkoutInfo?.mode;
-
   const activeTier: PlanTier =
     subscription && subscription.status === "ACTIVE"
       ? (subscription.plan?.tier ?? "FREE")

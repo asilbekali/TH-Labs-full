@@ -25,6 +25,7 @@ import { PipelineModule } from './pipeline/pipeline.module';
 import { SpeechEditModule } from './speech-edit/speech-edit.module';
 import { DubIssuesModule } from './dub-issues/dub-issues.module';
 import { EditorModule } from './editor/editor.module';
+import { RealtimeModule } from './realtime/realtime.module';
 
 @Module({
   imports: [
@@ -57,6 +58,7 @@ import { EditorModule } from './editor/editor.module';
     SpeechEditModule,
     DubIssuesModule,
     EditorModule,
+    RealtimeModule,
   ],
   controllers: [AppController],
   providers: [AppService],
