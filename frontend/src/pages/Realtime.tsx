@@ -22,6 +22,7 @@ import Page from '../components/Page'
 import LanguageSelect from '../components/LanguageSelect'
 import { MicMeter, StreamPreview } from '../components/LiveMedia'
 import { sendFeedback } from '../lib/feedback-api'
+import { startLive as beginLive } from '../lib/live-start'
 import { LiveTranslateSession } from '../lib/live-translate'
 import { EASE_ENTRANCE } from '../lib/motion'
 import { useLanguages } from '../lib/queries'
@@ -125,8 +126,16 @@ export default function Realtime() {
   }, [])
   useEffect(refreshUsage, [refreshUsage])
 
-  // Leaving the page ends a live session: mic, audio and socket.
-  useEffect(() => () => sessionRef.current?.stop(), [])
+  // Leaving the page ends a live session — mic, audio and socket — and tells
+  // a start still in flight not to carry on (lib/live-start.ts).
+  const mountedRef = useRef(true)
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      sessionRef.current?.stop()
+    }
+  }, [])
 
   // The countdown of a live session. The session also ends itself at zero.
   useEffect(() => {
@@ -198,48 +207,50 @@ export default function Realtime() {
     }
   }
 
-  // Microphone first, then the session: a blocked microphone must not use up
-  // any of the day's allowance.
+  // The order and the unwinding live in lib/live-start.ts: microphone first
+  // (a blocked one spends no allowance), and nothing carries on if the page is
+  // left while the permission prompt or the connection is pending.
   async function startLive() {
     setConnecting(true)
     setLiveLines([])
-    let stream: MediaStream
-    try {
-      stream = await media.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } })
-    } catch {
+    const result = await beginLive({
+      getMic: () => media.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } }),
+      mint: () => startRealtimeSession(targetLang),
+      alive: () => mountedRef.current,
+      open: (grant, stream) => {
+        setSecondsLeft(grant.maxSeconds)
+        setLeftToday(grant.remainingSecondsToday)
+        lastPieceRef.current = 0
+        const session = new LiveTranslateSession(grant, stream, {
+          onState: (state) => {
+            if (state === 'live') setConnecting(false)
+          },
+          onInput: (piece) => appendPiece('heard', piece),
+          onOutput: (piece) => appendPiece('said', piece),
+          onEnd: (reason) => {
+            sessionRef.current = null
+            if (!mountedRef.current) return
+            setConnecting(false)
+            setLive(false)
+            setMicStream(null)
+            setSecondsLeft(null)
+            if (reason) setNotice(reason)
+            refreshUsage()
+          },
+        })
+        // Set before start() so Stop and leaving the page both reach it.
+        sessionRef.current = session
+        setMicStream(stream)
+        setLive(true)
+        return session
+      },
+    })
+    if (result.kind === 'mic-blocked') {
       setConnecting(false)
       setNotice('The microphone is blocked. Allow it in your browser to translate your speech.')
-      return
-    }
-    try {
-      const grant = await startRealtimeSession(targetLang)
-      setSecondsLeft(grant.maxSeconds)
-      setLeftToday(grant.remainingSecondsToday)
-      lastPieceRef.current = 0
-      const session = new LiveTranslateSession(grant, stream, {
-        onState: (state) => {
-          if (state === 'live') setConnecting(false)
-        },
-        onInput: (piece) => appendPiece('heard', piece),
-        onOutput: (piece) => appendPiece('said', piece),
-        onEnd: (reason) => {
-          sessionRef.current = null
-          setConnecting(false)
-          setLive(false)
-          setMicStream(null)
-          setSecondsLeft(null)
-          if (reason) setNotice(reason)
-          refreshUsage()
-        },
-      })
-      sessionRef.current = session
-      setMicStream(stream)
-      setLive(true)
-      await session.start()
-    } catch (e) {
-      stopStream(stream)
+    } else if (result.kind === 'failed') {
       setConnecting(false)
-      setNotice(e instanceof Error ? e.message : 'Could not start live translation.')
+      setNotice(result.message)
       refreshUsage()
     }
   }

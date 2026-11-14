@@ -12,8 +12,8 @@
 //
 // The wire format was verified against the real API before this was written
 // (api/scripts/gemini-live-smoke.mjs; findings in the realtime plan).
-import { base64ToFloat32, downsampleTo16k, int16ToBase64 } from './pcm'
-import type { RealtimeSessionGrant } from './realtime-api'
+import { base64ToFloat32, downsampleTo16k, int16ToBase64 } from './pcm.ts'
+import type { RealtimeSessionGrant } from './realtime-api.ts'
 
 export type LiveState = 'connecting' | 'live' | 'ended'
 
@@ -34,6 +34,9 @@ const OUTPUT_RATE = 24_000
 const CHUNK_SECONDS = 0.1
 // Small lead so the first chunk is not scheduled in the past.
 const PLAYBACK_LEAD = 0.05
+// Socket open but no setupComplete by then: give up rather than hang.
+const CONNECT_TIMEOUT_MS = 15_000
+const DECODER = new TextDecoder()
 
 // Posts each 128-sample render quantum of the first input channel.
 const WORKLET = `
@@ -68,15 +71,23 @@ export class LiveTranslateSession {
   private framed = 0
   private nextStart = 0
   private timer: ReturnType<typeof setTimeout> | null = null
+  private connectTimer: ReturnType<typeof setTimeout> | null = null
   private ended = false
   private readonly grant: RealtimeSessionGrant
   private readonly stream: MediaStream
   private readonly handlers: LiveHandlers
+  private readonly connectTimeoutMs: number
 
-  constructor(grant: RealtimeSessionGrant, stream: MediaStream, handlers: LiveHandlers) {
+  constructor(
+    grant: RealtimeSessionGrant,
+    stream: MediaStream,
+    handlers: LiveHandlers,
+    options: { connectTimeoutMs?: number } = {},
+  ) {
     this.grant = grant
     this.stream = stream
     this.handlers = handlers
+    this.connectTimeoutMs = options.connectTimeoutMs ?? CONNECT_TIMEOUT_MS
   }
 
   async start(): Promise<void> {
@@ -99,15 +110,35 @@ export class LiveTranslateSession {
     }
     if (this.ended) return
 
-    const ws = new WebSocket(this.grant.wsUrl)
+    let ws: WebSocket
+    try {
+      ws = new WebSocket(this.grant.wsUrl)
+    } catch (err) {
+      this.stop(`Could not reach the translation service (${err instanceof Error ? err.message : String(err)})`)
+      return
+    }
     this.ws = ws
+    // ArrayBuffer, decoded synchronously: with Blobs each message needs an
+    // async .text(), and those can settle out of order — audio chunks and
+    // transcript pieces would then play and print out of order.
+    ws.binaryType = 'arraybuffer'
+    this.connectTimer = setTimeout(
+      () => this.stop('Could not connect to the translation service. Try again.'),
+      this.connectTimeoutMs,
+    )
     ws.onopen = () => {
       // The token already locks the target language and transcriptions;
       // the setup only has to name the model.
       ws.send(JSON.stringify({ setup: { model: `models/${this.grant.model}` } }))
     }
     ws.onmessage = (event) => {
-      void this.onMessage(event.data)
+      try {
+        this.onMessage(event.data)
+      } catch (err) {
+        // Anything thrown here (starting the microphone, playing audio) would
+        // otherwise be lost and leave the session stuck connecting.
+        this.stop(err instanceof Error ? err.message : String(err))
+      }
     }
     ws.onclose = (event) => {
       this.stop(
@@ -121,6 +152,7 @@ export class LiveTranslateSession {
     if (this.ended) return
     this.ended = true
     if (this.timer) clearTimeout(this.timer)
+    if (this.connectTimer) clearTimeout(this.connectTimer)
     for (const track of this.stream.getTracks()) track.stop()
     this.node?.port.close()
     this.node?.disconnect()
@@ -133,17 +165,21 @@ export class LiveTranslateSession {
     this.handlers.onEnd(reason)
   }
 
-  private async onMessage(data: unknown): Promise<void> {
+  private onMessage(data: unknown): void {
     if (this.ended) return
-    // Google sends JSON as binary frames in browsers; Blob or string.
-    const text = typeof data === 'string' ? data : await (data as Blob).text()
+    // Google sends its JSON as binary frames in browsers.
+    const text = typeof data === 'string' ? data : DECODER.decode(data as ArrayBuffer)
     let msg: ServerMessage
     try {
       msg = JSON.parse(text) as ServerMessage
     } catch {
       return
     }
-    if (msg.setupComplete) this.beginCapture()
+    if (msg.setupComplete) {
+      if (this.connectTimer) clearTimeout(this.connectTimer)
+      this.connectTimer = null
+      this.beginCapture()
+    }
     if (msg.goAway) this.stop('Google ended the session')
     const content = msg.serverContent
     if (!content) return
