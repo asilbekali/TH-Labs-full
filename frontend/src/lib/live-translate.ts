@@ -180,7 +180,7 @@ export class LiveTranslateSession {
       this.connectTimer = null
       this.beginCapture()
     }
-    if (msg.goAway) this.stop('Google ended the session')
+    if (msg.goAway) this.stop('The translation service ended the session')
     const content = msg.serverContent
     if (!content) return
     if (content.inputTranscription?.text) this.handlers.onInput(content.inputTranscription.text)

@@ -91,6 +91,8 @@ services:
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       REALTIME_SESSION_SECONDS: ${REALTIME_SESSION_SECONDS:-300}
       REALTIME_DAILY_SECONDS: ${REALTIME_DAILY_SECONDS:-900}
+      # Comma-separated emails with no daily allowance (testers, staff).
+      REALTIME_UNLIMITED_EMAILS: ${REALTIME_UNLIMITED_EMAILS:-}
       # The dubbing pipeline's origin (the Modal web URL). GET /v1/health probes
       # <this>/api/health and reports `pipeline: up|down`; unset reports
       # `not_configured`, which the Studio shows as "unreachable". The probe hits

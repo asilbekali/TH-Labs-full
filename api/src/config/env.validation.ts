@@ -79,6 +79,8 @@ export interface AppEnv {
   REALTIME_SESSION_SECONDS: number;
   /** Seconds a user may be granted per UTC day. */
   REALTIME_DAILY_SECONDS: number;
+  /** Comma-separated emails with no daily allowance (testers, staff). */
+  REALTIME_UNLIMITED_EMAILS?: string;
 
   // ── Audit log ────────────────────────────────────────────────────────────
   /** 'true' records GET reads as well as mutations. A lot of rows. */
@@ -151,6 +153,8 @@ export function validateEnv(config: RawEnv): AppEnv {
       config.REALTIME_MODEL?.trim() || 'gemini-3.5-live-translate-preview',
     REALTIME_SESSION_SECONDS: toInt(config.REALTIME_SESSION_SECONDS, 300),
     REALTIME_DAILY_SECONDS: toInt(config.REALTIME_DAILY_SECONDS, 900),
+    REALTIME_UNLIMITED_EMAILS:
+      config.REALTIME_UNLIMITED_EMAILS?.trim() || undefined,
 
     AUDIT_LOG_READS: config.AUDIT_LOG_READS?.trim() === 'true',
     AUDIT_LOG_RETENTION_DAYS: toInt(config.AUDIT_LOG_RETENTION_DAYS, 90),

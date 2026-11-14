@@ -26,12 +26,12 @@ export class RealtimeController {
       "day's allowance is used, 503 when no Gemini key is configured.",
   })
   start(@CurrentUser() user: AuthenticatedUser, @Body() dto: StartSessionDto) {
-    return this.realtime.startSession(user.id, dto.targetLanguage);
+    return this.realtime.startSession(user.id, dto.targetLanguage, user.email);
   }
 
   @Get('usage')
   @ApiOperation({ summary: 'Live translation seconds used today' })
   usage(@CurrentUser() user: AuthenticatedUser) {
-    return this.realtime.usage(user.id);
+    return this.realtime.usage(user.id, user.email);
   }
 }

@@ -1,9 +1,25 @@
 import {
   allowance,
+  isUnlimited,
   toGoogleLanguage,
   tokenRequestBody,
   utcDayStart,
 } from './realtime.logic';
+
+describe('isUnlimited', () => {
+  const list = ' Tester@Example.com ,other@example.com,';
+  it('matches listed emails regardless of case and spacing', () => {
+    expect(isUnlimited('tester@example.com', list)).toBe(true);
+    expect(isUnlimited('OTHER@example.com', list)).toBe(true);
+  });
+  it('matches nobody else, and nothing when the list is empty', () => {
+    expect(isUnlimited('someone@example.com', list)).toBe(false);
+    expect(isUnlimited(undefined, list)).toBe(false);
+    expect(isUnlimited('', list)).toBe(false);
+    expect(isUnlimited('tester@example.com', undefined)).toBe(false);
+    expect(isUnlimited('tester@example.com', '')).toBe(false);
+  });
+});
 
 describe('allowance', () => {
   it('grants a full session on a fresh day', () => {

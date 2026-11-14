@@ -15,11 +15,14 @@ export interface RealtimeSessionGrant {
   /** The session ends itself after this many seconds. */
   maxSeconds: number
   remainingSecondsToday: number
+  /** No daily allowance on this account. */
+  unlimited?: boolean
 }
 
 /** GET /v1/realtime/usage */
 export interface RealtimeUsage {
   configured: boolean
+  unlimited?: boolean
   usedSecondsToday: number
   dailySeconds: number
   sessionSeconds: number
