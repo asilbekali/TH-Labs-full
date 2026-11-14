@@ -1,13 +1,20 @@
-// Real-time dubbing — a playground, ahead of the real thing.
+// Real-time translation playground.
 //
-// There is no real-time API yet, so nothing here is translated or sent. The
-// microphone meter and the camera and screen previews are real but stay on the
-// device; the lines in the conversation are samples (lib/realtime-preview.ts),
-// and the page says so. The language list is the same catalog the Studio uses.
+// Two modes, decided by the account API (GET /v1/realtime/usage):
 //
-// "Notify me" is a real request — it goes to the staff inbox through POST
-// /v1/feedback (kind FEATURE), which also emails the user a receipt — and is
-// remembered on this device so the button does not invite a second one.
+// * Live — when a Gemini key is configured. Start asks for the microphone,
+//   then for a session (POST /v1/realtime/session, which checks the daily
+//   allowance), then streams speech straight to Google's Live Translate model
+//   and plays the translation back (lib/live-translate.ts). The source language
+//   is detected by the model. Free while it is a playground: 5 minutes a
+//   session, 15 a day, enforced by the API.
+// * Preview — otherwise. Nothing is translated or sent; the conversation lines
+//   are samples (lib/realtime-preview.ts), and the page says so.
+//
+// In both, the camera and screen previews are real but stay on the device,
+// and the language list is the same catalog the Studio uses. "Notify me" is a
+// real request — it goes to the staff inbox through POST /v1/feedback (kind
+// FEATURE) — and is remembered on this device.
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
@@ -15,12 +22,29 @@ import Page from '../components/Page'
 import LanguageSelect from '../components/LanguageSelect'
 import { MicMeter, StreamPreview } from '../components/LiveMedia'
 import { sendFeedback } from '../lib/feedback-api'
+import { LiveTranslateSession } from '../lib/live-translate'
 import { EASE_ENTRANCE } from '../lib/motion'
 import { useLanguages } from '../lib/queries'
+import { getRealtimeUsage, startRealtimeSession } from '../lib/realtime-api'
+import type { RealtimeUsage } from '../lib/realtime-api'
 import { SAMPLE_COUNT, sampleLine } from '../lib/realtime-preview'
 import { EDITOR_SHAPE } from '../lib/shape'
 
 const NOTIFY_KEY = 'thlabs.realtime.notify'
+
+// A pause this long between transcription pieces starts a new line.
+const LINE_GAP_MS = 1500
+
+/** One live exchange: what was heard and what was said in translation. */
+interface LiveLine {
+  heard: string
+  said: string
+}
+
+function clock(seconds: number): string {
+  const s = Math.max(0, Math.floor(seconds))
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+}
 
 // How often a preview session moves on: a new line, or the translation of the
 // line before it.
@@ -73,13 +97,43 @@ export default function Realtime() {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // Live translation (when the API has a Gemini key).
+  const [usage, setUsage] = useState<RealtimeUsage | null>(null)
+  const [connecting, setConnecting] = useState(false)
+  const [liveLines, setLiveLines] = useState<LiveLine[]>([])
+  const [secondsLeft, setSecondsLeft] = useState<number | null>(null)
+  const [leftToday, setLeftToday] = useState<number | null>(null)
+  const sessionRef = useRef<LiveTranslateSession | null>(null)
+  const lastPieceRef = useRef(0)
+  const liveMode = usage?.configured === true
+
   const media = navigator.mediaDevices
   const canShareScreen = !!media?.getDisplayMedia
   const scrollRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
-  }, [lines])
+  }, [lines, liveLines])
+
+  const refreshUsage = useCallback(() => {
+    getRealtimeUsage()
+      .then((u) => {
+        setUsage(u)
+        setLeftToday(Math.max(0, u.dailySeconds - u.usedSecondsToday))
+      })
+      .catch(() => setUsage(null)) // no API, or no route yet: stay a preview
+  }, [])
+  useEffect(refreshUsage, [refreshUsage])
+
+  // Leaving the page ends a live session: mic, audio and socket.
+  useEffect(() => () => sessionRef.current?.stop(), [])
+
+  // The countdown of a live session. The session also ends itself at zero.
+  useEffect(() => {
+    if (!live || !liveMode) return
+    const id = window.setInterval(() => setSecondsLeft((s) => (s == null ? s : Math.max(0, s - 1))), 1000)
+    return () => window.clearInterval(id)
+  }, [live, liveMode])
 
   // The browser's own "stop sharing" bar ends the track without going through
   // this page, so the preview has to listen for it.
@@ -106,7 +160,7 @@ export default function Realtime() {
 
   // The preview session: translate what is waiting, or else play the next sample.
   useEffect(() => {
-    if (!live || muted) return
+    if (!live || muted || liveMode) return
     const id = window.setInterval(() => {
       setLines((prev) => {
         if (prev.some((l) => l.pending)) return prev.map((l) => ({ ...l, pending: false }))
@@ -116,7 +170,7 @@ export default function Realtime() {
       })
     }, TICK_MS)
     return () => window.clearInterval(id)
-  }, [live, muted])
+  }, [live, muted, liveMode])
 
   const langName = useCallback(
     (code: string) => languages.find((l) => l.code === code)?.name ?? code.toUpperCase(),
@@ -132,6 +186,10 @@ export default function Realtime() {
     setNotice(null)
     setLines([])
     setMuted(false)
+    if (liveMode) {
+      await startLive()
+      return
+    }
     setLive(true)
     try {
       setMicStream(await media.getUserMedia({ audio: true }))
@@ -140,8 +198,70 @@ export default function Realtime() {
     }
   }
 
+  // Microphone first, then the session: a blocked microphone must not use up
+  // any of the day's allowance.
+  async function startLive() {
+    setConnecting(true)
+    setLiveLines([])
+    let stream: MediaStream
+    try {
+      stream = await media.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } })
+    } catch {
+      setConnecting(false)
+      setNotice('The microphone is blocked. Allow it in your browser to translate your speech.')
+      return
+    }
+    try {
+      const grant = await startRealtimeSession(targetLang)
+      setSecondsLeft(grant.maxSeconds)
+      setLeftToday(grant.remainingSecondsToday)
+      lastPieceRef.current = 0
+      const session = new LiveTranslateSession(grant, stream, {
+        onState: (state) => {
+          if (state === 'live') setConnecting(false)
+        },
+        onInput: (piece) => appendPiece('heard', piece),
+        onOutput: (piece) => appendPiece('said', piece),
+        onEnd: (reason) => {
+          sessionRef.current = null
+          setConnecting(false)
+          setLive(false)
+          setMicStream(null)
+          setSecondsLeft(null)
+          if (reason) setNotice(reason)
+          refreshUsage()
+        },
+      })
+      sessionRef.current = session
+      setMicStream(stream)
+      setLive(true)
+      await session.start()
+    } catch (e) {
+      stopStream(stream)
+      setConnecting(false)
+      setNotice(e instanceof Error ? e.message : 'Could not start live translation.')
+      refreshUsage()
+    }
+  }
+
+  // Transcription arrives in pieces; a pause starts a new line.
+  function appendPiece(field: keyof LiveLine, piece: string) {
+    const now = Date.now()
+    const fresh = now - lastPieceRef.current > LINE_GAP_MS
+    lastPieceRef.current = now
+    setLiveLines((prev) => {
+      if (fresh || prev.length === 0) {
+        return [...prev, { heard: '', said: '', [field]: piece }]
+      }
+      const last = prev[prev.length - 1]
+      return [...prev.slice(0, -1), { ...last, [field]: last[field] + piece }]
+    })
+  }
+
   function stop() {
+    sessionRef.current?.stop()
     setLive(false)
+    setConnecting(false)
     setMicStream(null)
     setVisual(null)
     setVisualStream(null)
@@ -201,7 +321,45 @@ export default function Realtime() {
     }
   }
 
-  const conversation = lines.length === 0 ? (
+  const liveConversation = liveLines.length === 0 ? (
+    <div className="grid h-full place-items-center px-6 py-10 text-center">
+      <div>
+        <h2 className="text-[clamp(1.4rem,3vw,1.9rem)] font-medium leading-tight text-primary">
+          Speak in any language.
+          <br />
+          Hear it in {targetName}.
+        </h2>
+        <p className="mt-2 text-[15px] text-secondary">
+          {connecting ? 'Connecting…' : live ? 'Listening… start talking.' : 'Press Start and allow the microphone.'}
+        </p>
+      </div>
+    </div>
+  ) : (
+    <div className="space-y-3 p-4 sm:p-5">
+      {liveLines.map((line, i) => (
+        <motion.div
+          key={i}
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.22, ease: EASE_ENTRANCE }}
+          className="rounded-[12px] border border-subtle bg-sunken/60 px-4 py-3"
+        >
+          {showOriginal && line.heard && (
+            <>
+                  <p className="text-[12px] text-muted">Heard</p>
+                  <p dir="auto" className="text-sm text-secondary">{line.heard}</p>
+            </>
+          )}
+          <p className={`text-[12px] text-brand ${showOriginal && line.heard ? 'mt-2' : ''}`}>{targetName}</p>
+          <p dir="auto" className={`text-[15px] ${line.said ? 'font-medium text-primary' : 'text-muted'}`}>
+            {line.said || 'Translating…'}
+          </p>
+        </motion.div>
+      ))}
+    </div>
+  )
+
+  const conversation = liveMode ? liveConversation : lines.length === 0 ? (
     <div className="grid h-full place-items-center px-6 py-10 text-center">
       <div>
         <h2 className="text-[clamp(1.4rem,3vw,1.9rem)] font-medium leading-tight text-primary">
@@ -230,8 +388,8 @@ export default function Realtime() {
             >
               {showOriginal && (
                 <>
-                  <p className="text-[12px] text-muted">{sourceName}</p>
-                  <p dir="auto" className="text-sm text-secondary">{source}</p>
+                      <p className="text-[12px] text-muted">{sourceName}</p>
+                      <p dir="auto" className="text-sm text-secondary">{source}</p>
                 </>
               )}
               <p className={`text-[12px] text-brand ${showOriginal ? 'mt-2' : ''}`}>{targetName}</p>
@@ -258,8 +416,15 @@ export default function Realtime() {
         <h1 className="text-[15px] font-semibold text-primary">Playground</h1>
         <span className="chip px-2 py-0.5 text-[12px] text-primary">Preview</span>
         <p className="order-last min-w-0 basis-full text-[13px] text-muted sm:order-none sm:flex-1 sm:basis-0 sm:truncate">
-          Sample lines only. Nothing you say is sent.
+          {liveMode
+            ? 'Preview — powered by Google Gemini Live Translate. Translations and voices may be imperfect.'
+            : 'Sample lines only. Nothing you say is sent.'}
         </p>
+        {liveMode && live && secondsLeft != null && (
+          <span className="font-mono text-[13px] tabular-nums text-secondary" aria-label="Time left in this session">
+            {clock(secondsLeft)}
+          </span>
+        )}
         {live && (
           <div className="ml-auto sm:ml-0">
             <MicMeter stream={micStream} muted={muted} />
@@ -280,15 +445,22 @@ export default function Realtime() {
       <div className="border-t border-subtle p-3">
         {notice && <p className="mb-2 px-1 text-[13px] text-warn">{notice}</p>}
         <div className="flex flex-wrap items-center gap-2">
-          <form onSubmit={send} className="min-w-0 basis-full sm:flex-1 sm:basis-0">
-            <input
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              placeholder="Type something…"
-              aria-label="Type something to translate"
-              className="field h-11 w-full py-2"
-            />
-          </form>
+          {liveMode ? (
+            // The live model takes speech only, so there is nothing to type.
+            <p className="min-w-0 basis-full px-1 text-[13px] text-muted sm:flex-1 sm:basis-0">
+              {leftToday != null && `${Math.floor(leftToday / 60)} min left today`}
+            </p>
+          ) : (
+            <form onSubmit={send} className="min-w-0 basis-full sm:flex-1 sm:basis-0">
+              <input
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                placeholder="Type something…"
+                aria-label="Type something to translate"
+                className="field h-11 w-full py-2"
+              />
+            </form>
+          )}
           {live && (
             <RoundButton label={muted ? 'Turn the microphone on' : 'Mute the microphone'} active={muted} onClick={() => setMuted((m) => !m)}>
               <rect x="9" y="2" width="6" height="12" rx="3" />
@@ -311,8 +483,13 @@ export default function Realtime() {
               Stop
             </button>
           ) : (
-            <button type="button" onClick={() => void start()} className="btn-primary focusable ml-auto h-11 shrink-0 px-6 text-sm sm:ml-0">
-              Start
+            <button
+              type="button"
+              onClick={() => void start()}
+              disabled={connecting || (liveMode && leftToday === 0)}
+              className="btn-primary focusable ml-auto h-11 shrink-0 px-6 text-sm disabled:opacity-50 sm:ml-0"
+            >
+              {connecting ? 'Connecting…' : 'Start'}
             </button>
           )}
         </div>
@@ -324,25 +501,34 @@ export default function Realtime() {
     <aside className="no-scrollbar min-h-0 min-w-0 space-y-3 lg:overflow-y-auto">
       <section className="card relative z-10 space-y-4 p-5">
         <h2 className="text-[15px] font-semibold text-primary">Settings</h2>
-        <div className="relative z-20">
-          <LanguageSelect label="I speak" languages={languages} value={sourceLang} onChange={setSourceLang} allowAuto />
-        </div>
-        <div className="flex justify-center">
-          <button
-            type="button"
-            onClick={swapLangs}
-            disabled={sourceLang === 'auto'}
-            aria-label="Swap the two languages"
-            title={sourceLang === 'auto' ? 'Choose the language you speak to swap' : 'Swap the two languages'}
-            className="focusable -my-2 grid h-9 w-9 place-items-center rounded-full border border-subtle bg-surface text-secondary transition-colors hover:border-brand/50 hover:text-brand disabled:opacity-40"
-          >
-            <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-              <path d="M7 4v16m0 0-3-3m3 3 3-3M17 20V4m0 0-3 3m3-3 3 3" />
-            </svg>
-          </button>
-        </div>
+        {liveMode ? (
+          <p className="text-[13px] text-secondary">The language you speak is detected automatically.</p>
+        ) : (
+          <>
+            <div className="relative z-20">
+              <LanguageSelect label="I speak" languages={languages} value={sourceLang} onChange={setSourceLang} allowAuto />
+            </div>
+            <div className="flex justify-center">
+              <button
+                type="button"
+                onClick={swapLangs}
+                disabled={sourceLang === 'auto'}
+                aria-label="Swap the two languages"
+                title={sourceLang === 'auto' ? 'Choose the language you speak to swap' : 'Swap the two languages'}
+                className="focusable -my-2 grid h-9 w-9 place-items-center rounded-full border border-subtle bg-surface text-secondary transition-colors hover:border-brand/50 hover:text-brand disabled:opacity-40"
+              >
+                <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <path d="M7 4v16m0 0-3-3m3 3 3-3M17 20V4m0 0-3 3m3-3 3 3" />
+                </svg>
+              </button>
+            </div>
+          </>
+        )}
         <div className="relative z-10">
-          <LanguageSelect label="Translate into" languages={languages} value={targetLang} onChange={setTargetLang} />
+          {/* The session is locked to the language it started with. */}
+          <fieldset disabled={liveMode && (live || connecting)} className="disabled:opacity-60">
+            <LanguageSelect label="Translate into" languages={languages} value={targetLang} onChange={setTargetLang} />
+          </fieldset>
         </div>
 
         <div>
@@ -375,23 +561,39 @@ export default function Realtime() {
         </label>
       </section>
 
-      <section className="card p-5">
-        <span className="chip px-2 py-0.5 text-[12px] text-primary">In development</span>
-        <p className="mt-2.5 text-sm font-medium text-primary">Real-time dubbing is coming soon</p>
-        <p className="mt-1 text-[13px] leading-relaxed text-secondary">
-          It will be open to every plan and paid for with tokens. Live pricing will be announced at launch.
-        </p>
-        {asked ? (
-          <p className="mt-3 text-[13px] text-success" aria-live="polite">
-            ✓ You’re on the list. We’ll notify you when it’s ready.
+      {liveMode && usage ? (
+        <section className="card p-5">
+          <span className="chip px-2 py-0.5 text-[12px] text-primary">Free preview</span>
+          <p className="mt-2.5 text-sm font-medium text-primary">Live translation is free while we test it</p>
+          <p className="mt-1 text-[13px] leading-relaxed text-secondary">
+            Up to {Math.round(usage.sessionSeconds / 60)} minutes a session and {Math.round(usage.dailySeconds / 60)} minutes a
+            day. Your speech goes to Google to be translated and is not stored by us.
           </p>
+          {leftToday != null && (
+            <p className="mt-3 text-[13px] text-primary" aria-live="polite">
+              {leftToday > 0 ? `${Math.floor(leftToday / 60)} min left today` : 'You’ve used today’s minutes. Come back tomorrow.'}
+            </p>
+          )}
+        </section>
+      ) : (
+        <section className="card p-5">
+          <span className="chip px-2 py-0.5 text-[12px] text-primary">In development</span>
+          <p className="mt-2.5 text-sm font-medium text-primary">Real-time dubbing is coming soon</p>
+          <p className="mt-1 text-[13px] leading-relaxed text-secondary">
+            It will be open to every plan and paid for with tokens. Live pricing will be announced at launch.
+          </p>
+          {asked ? (
+            <p className="mt-3 text-[13px] text-success" aria-live="polite">
+              ✓ You’re on the list. We’ll notify you when it’s ready.
+            </p>
         ) : (
-          <button type="button" onClick={() => void notify()} disabled={busy} className="btn-primary focusable mt-3 h-10 w-full text-sm">
-            {busy ? 'Sending…' : 'Notify me when it’s ready'}
-          </button>
-        )}
-        {error && <p className="mt-2 text-[13px] text-danger">{error}</p>}
-      </section>
+            <button type="button" onClick={() => void notify()} disabled={busy} className="btn-primary focusable mt-3 h-10 w-full text-sm">
+              {busy ? 'Sending…' : 'Notify me when it’s ready'}
+            </button>
+          )}
+          {error && <p className="mt-2 text-[13px] text-danger">{error}</p>}
+        </section>
+      )}
     </aside>
   )
 
