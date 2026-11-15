@@ -15,16 +15,20 @@
 // and the language list is the same catalog the Studio uses. "Notify me" is a
 // real request — it goes to the staff inbox through POST /v1/feedback (kind
 // FEATURE) — and is remembered on this device.
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
-import { AnimatePresence, motion } from 'framer-motion'
+import { motion } from 'framer-motion'
 import Page from '../components/Page'
 import LanguageSelect from '../components/LanguageSelect'
 import { MicMeter, StreamPreview } from '../components/LiveMedia'
+import TourOverlay from '../components/onboarding/TourOverlay'
+import type { TourStep } from '../components/onboarding/TourOverlay'
+import { useAuth } from '../lib/auth'
 import { sendFeedback } from '../lib/feedback-api'
 import { startLive as beginLive } from '../lib/live-start'
 import { LiveTranslateSession } from '../lib/live-translate'
 import { EASE_ENTRANCE } from '../lib/motion'
+import { REALTIME_TOUR, accountKey, hasSeenTour, markTourSeen } from '../lib/onboarding'
 import { useLanguages } from '../lib/queries'
 import { getRealtimeUsage, startRealtimeSession } from '../lib/realtime-api'
 import type { RealtimeUsage } from '../lib/realtime-api'
@@ -42,6 +46,20 @@ interface LiveLine {
   said: string
 }
 
+/** One row of the split view, whichever mode produced it. */
+interface Row {
+  heard: string
+  said: string | null
+  pending: boolean
+}
+
+/** What the right pane shows while a row has no translation yet. */
+function translationPlaceholder(row: Row, targetName: string): string {
+  if (row.pending) return 'Translating…'
+  // Only the built-in sample lines carry translations in the preview.
+  return `Typed lines get no ${targetName} translation in the preview.`
+}
+
 function clock(seconds: number): string {
   const s = Math.max(0, Math.floor(seconds))
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
@@ -50,11 +68,6 @@ function clock(seconds: number): string {
 // How often a preview session moves on: a new line, or the translation of the
 // line before it.
 const TICK_MS = 1600
-
-const VOICES = [
-  { id: 'mine', label: 'My voice' },
-  { id: 'natural', label: 'Natural voice' },
-]
 
 type Visual = 'camera' | 'screen'
 
@@ -81,8 +94,6 @@ export default function Realtime() {
   const { data: languages = [] } = useLanguages()
   const [sourceLang, setSourceLang] = useState('auto')
   const [targetLang, setTargetLang] = useState('uz')
-  const [voice, setVoice] = useState('mine')
-  const [showOriginal, setShowOriginal] = useState(true)
 
   const [live, setLive] = useState(false)
   const [muted, setMuted] = useState(false)
@@ -191,6 +202,112 @@ export default function Realtime() {
   const sampleSource = sourceLang === 'auto' ? 'en' : sourceLang
   const allPlayed = lines.filter((l) => l.sample != null).length >= SAMPLE_COUNT
 
+  // ── Walkthrough ──────────────────────────────────────────────────────────
+  // The Studio's spotlight tour, pointed at this page. Real-time is new to
+  // everyone, so it opens by itself on an account's first visit here (not
+  // only for new accounts, as the Studio does) and then only from Guide.
+  const { user, ready: authReady } = useAuth()
+  const tourKey = accountKey(user?.id)
+  const [tourOpen, setTourOpen] = useState(false)
+  const [tourSeen, setTourSeen] = useState(() => hasSeenTour(REALTIME_TOUR, tourKey))
+  const closeTour = useCallback(() => {
+    setTourOpen(false)
+    markTourSeen(REALTIME_TOUR, tourKey)
+    setTourSeen(true)
+  }, [tourKey])
+  const autoStartedRef = useRef(false)
+  useEffect(() => {
+    if (!authReady || autoStartedRef.current || tourKey === 'anon') return
+    if (hasSeenTour(REALTIME_TOUR, tourKey)) return
+    autoStartedRef.current = true
+    // Wait for the entrance animation, so the spotlight measures still elements.
+    const t = window.setTimeout(() => setTourOpen(true), 650)
+    return () => window.clearTimeout(t)
+  }, [authReady, tourKey])
+
+  const tourSteps = useMemo<TourStep[]>(
+    () => [
+      {
+        id: 'welcome',
+        title: 'Welcome to real-time dubbing',
+        body: liveMode
+          ? 'Talk in your own language and the other person hears you in theirs, as you speak. It takes three steps.'
+          : 'This is a preview: sample lines show how a live conversation will look. Nothing you say is sent.',
+        note: '← → to move · Esc to leave',
+      },
+      {
+        id: 'speak',
+        target: 'rt-speak',
+        prefer: 'bottom',
+        title: 'Left · what you say',
+        body: liveMode
+          ? 'Your own words appear on this side as you talk. We work out which language you speak.'
+          : 'Your side of the conversation, in the language you speak.',
+      },
+      {
+        id: 'hear',
+        target: 'rt-hear',
+        prefer: 'bottom',
+        title: 'Right · what they hear',
+        body: `The same words in ${targetName}, lined up with yours row by row.${liveMode ? ' It is also spoken aloud.' : ''}`,
+      },
+      ...(!liveMode
+        ? [
+            {
+              id: 'source',
+              target: 'rt-source',
+              prefer: 'left' as const,
+              title: '1 · The language you speak',
+              body: 'Pick it here, or leave it on Auto-detect. The arrows swap the two languages.',
+            },
+          ]
+        : []),
+      {
+        id: 'target',
+        target: 'rt-target',
+        prefer: 'left',
+        title: `${liveMode ? '1' : '2'} · Choose their language`,
+        body: liveMode
+          ? 'Pick the language the other person should hear. It is locked once a session starts.'
+          : 'Pick the language the other person should hear.',
+      },
+      {
+        id: 'start',
+        target: 'rt-start',
+        prefer: 'top',
+        title: `${liveMode ? '2' : '3'} · Press Start`,
+        body: liveMode
+          ? 'Allow the microphone when your browser asks, then just talk. Press Stop when you are done.'
+          : 'Plays a sample conversation. You can also type your own line in the box on the left.',
+      },
+      {
+        id: 'controls',
+        target: 'rt-controls',
+        prefer: 'top',
+        title: liveMode ? '3 · Talk, mute, show' : 'Camera and screen',
+        body: 'During a session you can mute the microphone, turn on your camera or share your screen. The previews stay on your device.',
+        note: liveMode ? 'Tip: use headphones so the translation is not picked up by your microphone.' : undefined,
+      },
+      ...(liveMode
+        ? [
+            {
+              id: 'usage',
+              target: 'rt-usage',
+              prefer: 'left' as const,
+              title: 'Your free minutes',
+              body: 'It is free while we test it. This shows how long a session can run and how much is left today.',
+            },
+          ]
+        : []),
+      {
+        id: 'done',
+        title: 'That is all',
+        body: 'Short sentences with a small pause come out best. Open this guide again any time with the Guide button.',
+      },
+    ],
+    [liveMode, targetName],
+  )
+
   async function start() {
     setNotice(null)
     setLines([])
@@ -269,6 +386,12 @@ export default function Realtime() {
     })
   }
 
+  function clearConversation() {
+    setLines([])
+    setLiveLines([])
+    setNotice(null)
+  }
+
   function stop() {
     sessionRef.current?.stop()
     setLive(false)
@@ -332,92 +455,68 @@ export default function Realtime() {
     }
   }
 
-  const liveConversation = liveLines.length === 0 ? (
-    <div className="grid h-full place-items-center px-6 py-10 text-center">
-      <div>
-        <h2 className="text-[clamp(1.4rem,3vw,1.9rem)] font-medium leading-tight text-primary">
-          Speak in any language.
-          <br />
-          Hear it in {targetName}.
-        </h2>
-        <p className="mt-2 text-[15px] text-secondary">
-          {connecting ? 'Connecting…' : live ? 'Listening… start talking.' : 'Press Start and allow the microphone.'}
-        </p>
-      </div>
-    </div>
-  ) : (
-    <div className="space-y-3 p-4 sm:p-5">
-      {liveLines.map((line, i) => (
-        <motion.div
-          key={i}
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.22, ease: EASE_ENTRANCE }}
-          className="rounded-[12px] border border-subtle bg-sunken/60 px-4 py-3"
-        >
-          {showOriginal && line.heard && (
-            <>
-                  <p className="text-[12px] text-muted">Heard</p>
-                  <p dir="auto" className="text-sm text-secondary">{line.heard}</p>
-            </>
-          )}
-          <p className={`text-[12px] text-brand ${showOriginal && line.heard ? 'mt-2' : ''}`}>{targetName}</p>
-          <p dir="auto" className={`text-[15px] ${line.said ? 'font-medium text-primary' : 'text-muted'}`}>
-            {line.said || 'Translating…'}
-          </p>
-        </motion.div>
-      ))}
-    </div>
-  )
+  // Both modes come down to the same rows: what was said on the left, its
+  // translation on the right, one exchange per row so the two sides line up.
+  const rows: Row[] = liveMode
+    ? liveLines.map((l) => ({ heard: l.heard, said: l.said || null, pending: !l.said }))
+    : lines.map((l) => ({
+        heard: l.typed ?? sampleLine(l.sample ?? 0, sampleSource) ?? sampleLine(l.sample ?? 0, 'en') ?? '',
+        said: l.pending || l.sample == null ? null : sampleLine(l.sample, targetLang),
+        pending: l.pending,
+      }))
+  const speakLabel = liveMode || sourceLang === 'auto' ? 'Detected automatically' : sourceName
+  const status = connecting ? 'Connecting…' : !live ? 'Ready' : muted ? 'Muted' : 'Listening'
+  const hint = connecting
+    ? 'Connecting… this takes a second or two.'
+    : live
+      ? liveMode
+        ? 'Listening. Start talking whenever you’re ready.'
+        : 'Playing a sample conversation…'
+      : liveMode
+        ? 'Press Start, allow the microphone, then just talk.'
+        : 'Press Start to play a sample conversation, or type a line below.'
 
-  const conversation = liveMode ? liveConversation : lines.length === 0 ? (
-    <div className="grid h-full place-items-center px-6 py-10 text-center">
-      <div>
-        <h2 className="text-[clamp(1.4rem,3vw,1.9rem)] font-medium leading-tight text-primary">
-          Speak in your language.
-          <br />
-          They hear it in {targetName}.
-        </h2>
-        <p className="mt-2 text-[15px] text-secondary">
-          {live ? 'Listening…' : 'Press Start to try it.'}
-        </p>
-      </div>
-    </div>
-  ) : (
-    <div className="space-y-3 p-4 sm:p-5">
-      <AnimatePresence initial={false}>
-        {lines.map((line, i) => {
-          const source = line.typed ?? sampleLine(line.sample ?? 0, sampleSource) ?? sampleLine(line.sample ?? 0, 'en')
-          const target = line.sample == null ? null : sampleLine(line.sample, targetLang)
-          return (
-            <motion.div
-              key={i}
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.22, ease: EASE_ENTRANCE }}
-              className="rounded-[12px] border border-subtle bg-sunken/60 px-4 py-3"
-            >
-              {showOriginal && (
-                <>
-                      <p className="text-[12px] text-muted">{sourceName}</p>
-                      <p dir="auto" className="text-sm text-secondary">{source}</p>
-                </>
-              )}
-              <p className={`text-[12px] text-brand ${showOriginal ? 'mt-2' : ''}`}>{targetName}</p>
-              {line.pending ? (
-                <p className="text-[15px] text-muted">Translating…</p>
-              ) : target ? (
-                <p dir="auto" className="text-[15px] font-medium text-primary">{target}</p>
-              ) : (
-                <p className="text-[15px] text-muted">
-                  The {targetName} translation will appear here when real-time dubbing is ready.
-                </p>
-              )}
-            </motion.div>
-          )
-        })}
-      </AnimatePresence>
-      {live && allPlayed && !muted && <p className="px-1 text-[13px] text-muted">Listening…</p>}
+  const conversation = (
+    <div className="grid min-h-full grid-cols-2 divide-x divide-subtle">
+      <PaneHead title="You speak" detail={speakLabel} tour="rt-speak" />
+      <PaneHead title="They hear" detail={targetName} accent tour="rt-hear" />
+      {rows.length === 0 ? (
+        <>
+          <p className="px-4 py-6 text-[14px] text-muted sm:px-5">What you say shows up here.</p>
+          <p className="px-4 py-6 text-[14px] text-muted sm:px-5">The {targetName} translation shows up here{liveMode ? ' and is spoken aloud' : ''}.</p>
+          <div className="col-span-2 grid place-items-center border-x-0 px-6 pb-10 pt-4 text-center">
+            <div>
+              <span className={`mx-auto grid h-14 w-14 place-items-center rounded-full ${live ? 'bg-brand/15 text-brand' : 'bg-sunken text-secondary'}`}>
+                <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <rect x="9" y="2" width="6" height="12" rx="3" />
+                  <path d="M5 10a7 7 0 0 0 14 0M12 17v5" />
+                </svg>
+              </span>
+              <p className="mt-3 text-[15px] text-secondary" aria-live="polite">{hint}</p>
+            </div>
+          </div>
+        </>
+      ) : (
+        rows.map((row, i) => (
+          <motion.div
+            key={i}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.22, ease: EASE_ENTRANCE }}
+            className="col-span-2 grid grid-cols-2 divide-x divide-subtle border-b border-subtle/60"
+          >
+            <p dir="auto" className={`px-4 py-3 text-[15px] sm:px-5 ${row.heard ? 'text-secondary' : 'text-muted'}`}>
+              {row.heard || '…'}
+            </p>
+            <p dir="auto" className={`px-4 py-3 text-[15px] sm:px-5 ${row.said ? 'font-medium text-primary' : 'text-muted'}`}>
+              {row.said ?? translationPlaceholder(row, targetName)}
+            </p>
+          </motion.div>
+        ))
+      )}
+      {!liveMode && live && allPlayed && !muted && (
+        <p className="col-span-2 px-4 py-3 text-[13px] text-muted sm:px-5">Listening…</p>
+      )}
     </div>
   )
 
@@ -428,9 +527,18 @@ export default function Realtime() {
         <span className="chip px-2 py-0.5 text-[12px] text-primary">Preview</span>
         <p className="order-last min-w-0 basis-full text-[13px] text-muted sm:order-none sm:flex-1 sm:basis-0 sm:truncate">
           {liveMode
-            ? 'Preview. Translations and voices may be imperfect.'
+            ? 'Preview. Translations may be imperfect.'
             : 'Sample lines only. Nothing you say is sent.'}
         </p>
+        <span className="flex items-center gap-1.5 text-[13px] text-secondary" aria-live="polite">
+          <span aria-hidden className={`h-2 w-2 rounded-full ${live && !muted ? 'bg-success' : connecting ? 'bg-warn' : 'bg-strong'}`} />
+          {status}
+        </span>
+        {!live && !connecting && rows.length > 0 && (
+          <button type="button" onClick={clearConversation} className="focusable text-[13px] text-muted hover:text-primary">
+            Clear
+          </button>
+        )}
         {liveMode && live && secondsLeft != null && (
           <span className="font-mono text-[13px] tabular-nums text-secondary" aria-label="Time left in this session">
             {clock(secondsLeft)}
@@ -440,6 +548,20 @@ export default function Realtime() {
           <div className="ml-auto sm:ml-0">
             <MicMeter stream={micStream} muted={muted} />
           </div>
+        )}
+        {!live && !connecting && (
+          <button
+            type="button"
+            onClick={() => setTourOpen(true)}
+            title="Show the walkthrough"
+            className={`focusable ml-auto shrink-0 rounded-full border px-3.5 py-1.5 text-[13px] transition-colors sm:ml-0 ${
+              tourSeen
+                ? 'border-subtle text-secondary hover:border-strong hover:text-primary'
+                : 'border-strong bg-sunken text-primary'
+            }`}
+          >
+            Guide
+          </button>
         )}
       </div>
 
@@ -472,30 +594,33 @@ export default function Realtime() {
               />
             </form>
           )}
-          {live && (
-            <RoundButton label={muted ? 'Turn the microphone on' : 'Mute the microphone'} active={muted} onClick={() => setMuted((m) => !m)}>
-              <rect x="9" y="2" width="6" height="12" rx="3" />
-              <path d="M5 10a7 7 0 0 0 14 0M12 17v5" />
-              {muted && <path d="M3 3l18 18" />}
+          <div data-tour="rt-controls" className="flex items-center gap-2">
+            {live && (
+              <RoundButton label={muted ? 'Turn the microphone on' : 'Mute the microphone'} active={muted} onClick={() => setMuted((m) => !m)}>
+                <rect x="9" y="2" width="6" height="12" rx="3" />
+                <path d="M5 10a7 7 0 0 0 14 0M12 17v5" />
+                {muted && <path d="M3 3l18 18" />}
+              </RoundButton>
+            )}
+            <RoundButton label={visual === 'camera' ? 'Turn the camera off' : 'Turn the camera on'} active={visual === 'camera'} onClick={() => void toggleVisual('camera')}>
+              <rect x="2" y="6" width="14" height="12" rx="2" />
+              <path d="m16 10 6-3v10l-6-3" />
             </RoundButton>
-          )}
-          <RoundButton label={visual === 'camera' ? 'Turn the camera off' : 'Turn the camera on'} active={visual === 'camera'} onClick={() => void toggleVisual('camera')}>
-            <rect x="2" y="6" width="14" height="12" rx="2" />
-            <path d="m16 10 6-3v10l-6-3" />
-          </RoundButton>
-          {canShareScreen && (
-            <RoundButton label={visual === 'screen' ? 'Stop sharing your screen' : 'Share your screen'} active={visual === 'screen'} onClick={() => void toggleVisual('screen')}>
-              <rect x="2" y="4" width="20" height="13" rx="2" />
-              <path d="M8 21h8M12 17v4" />
-            </RoundButton>
-          )}
+            {canShareScreen && (
+              <RoundButton label={visual === 'screen' ? 'Stop sharing your screen' : 'Share your screen'} active={visual === 'screen'} onClick={() => void toggleVisual('screen')}>
+                <rect x="2" y="4" width="20" height="13" rx="2" />
+                <path d="M8 21h8M12 17v4" />
+              </RoundButton>
+            )}
+          </div>
           {live ? (
-            <button type="button" onClick={stop} className="focusable ml-auto h-11 shrink-0 rounded-full bg-red-600 px-6 text-sm font-medium text-white hover:opacity-90 sm:ml-0">
+            <button type="button" data-tour="rt-start" onClick={stop} className="focusable ml-auto h-11 shrink-0 rounded-full bg-red-600 px-6 text-sm font-medium text-white hover:opacity-90 sm:ml-0">
               Stop
             </button>
           ) : (
             <button
               type="button"
+              data-tour="rt-start"
               onClick={() => void start()}
               disabled={connecting || (liveMode && leftToday === 0)}
               className="btn-primary focusable ml-auto h-11 shrink-0 px-6 text-sm disabled:opacity-50 sm:ml-0"
@@ -516,7 +641,7 @@ export default function Realtime() {
           <p className="text-[13px] text-secondary">The language you speak is detected automatically.</p>
         ) : (
           <>
-            <div className="relative z-20">
+            <div data-tour="rt-source" className="relative z-20">
               <LanguageSelect label="I speak" languages={languages} value={sourceLang} onChange={setSourceLang} allowAuto />
             </div>
             <div className="flex justify-center">
@@ -535,45 +660,16 @@ export default function Realtime() {
             </div>
           </>
         )}
-        <div className="relative z-10">
+        <div data-tour="rt-target" className="relative z-10">
           {/* The session is locked to the language it started with. */}
           <fieldset disabled={liveMode && (live || connecting)} className="disabled:opacity-60">
             <LanguageSelect label="Translate into" languages={languages} value={targetLang} onChange={setTargetLang} />
           </fieldset>
         </div>
-
-        <div>
-          <p className="mb-1.5 text-xs font-medium text-muted">Voice</p>
-          <div className="flex rounded-control border border-subtle bg-sunken p-1">
-            {VOICES.map((v) => (
-              <button
-                key={v.id}
-                type="button"
-                aria-pressed={voice === v.id}
-                onClick={() => setVoice(v.id)}
-                className={`focusable flex-1 rounded-[8px] px-2 py-2 text-[13px] font-medium transition-colors ${
-                  voice === v.id ? 'bg-brand/15 text-brand shadow-[inset_0_0_0_1px_rgb(var(--c-brand-500)/0.45)]' : 'text-muted hover:text-primary'
-                }`}
-              >
-                {v.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <label className="flex cursor-pointer items-center justify-between gap-3 text-sm text-primary">
-          Show what I said
-          <input
-            type="checkbox"
-            checked={showOriginal}
-            onChange={(e) => setShowOriginal(e.target.checked)}
-            className="h-4 w-4 accent-[rgb(var(--c-brand-500))]"
-          />
-        </label>
       </section>
 
       {liveMode && usage ? (
-        <section className="card p-5">
+        <section data-tour="rt-usage" className="card p-5">
           <span className="chip px-2 py-0.5 text-[12px] text-primary">Free preview</span>
           <p className="mt-2.5 text-sm font-medium text-primary">Live translation is free while we test it</p>
           <p className="mt-1 text-[13px] leading-relaxed text-secondary">
@@ -619,6 +715,7 @@ export default function Realtime() {
     >
       {stage}
       {settings}
+      <TourOverlay steps={tourSteps} open={tourOpen} onClose={closeTour} label="Real-time dubbing walkthrough" />
     </Page>
   )
 }
@@ -651,3 +748,13 @@ function RoundButton({
     </button>
   )
 }
+
+function PaneHead({ title, detail, accent, tour }: { title: string; detail: string; accent?: boolean; tour: string }) {
+  return (
+    <div data-tour={tour} className="sticky top-0 z-10 border-b border-subtle bg-surface px-4 py-2.5 sm:px-5">
+      <p className="text-[12px] text-muted">{title}</p>
+      <p className={`truncate text-[13px] font-medium ${accent ? 'text-brand' : 'text-primary'}`}>{detail}</p>
+    </div>
+  )
+}
+

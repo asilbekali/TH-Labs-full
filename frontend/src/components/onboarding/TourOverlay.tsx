@@ -115,9 +115,12 @@ export default function TourOverlay({
   steps,
   open,
   onClose,
+  label = 'Studio walkthrough',
 }: {
   steps: TourStep[]
   open: boolean
+  /** What a screen reader announces for the dialog. */
+  label?: string
   /** Fired for finish *and* skip — both mean "do not open this again". */
   onClose: () => void
 }) {
@@ -259,7 +262,7 @@ export default function TourOverlay({
           className="fixed inset-0 z-[100]"
           role="dialog"
           aria-modal="true"
-          aria-label="Studio walkthrough"
+          aria-label={label}
         >
           {/* Dim + hole. Swallows clicks: during the tour the only controls are
               the tour's own, so a half-pressed button can't leave the user in a

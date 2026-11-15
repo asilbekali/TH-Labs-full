@@ -98,7 +98,7 @@ export const NAV_MAIN: NavItem[] = [
   { to: '/studio', label: 'Studio', icon: ICON.studio },
   { to: '/tts', label: 'Text to speech', short: 'Voice', icon: ICON.tts },
   { to: '/works', label: 'My works', icon: ICON.works },
-  { to: '/realtime', label: 'Real-time dubbing', icon: ICON.realtime, soon: true, tool: 'realtime' },
+  { to: '/realtime', label: 'Real-time dubbing', icon: ICON.realtime, tool: 'realtime' },
 ]
 
 /**

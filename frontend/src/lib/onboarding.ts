@@ -25,6 +25,7 @@ const STORAGE_KEY = 'th-labs.onboarding.v1'
 
 /** Tour ids. Bump the version suffix only to deliberately re-show a rewritten tour. */
 export const STUDIO_TOUR = 'studio.v1'
+export const REALTIME_TOUR = 'realtime.v1'
 
 /** How long after signup a handed-over session still counts as "new". */
 const FRESH_ACCOUNT_DAYS = 7

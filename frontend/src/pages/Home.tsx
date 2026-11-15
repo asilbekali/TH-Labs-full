@@ -27,8 +27,8 @@ import AnimatedNumber from '../components/AnimatedNumber'
 import FeedbackSection from '../components/FeedbackSection'
 import { readLink } from '../components/LinkInput'
 import { EASE_ENTRANCE, EASE_EXIT, rise, springLayout, stagger } from '../lib/motion'
-import { useHealth, useLanguages } from '../lib/queries'
-import { mediaUrl, pipelineDown } from '../lib/api'
+import { useLanguages } from '../lib/queries'
+import { mediaUrl } from '../lib/api'
 import { TOOL_INFO, usePlan } from '../lib/plan'
 import WorkThumb from '../components/WorkThumb'
 import { useAuth } from '../lib/auth'
@@ -65,11 +65,6 @@ export default function Home() {
   const { works } = useWorks()
 
   const languages = useLanguages()
-  const health = useHealth()
-
-  // One rule for "can a dub be started right now": the API answered AND it has
-  // pipeline stages. See pipelineDown in lib/api.ts.
-  const dubbingDown = pipelineDown(health.data, health.isError)
 
   const [query, setQuery] = useState('')
   // The composer's target. Defaults to Uzbek — the language TH-Labs is built
@@ -130,7 +125,6 @@ export default function Home() {
           languages={catalog}
           target={target}
           onTarget={setTarget}
-          disabled={dubbingDown}
         />
         <BalanceCard works={works} />
       </div>
@@ -327,13 +321,11 @@ function Composer({
   languages,
   target,
   onTarget,
-  disabled,
 }: {
   firstName?: string
   languages: Language[]
   target: string
   onTarget: (code: string) => void
-  disabled: boolean
 }) {
   const navigate = useNavigate()
   const [mode, setMode] = useState<Mode>('link')
@@ -429,12 +421,6 @@ function Composer({
         <span className="chip hidden h-8 items-center px-3 text-[13px] text-primary sm:inline-flex">
           Balanced · <span className="num mx-1">{CREDITS_PER_MINUTE_BY_QUALITY.balanced}</span> tokens / min
         </span>
-        {disabled && (
-          <span className="chip inline-flex h-8 items-center gap-2 px-3 text-[13px] text-danger">
-            <span aria-hidden className="h-2 w-2 rounded-full bg-danger" />
-            Pipeline unreachable
-          </span>
-        )}
         <button
           type="button"
           onClick={go}
