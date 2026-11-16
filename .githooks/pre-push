@@ -1,0 +1,29 @@
+#!/bin/sh
+# Blocks pushes that update or delete main or develop, force pushes included.
+# Changes reach those branches only through a pull request (CONTRIBUTING.md).
+#
+# Activated by `npm install` at the repo root, which sets core.hooksPath.
+# `git push --no-verify` skips it: this is a safety net, not a lock. The
+# branch-guard workflow is what notices a push that got past it.
+
+blocked=""
+
+# git passes one line per ref being pushed:
+#   <local ref> <local sha> <remote ref> <remote sha>
+while read -r local_ref local_sha remote_ref remote_sha; do
+  case "$remote_ref" in
+    refs/heads/main | refs/heads/develop)
+      blocked="$blocked ${remote_ref#refs/heads/}"
+      ;;
+  esac
+done
+
+if [ -n "$blocked" ]; then
+  echo "" >&2
+  echo "Blocked push to:$blocked" >&2
+  echo "Direct pushes to main/develop are not allowed. Open a pull request instead. See CONTRIBUTING.md." >&2
+  echo "" >&2
+  exit 1
+fi
+
+exit 0

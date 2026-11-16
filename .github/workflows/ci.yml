@@ -10,6 +10,10 @@ name: ci
 on:
   pull_request:
     branches: [develop, main]
+    # Docs-only changes have nothing to build or test.
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
   workflow_dispatch:
 
 concurrency:
@@ -23,6 +27,7 @@ permissions:
 jobs:
   api:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     defaults:
       run:
         working-directory: api
@@ -60,6 +65,7 @@ jobs:
 
   frontend:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     defaults:
       run:
         working-directory: frontend
@@ -83,6 +89,7 @@ jobs:
 
   backend:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     defaults:
       run:
         working-directory: backend
