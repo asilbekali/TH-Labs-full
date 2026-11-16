@@ -1,213 +1,205 @@
 <div align="center">
 
-# TH‑Labs — AI Dubbing with Voice Preservation
+<img src="docs/assets/hero.svg" alt="TH-Labs: AI dubbing that keeps the speaker's own voice" width="100%"/>
 
-**Translate any video into 30+ languages while keeping the speaker's own voice.**
+<br/>
 
-A full‑stack implementation of the RSEF 2026 cascaded **ASR → NMT → TTS‑VC → Sync**
-dubbing pipeline — an interactive landing page, a live dubbing **Studio**, and a
-**Research** page, backed by a modular FastAPI pipeline.
+![React](https://img.shields.io/badge/React-Vite-38BDF8?style=flat-square&logo=react&logoColor=white)
+![NestJS](https://img.shields.io/badge/NestJS-11-E0234E?style=flat-square&logo=nestjs&logoColor=white)
+![FastAPI](https://img.shields.io/badge/FastAPI-Python-2DD4BF?style=flat-square&logo=fastapi&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-336791?style=flat-square&logo=postgresql&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-GHCR-2496ED?style=flat-square&logo=docker&logoColor=white)
+
+**[Live site](https://th-labs.uz)** · **[Architecture](docs/ARCHITECTURE.md)** · **[Pipeline](docs/PIPELINE.md)** · **[Contributing](CONTRIBUTING.md)**
 
 </div>
 
 ---
 
-## ✨ What it is
+## What is TH-Labs?
 
-TH‑Labs turns a source video into a dubbed video in another language **without
-replacing the speaker's voice**. It follows the four‑stage cascade from the paper
-*"An Automatic AI Dubbing System for Multilingual Video Translation with Voice
-Preservation"* (Isoqov Jo'rabek & Asilbek Abdug'afforov, New Uzbekistan
-University):
+TH-Labs translates a video into **30+ languages** and keeps **the speaker's own
+voice** in the dub. You upload a video, choose a language, and get back the
+same person speaking that language, with the original music and effects kept.
 
-| Stage | Engine | What it does |
-|-------|--------|--------------|
-| **VAD** — Voice Activity Detection | **silero‑vad** | Finds real speech regions so ASR ignores music/silence |
-| **ASR** — Speech‑to‑Text | **Whisper medium** (openai‑whisper) | Transcribes only the speech, with timestamps |
-| **NMT** — Translation | **NLLB‑200 (distilled‑600M)** | Transformer translation, length‑scored to fit the original timing |
-| **TTS** — Text‑to‑Speech | **edge‑tts** (neural) | Speaks the translation in a natural per‑language voice (incl. Uzbek) |
-| **Voice cloning** | **OpenVoice v2** (→ OmniVoice on cloud) | Transfers the *source speaker's* timbre onto the edge‑tts voice — 131 MB, runs on a 6 GB GPU, reports the real measured speaker similarity |
-| **Background** — Source separation | **Demucs** | Keeps the original music/FX and removes only the original speech, so the dub is mixed *over* the background |
-| **Lip Sync** *(optional)* | **Wav2Lip** | Reshapes the speaker's mouth to the new speech |
-| **Sync & Mux** | **ffmpeg** | Time‑aligns audio to the video and muxes the final output |
+It implements the cascaded **ASR → NMT → TTS → voice clone → sync** pipeline
+from the RSEF 2026 paper *"An Automatic AI Dubbing System for Multilingual
+Video Translation with Voice Preservation"* (Isoqov Jo'rabek & Asilbek
+Abdug'afforov, New Uzbekistan University).
 
-> **Why NLLB‑200 for NMT?** The paper specifies a *Transformer‑based* NMT. NLLB‑200
-> is exactly that, is openly available, covers 200 languages (matching the
-> "multilingual" goal), and the distilled‑600M variant fits a 6 GB GPU. It's set
-> in one place (`TH_LABS_NMT_MODEL`) so you can swap in OPUS‑MT/MarianMT if you
-> prefer a lighter model.
+<img src="docs/assets/pipeline.svg" alt="Pipeline: VAD → speech to text → translate → text to speech → voice clone → sync and mux" width="100%"/>
 
 ---
 
-## 🧩 Architecture
+## What's in this repo
 
-> This section covers the Studio's own tree. For how the **whole product** fits
-> together — the landing page and account API on the VPS, the Studio on Modal,
-> the cross-origin sign-in handoff, credits and Dodo Payments, and what breaks when the
-> two halves drift apart — see **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)**.
+| Folder | What it is | Stack | Runs on |
+|---|---|---|---|
+| [`frontend/`](frontend) | The Studio web app: dubbing, text to speech, real-time translation, account, plans | React · Vite · TypeScript · Tailwind | Modal (served by the backend) |
+| [`backend/`](backend) | The dubbing pipeline: jobs, live progress, models | FastAPI · Python | Modal, L4 GPU |
+| [`api/`](api) | The account API: users, sign-in, credits, payments, admin | NestJS · Prisma · PostgreSQL | VPS, Docker |
+| [`deploy/`](deploy) | Server compose, Caddy, Modal and Docker configs | | |
+| [`docs/`](docs) | Architecture, pipeline and admin docs | | |
+| [`promo/`](promo) | Scripts that render the promo video | Python | your laptop |
 
-```
-frontend/                      React + Vite + TypeScript + Tailwind v4 + Framer Motion
-  src/
-    pages/      Landing · Studio · Research
-    components/ PipelineDiagram, MetricsShowcase, Uploader, LanguageSelect,
-                StageTimeline, VideoCompare, SegmentTable, ...
-    lib/        api.ts (fetch + SSE), types.ts
-
-backend/                       FastAPI, modular pipeline
-  app/
-    main.py         REST + SSE endpoints, /media static serving
-    jobs.py         in‑memory job store + async runner + SSE broadcast
-    schemas.py      Pydantic models
-    languages.py    32 languages (Whisper + NLLB codes)
-    pipeline/
-      orchestrator.py   runs ASR→NMT→TTS→(lip)→sync, emits live progress
-      stt.py  nmt.py  tts.py  lipsync.py  sync.py   ← one adapter per stage
-      metrics.py  media.py  samples.py
-```
-
-Each stage adapter exposes a **real** implementation and a **labelled simulation
-fallback**. Every heavy import is lazy, so the server always starts and each
-stage independently reports `real` or `simulation` at `/api/health`.
-
-### 🔬 Real inference vs. Simulation
-
-The app ships in **`auto` mode by default** (`TH_LABS_MODE`): each stage uses its
-real model when installed and a labelled simulation otherwise.
-
-| Path | Behaviour in `auto` mode |
-|------|--------------------------|
-| **Built‑in sample clip** | Carries **real English speech** (a short lecture), so it runs real Whisper + NLLB end‑to‑end — a genuine EN→UZ (or any target) demo with no upload. |
-| **Your uploaded video** | Real **Whisper (STT) + NLLB (NMT)** transcription and translation; per‑stage fallback to simulation only if a model errors. |
-| **TTS** | **edge‑tts** speaks the translation in a real per‑language neural voice (the dubbed audio you hear). **OmniVoice** clones the *source speaker's* voice when it can load (needs newer transformers); otherwise the engine chain falls back edge‑tts → tone. |
-| **Background** | **Demucs** splits the original audio into speech (removed) and music/FX (kept), so the dub is mixed *over* the background — the video is *dubbed*, not *replaced*, and the original language is inaudible. Toggle "Keep background music & effects" (on by default). Runs on CPU by default here (`TH_LABS_SEPARATION_DEVICE=cuda` on a bigger GPU). |
-| **Lip Sync (Wav2Lip)** | Simulation until a Wav2Lip checkout is configured. |
-
-Set `TH_LABS_MODE=demo` to force all‑simulation (never imports heavy libs).
-
-> ⚠️ **Python 3.14 note:** the HuggingFace `tokenizers` Rust extension segfaults
-> on 3.14, which breaks faster‑whisper and NLLB's *fast* tokenizer. This app
-> sidesteps it — **STT via openai‑whisper** (torch + tiktoken) and **NMT with the
-> slow SentencePiece tokenizer** — so real STT + NMT run on 3.14. OmniVoice TTS
-> still wants Python 3.11/3.12. On the first request the models warm in the
-> background (~30 s once); after that a 30 s clip dubs in ~15–20 s.
-
-The UI never fakes silently — a `simulation` / `live inference` badge and
-per‑stage `real`/`simulation` tags always show what actually ran. On a real
-upload with no detectable speech, the ASR stage reports **"No speech detected"**
-rather than inventing a transcript.
-
-**Long videos:** real inference runs at ~0.3–0.6× real‑time, so a 15‑minute clip
-takes several minutes. The ASR/NMT stages emit a **progress heartbeat**, the SSE
-stream sends **keepalives**, and the frontend **falls back to polling** if the
-stream drops — so long jobs show steady progress instead of appearing frozen.
-
-### 🎙️ VAD (why your real video now works)
-
-Whisper hallucinates phantom text on non‑speech audio (music, silence, intros —
-e.g. "Thanks for watching!"). **silero‑vad** runs first to isolate real speech
-regions; Whisper only transcribes those, and segments that don't overlap speech
-(or that Whisper flags as non‑speech) are dropped. If VAD finds no speech, the
-job says so honestly. Jobs also run **one at a time** — the shared Whisper model
-isn't thread‑safe, and a 6 GB GPU can't hold two runs at once.
+The Studio has **no user database of its own**. It trusts tokens minted by
+`api/`. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) explains how the pieces
+talk to each other.
 
 ---
 
-## 🚀 Running it
+## Quick start
 
-**Prerequisites:** Node 18+, Python 3.11–3.13 (3.14 works for the API but ML
-wheels may be unavailable), and `ffmpeg` on PATH.
+Choose how much of the stack you want to run on your machine. Each level adds
+to the one before it.
 
-### 1 — Backend (port 8000)
+### Level 1: just the UI (about 2 minutes)
+
+Most frontend work only needs this. The dev server sends API calls to the
+**deployed** account API and pipeline, so there's nothing else to set up.
+
+```bash
+git clone https://github.com/asilbekali/TH-Labs-full.git
+cd TH-Labs-full/frontend
+npm install
+npm run dev            # → http://localhost:5173
+```
+
+### Level 2: + the account API locally
+
+Use this for work on auth, credits, payments or admin. Docker runs the API
+together with its own PostgreSQL database.
+
+```bash
+cp .env.example .env   # in the repo root; set POSTGRES_PASSWORD and the JWT secrets
+docker compose up --build                            # → http://localhost:3000/v1
+# in another terminal:
+cd frontend && ACCOUNT_API_PROXY=http://localhost:3000 npm run dev
+```
+
+Swagger docs are served at `http://localhost:3000/docs`.
+
+### Level 3: + the dubbing pipeline locally
+
+Use this for work on the pipeline itself. The core install is light. Every
+model is optional, and each stage falls back to a labelled *simulation*
+when its model isn't installed.
 
 ```bash
 cd backend
-python -m pip install -r requirements.txt        # core API only (lightweight)
-python run.py                                     # → http://localhost:8000
+python -m pip install -r requirements.txt
+python run.py                                        # → http://localhost:8000
+# in another terminal:
+cd frontend && DUB_API_PROXY=http://localhost:8000 npm run dev
 ```
 
-### 2 — Frontend (port 5173)
+To switch on real Whisper, NLLB, voice cloning and the other models, see
+[docs/PIPELINE.md](docs/PIPELINE.md).
+
+<details>
+<summary><b>Prerequisites</b></summary>
+
+| Tool | Version | Needed for |
+|---|---|---|
+| Node.js | 22 (what CI and the Docker image use) | `frontend/`, `api/` |
+| Yarn | 1.x | `api/` (it has a `yarn.lock`) |
+| Python | 3.11 – 3.13 | `backend/` |
+| Docker | any recent | Level 2 |
+| ffmpeg | on `PATH` | `backend/` with real models |
+
+</details>
+
+---
+
+## Everyday commands
+
+| | `frontend/` (npm) | `api/` (yarn) | `backend/` (python) |
+|---|---|---|---|
+| **Run** | `npm run dev` | `yarn start:dev` | `python run.py` |
+| **Lint** | `npm run lint` | `yarn lint` (auto-fixes) | — |
+| **Test** | — | `yarn test` | `python -m pytest tests` |
+| **Build** | `npm run build` | `yarn build` | — |
+
+CI runs these on every pull request ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)).
+Run them locally first so your PR comes up green.
+
+---
+
+## How we work with Git
+
+```mermaid
+gitGraph
+  commit id: "v1.0" tag: "v1.0"
+  branch develop
+  checkout develop
+  commit id: "staging"
+  branch "jorabek/upload"
+  checkout "jorabek/upload"
+  commit id: "feature work"
+  checkout develop
+  merge "jorabek/upload" id: "PR + review + CI"
+  checkout main
+  merge develop id: "Release PR" tag: "v1.1"
+```
+
+| Branch | Purpose | Rule |
+|---|---|---|
+| `main` | **Production.** Every release on it is tagged `vX.Y.Z`. | Changes only through a Release PR or a `hotfix/*` PR |
+| `develop` | **Staging.** Where all work lands first. | Changes only through PRs |
+| `<you>/<task>`, e.g. `jorabek/upload` | One task's work | Branch from `develop`, PR back into `develop` |
+| `<you>`, e.g. `asilbek` | A personal work branch (instead of `<you>/<task>`, not as well as) | Same as above; see [CONTRIBUTING.md](CONTRIBUTING.md#branches) |
+| `hotfix/<task>` | Urgent production fix | Branch from `main`, PR into `main`, then into `develop` |
+
+Your first contribution:
 
 ```bash
-cd frontend
-npm install
-npm run dev                                       # → http://localhost:5173
+git switch develop && git pull --ff-only
+git switch -c yourname/short-task-name
+# ...make changes, commit...
+git push -u origin yourname/short-task-name
+gh pr create --base develop --fill
 ```
 
-Open **http://localhost:5173**. The Vite dev server proxies `/api` and `/media`
-to the backend, so no CORS setup is needed.
+Releases, hotfixes and rollbacks are covered step by step in **[CONTRIBUTING.md](CONTRIBUTING.md)**.
 
 ---
 
-## ⚙️ Enabling real models
+## Project rules
 
-Everything is opt‑in via env vars (`backend/.env`, see `.env.example`):
-
-```bash
-# STT — real Whisper medium (openai-whisper: torch + tiktoken, 3.14-safe)
-pip install openai-whisper
-
-# NMT — real NLLB-200 (downloads ~2.4 GB on first run)
-pip install "transformers>=4.40" torch sentencepiece
-
-# TTS — real OmniVoice zero-shot voice cloning
-pip install omnivoice soundfile         # needs transformers with HiggsAudioV2TokenizerModel
-TH_LABS_OMNIVOICE_MODEL=k2-fsa/OmniVoice
-
-# Lip Sync — real Wav2Lip
-TH_LABS_WAV2LIP_DIR=/path/to/Wav2Lip     # with checkpoints/wav2lip_gan.pth
-
-# Force behaviour:  auto (default) | demo (all simulation) | real (require models)
-TH_LABS_MODE=auto
-```
-
-Wiring points for OmniVoice and Wav2Lip live in `app/pipeline/tts.py` and
-`app/pipeline/lipsync.py` — thin, documented integration functions.
+1. **Never push directly to `main` or `develop`.** Every change goes through a pull request.
+2. **One approval and green CI** before anything is merged. You can't approve your own PR.
+3. **Never `git push --force`** to `main` or `develop`. On your own branch, use `--force-with-lease`.
+4. **Keep each PR to one task.** Small PRs get reviewed quickly; big ones sit for days.
+5. **Never commit secrets.** `.env` files stay local. Add new variables to the matching `.env.example` with a comment.
+6. **Fill in the PR template:** what changed, why, how you tested it, and screenshots for any UI change.
+7. **Database changes go through Prisma migrations** in `api/prisma/migrations`. Never edit the production database by hand.
+8. **Be honest in the UI.** If a stage ran as a simulation, the Studio says so. Keep it that way.
+9. **Voice cloning needs consent.** Only re-voice people who agreed to it, and label AI-dubbed output.
 
 ---
 
-## 📡 API
+## Documentation
 
-Two services answer here, and the UI talks to both.
-
-**Account API** — NestJS, `https://th-labs.uz`, Swagger UI at `/docs`. Up
-whenever the site is.
-
-| Method | Endpoint | Purpose |
-|--------|----------|---------|
-| `GET`  | `/v1/health` | API + database status, and the pipeline's per‑stage engines (probed server‑side) |
-| `GET`  | `/v1/languages` | Supported languages (32) |
-| `GET`  | `/v1/languages/{code}` | One language |
-| `GET`  | `/docs` | Interactive OpenAPI docs (a **page**, not the API base — routes live under `/v1`) |
-
-**Dubbing pipeline** — FastAPI, on the GPU box. Frequently asleep; nothing but
-dubbing depends on it.
-
-| Method | Endpoint | Purpose |
-|--------|----------|---------|
-| `POST` | `/api/jobs` | Create a dubbing job (multipart upload or `sample=true`) |
-| `GET`  | `/api/jobs/{id}` | Job snapshot |
-| `GET`  | `/api/jobs/{id}/events` | **SSE** live pipeline progress |
-| `GET`  | `/media/...` | Source & dubbed media |
-| `GET`  | `/api/health`, `/api/languages` | Still served, but the UI reads the account API's copies instead — a sleeping GPU box used to take the language picker and status strip down with it |
+| Doc | Read it when |
+|---|---|
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | You need the big picture: hosts, sign-in handoff, credits, payments |
+| [docs/PIPELINE.md](docs/PIPELINE.md) | You work on the dubbing stages, models, or the pipeline API |
+| [docs/ADMIN_PANEL_BRIEF.md](docs/ADMIN_PANEL_BRIEF.md) | You work on the admin panel |
+| [deploy/server/README.md](deploy/server/README.md) | You deploy or operate the VPS |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | You open a PR, cut a release, ship a hotfix, or roll back |
 
 ---
 
-## 📊 Evaluation (from the RSEF 2026 study)
+## Results (RSEF 2026 study)
 
-`11% WER · BLEU 38.7 / COMET 0.86 · MOS 3.5/5 · 87.3% speaker similarity · 41 ms sync offset`
-— the sync offset sits inside the ITU‑R BT.1359‑1 imperceptibility threshold.
+| WER | BLEU | COMET | MOS | Speaker similarity | Sync offset |
+|---|---|---|---|---|---|
+| 11% | 38.7 | 0.86 | 3.5 / 5 | 87.3% | 41 ms |
 
----
-
-## 🔐 Ethics
-
-Voice cloning here is intended to re‑voice a speaker's **own** words for their
-**own** video. Any third‑party use should carry explicit speaker consent and
-clear "AI‑dubbed" labeling.
+The 41 ms sync offset is within the ITU-R BT.1359-1 imperceptibility threshold.
 
 ---
 
 <div align="center">
-<sub>Built for research & authorized use · New Uzbekistan University · RSEF 2026</sub>
+<sub>Built at New Uzbekistan University · RSEF 2026 · For research and authorized use only</sub>
 </div>
