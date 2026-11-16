@@ -1,5 +1,5 @@
 <!--
-Feature PRs target `develop`. Only a Release PR (develop → main) or a
+Feature PRs target `develop`. Only a Release PR (release/vX.Y.0 → main) or a
 hotfix/<task> PR targets `main`. See CONTRIBUTING.md.
 -->
 
