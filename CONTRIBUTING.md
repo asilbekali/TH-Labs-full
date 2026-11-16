@@ -6,30 +6,20 @@ There are exactly two long-lived branches:
 
 | Branch    | What it is | Who writes to it |
 |-----------|------------|------------------|
-| `main`    | Production. Every release on it is tagged `vX.Y.Z`. | Release PRs from `develop`, and `hotfix/*` PRs |
-| `develop` | Staging. All feature work lands here first. | Feature PRs |
+| `main`    | Production. Every release on it is tagged `vX.Y.Z`. | Release PRs (`release/*`, cut from `develop`), and `hotfix/*` PRs |
+| `develop` | Staging. All feature work lands here first. | Feature PRs, and `main` back-merges after a hotfix |
 
 Everything else is short-lived and is deleted automatically when its PR merges:
 
 | Pattern              | Example              | Branches from | Merges into |
 |----------------------|----------------------|---------------|-------------|
 | `<developer>/<task>` | `asilbek/lip-sync`   | `develop`     | `develop` |
-| `hotfix/<task>`      | `hotfix/crash`       | `main`        | `main`, then `develop` |
+| `release/vX.Y.0`     | `release/v1.1.0`     | `develop`     | `main` |
+| `hotfix/<task>`      | `hotfix/crash`       | `main`        | `main`, then `main` → `develop` |
 
-A developer can instead work on one personal branch named after themselves
-(e.g. `asilbek`), branched from and merged into `develop` like any other. Pick
-one style per person: Git can't have `asilbek` and `asilbek/lip-sync` at the
-same time, because a branch name is stored as a file path.
-
-GitHub deletes the personal branch on merge too. Start the next piece of work
-fresh from `develop`:
-
-```bash
-git switch asilbek
-git fetch origin
-git reset --hard origin/develop   # only once your last PR is merged
-git push -u origin asilbek
-```
+Always name a branch `<you>/<task>`, never just `<you>`. Git can't have
+`asilbek` and `asilbek/lip-sync` at the same time, because a branch name is
+stored as a file path.
 
 ```mermaid
 gitGraph
@@ -56,28 +46,68 @@ gitGraph
   checkout main
   merge "hotfix/crash" id: "hotfix PR" tag: "v1.1.1"
   checkout develop
-  merge "hotfix/crash" id: "back-merge"
+  merge main id: "back-merge"
 ```
+
+The diagram draws the Release PR straight from `develop`. In practice it comes
+from a `release/vX.Y.0` branch holding the same commits; see
+[Releasing](#releasing-develop--main) for why.
 
 ## Rules
 
-These are conventions, not settings. The repository is private on the free
-plan, where GitHub doesn't enforce branch protection, so everyone keeps to them:
-
 - Never push directly to `main` or `develop`. Everything goes through a PR.
-- Every PR needs **1 approval** from someone other than the author, and **green CI**.
-- Never `git push --force` to `main` or `develop`.
-- Never delete `main` or `develop`.
+- Every PR needs **1 approval** from another developer and **green CI**.
+- **No self-merge.** The reviewer, not the author, presses Merge.
+- PRs into `main` come only from `release/*` or `hotfix/*`. The only PR into
+  `develop` from `main` is a back-merge after a hotfix.
+- Never open a PR with `develop` itself as the source branch. GitHub deletes a
+  PR's source branch when it merges, and on the free plan nothing protects
+  `develop` from that.
+- Never `git push --force` to `main` or `develop`, and never delete them.
+- **Only Asilbek creates release tags** (`v*`) and GitHub releases.
 
 CI (`.github/workflows/ci.yml`) runs lint, tests, type-check and build for
-`api/`, `frontend/` and `backend/` on every PR into `develop` or `main`.
+`api/`, `frontend/` and `backend/` on every PR into `develop` or `main`. PRs
+that only touch Markdown or `docs/` skip it.
+
+## Why we follow these rules without GitHub branch protection
+
+This repository is private on GitHub's free plan, where branch protection,
+required reviews, required status checks and rulesets don't exist. GitHub won't
+stop a bad push, so three things stand in for it:
+
+1. **A local pre-push hook** (`.githooks/pre-push`). It refuses any push that
+   updates, force-pushes or deletes `main` or `develop`, and tells you to open a
+   PR. `npm install` at the repo root switches it on. It runs on your own
+   computer and `--no-verify` skips it, so it's a safety net against mistakes,
+   not a lock.
+2. **A server-side alert** (`.github/workflows/branch-guard.yml`). Every push to
+   `main` or `develop` is checked against GitHub's record of merged PRs. A
+   commit that didn't come from one fails the run and opens an issue titled
+   "Direct push to <branch> without PR" that mentions the pusher. A `v*` tag
+   pushed by anyone but Asilbek opens an issue too. It never reverts anything:
+   it makes the push visible so the team can deal with it.
+3. **Team rules** (above, and the checklist in every PR). One approval, green
+   CI, no self-merge, the right base branch. These are kept by agreement.
+
+## First-time setup
+
+```bash
+git clone https://github.com/asilbekali/TH-Labs-full.git
+cd TH-Labs-full
+npm install        # at the repo root: turns on the pre-push hook
+```
+
+The root `package.json` has no dependencies. Its `prepare` script only runs
+`git config core.hooksPath .githooks`. Each app still installs its own
+dependencies in `api/`, `frontend/` and `backend/`, as the README describes.
 
 ## Versioning
 
 Tags follow `vMAJOR.MINOR.PATCH`.
 
 - **PATCH** (`v1.1.1`): only `hotfix/*` releases.
-- **MINOR** (`v1.2.0`): every Release PR from `develop`, even one that only has fixes.
+- **MINOR** (`v1.2.0`): every release from `develop`, even one that only has fixes.
 - **MAJOR** (`v2.0.0`): a breaking change for callers of the account API or the
   pipeline API, such as a removed endpoint or a changed response shape.
 
@@ -105,8 +135,9 @@ git push --force-with-lease        # fine on your own branch, never on main/deve
 gh pr create --base develop --fill
 ```
 
-Fill in the template, get one approval and green CI, then merge on GitHub. The
-branch is deleted on GitHub automatically. Clean up locally:
+Fill in the template and its checklist, then ask a teammate to review. Once it
+has their approval and green CI, the reviewer merges it on GitHub. The branch
+is deleted on GitHub automatically. Clean up locally:
 
 ```bash
 git switch develop
@@ -117,9 +148,19 @@ git fetch --prune
 
 ## Releasing (develop → main)
 
+Asilbek only. Cut a release branch from `develop` and open the Release PR from
+it. It holds exactly what `develop` holds, and it is what GitHub deletes on
+merge, so `develop` survives:
+
 ```bash
-gh pr create --base main --head develop --title "Release v1.1.0" --fill
+git switch develop
+git pull --ff-only
+git switch -c release/v1.1.0
+git push -u origin release/v1.1.0
+gh pr create --base main --head release/v1.1.0 --title "Release v1.1.0" --fill
 ```
+
+Anything merged into `develop` after the cut waits for the next release.
 
 After the Release PR is approved and merged, tag the merge commit on `main`:
 
@@ -142,7 +183,7 @@ git push -u origin hotfix/crash
 gh pr create --base main --title "Hotfix: crash" --fill
 ```
 
-After it merges, tag the patch release and bring the fix back into `develop`:
+After it merges, Asilbek tags the patch release:
 
 ```bash
 git switch main
@@ -150,17 +191,26 @@ git pull --ff-only
 git tag -a v1.1.1 -m "v1.1.1"
 git push origin v1.1.1
 gh release create v1.1.1 --verify-tag --generate-notes
+```
 
+The same day, bring the fix back into `develop` with a PR from `main`. GitHub
+never deletes the default branch, so `main` is safe as a PR source:
+
+```bash
+gh pr create --base develop --head main --title "Back-merge v1.1.1 into develop" --fill
+```
+
+If `main` and `develop` conflict, resolve it on a branch instead, never on
+`develop` itself:
+
+```bash
 git switch develop
 git pull --ff-only
 git switch -c asilbek/backmerge-v1.1.1
-git merge main
+git merge origin/main              # resolve the conflicts, commit
 git push -u origin asilbek/backmerge-v1.1.1
 gh pr create --base develop --title "Back-merge v1.1.1 into develop" --fill
 ```
-
-The back-merge goes through a PR like everything else. If `main` and `develop`
-conflict, resolve the conflict on that branch, not on `develop`.
 
 ## Rolling back
 

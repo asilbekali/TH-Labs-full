@@ -1,0 +1,8 @@
+{
+  "name": "th-labs-full",
+  "private": true,
+  "description": "Repo tooling only. The apps have their own package.json in api/ and frontend/.",
+  "scripts": {
+    "prepare": "git config core.hooksPath .githooks"
+  }
+}
