@@ -1,6 +1,7 @@
 <!--
-Feature PRs target `develop`. Only a Release PR (release/vX.Y.0 → main) or a
-hotfix/<task> PR targets `main`. See CONTRIBUTING.md.
+Feature PRs target `develop`. Only a Release PR (release/vX.Y.0 → main), a
+hotfix/<task> PR into `main`, or a main → develop back-merge break that rule.
+See CONTRIBUTING.md.
 -->
 
 ## What changed
@@ -15,9 +16,13 @@ hotfix/<task> PR targets `main`. See CONTRIBUTING.md.
 
 <!-- What you ran or clicked through, and on which app (api, frontend, backend). -->
 
-- [ ] CI is green
-- [ ] Tried it locally
-
 ## Screenshots
 
 <!-- For any UI change: before and after. Delete this section otherwise. -->
+
+## Checklist
+
+- [ ] Base branch is correct (`develop` for features; `main` only for `release/*` and `hotfix/*`)
+- [ ] CI is green
+- [ ] One approval received from another developer (no self-merge)
+- [ ] No secrets in code (keys, tokens, passwords, `.env` values)

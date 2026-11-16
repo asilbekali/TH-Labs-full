@@ -1,0 +1,72 @@
+# Raises the alarm when main or develop changes without a pull request, or a
+# release tag is pushed by someone other than the release owner.
+#
+# The free plan has no branch protection for private repositories, so nothing
+# can stop such a push. This makes it visible instead: the run fails and an
+# issue mentioning the pusher is opened. It only reads and reports. It never
+# reverts or changes code.
+
+name: branch guard
+
+on:
+  push:
+    branches: [main, develop]
+    tags: ["v*"]
+
+permissions:
+  contents: read
+  pull-requests: read
+  issues: write
+
+jobs:
+  guard:
+    # A deleted branch has no commit to check.
+    if: ${{ !github.event.deleted }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - name: Check how this push happened
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+          ACTOR: ${{ github.actor }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          # The only person who creates release tags (CONTRIBUTING.md).
+          RELEASER: asilbekali
+        run: |
+          set -euo pipefail
+
+          if [ "$REF_TYPE" = "tag" ]; then
+            if [ "$ACTOR" = "$RELEASER" ]; then
+              echo "Release tag $REF_NAME pushed by $ACTOR."
+              exit 0
+            fi
+            title="Release tag $REF_NAME pushed by @$ACTOR"
+            body="@$ACTOR pushed the release tag \`$REF_NAME\` (commit $SHA). Only @$RELEASER creates release tags. See CONTRIBUTING.md."
+          else
+            # A merged PR's commit is linked to it. The link can lag the merge
+            # by a few seconds, so ask more than once before calling it direct.
+            merged=0
+            for attempt in 1 2 3; do
+              merged=$(gh api "repos/$REPO/commits/$SHA/pulls" \
+                --jq '[.[] | select(.merged_at != null)] | length')
+              [ "$merged" -gt 0 ] && break
+              sleep 5
+            done
+            if [ "$merged" -gt 0 ]; then
+              echo "$SHA on $REF_NAME came from a merged pull request."
+              exit 0
+            fi
+            title="Direct push to $REF_NAME without PR"
+            body="@$ACTOR pushed commit $SHA straight to \`$REF_NAME\` without a merged pull request. Nothing was reverted. Please check the change and open a PR for anything that needs review. See CONTRIBUTING.md."
+          fi
+
+          gh issue create --repo "$REPO" --title "$title" \
+            --body "$body
+
+          Run: $RUN_URL"
+          echo "::error::$title"
+          exit 1
