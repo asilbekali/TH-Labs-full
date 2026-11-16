@@ -6,7 +6,7 @@ There are exactly two long-lived branches:
 
 | Branch    | What it is | Who writes to it |
 |-----------|------------|------------------|
-| `main`    | Production. Every release on it is tagged `vX.Y.Z`. | Release PRs from `develop`, and `hotfix/*` PRs |
+| `main`    | Production. Every release on it is tagged `vX.Y.Z`. | Release PRs (`release/*`, cut from `develop`), and `hotfix/*` PRs |
 | `develop` | Staging. All feature work lands here first. | Feature PRs |
 
 Everything else is short-lived and is deleted automatically when its PR merges:
@@ -14,6 +14,7 @@ Everything else is short-lived and is deleted automatically when its PR merges:
 | Pattern              | Example              | Branches from | Merges into |
 |----------------------|----------------------|---------------|-------------|
 | `<developer>/<task>` | `asilbek/lip-sync`   | `develop`     | `develop` |
+| `release/vX.Y.0`     | `release/v1.1.0`     | `develop`     | `main` |
 | `hotfix/<task>`      | `hotfix/crash`       | `main`        | `main`, then `develop` |
 
 A developer can instead work on one personal branch named after themselves
@@ -68,6 +69,9 @@ plan, where GitHub doesn't enforce branch protection, so everyone keeps to them:
 - Every PR needs **1 approval** from someone other than the author, and **green CI**.
 - Never `git push --force` to `main` or `develop`.
 - Never delete `main` or `develop`.
+- Never open a PR with `develop` itself as the source branch. GitHub deletes a
+  PR's source branch when it merges, and on the free plan nothing protects
+  `develop` from that. Releases go through a `release/*` branch instead.
 
 CI (`.github/workflows/ci.yml`) runs lint, tests, type-check and build for
 `api/`, `frontend/` and `backend/` on every PR into `develop` or `main`.
@@ -117,9 +121,19 @@ git fetch --prune
 
 ## Releasing (develop → main)
 
+Cut a release branch from `develop` and open the Release PR from it. It holds
+exactly what `develop` holds, and it is what GitHub deletes on merge, so
+`develop` survives:
+
 ```bash
-gh pr create --base main --head develop --title "Release v1.1.0" --fill
+git switch develop
+git pull --ff-only
+git switch -c release/v1.1.0
+git push -u origin release/v1.1.0
+gh pr create --base main --head release/v1.1.0 --title "Release v1.1.0" --fill
 ```
+
+Anything merged into `develop` after the cut waits for the next release.
 
 After the Release PR is approved and merged, tag the merge commit on `main`:
 
