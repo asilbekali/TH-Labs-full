@@ -78,6 +78,7 @@ import {
   usePlans,
 } from "../lib/queries";
 import { useWorks } from "../lib/works";
+import { setPresenceActivity } from "../lib/presence";
 
 const QUALITIES = [
   { key: "fast", label: "Fast" },
@@ -396,6 +397,27 @@ export default function Studio() {
       (active.reduce((a, s) => a + s.progress, 0) / active.length) * 100,
     );
   }, [job]);
+
+  // Tell the admin panel's Agent City what this person is doing in the Studio
+  // — the line under their name on the office TV. See lib/presence.ts.
+  // Progress is rounded to tens: every change of this text sends a beat, and a
+  // running dub reports progress far more often than the TV needs to know.
+  const activity = useMemo(() => {
+    const code = job?.options.target_lang ?? targetLang;
+    const lang = languages.find((l) => l.code === code)?.name ?? code;
+    const raw = job?.filename ?? file?.name;
+    const name = raw && raw.length > 60 ? `${raw.slice(0, 57)}…` : raw;
+    const what = name ?? "a video";
+    if (running) {
+      return `Dubbing ${what} into ${lang} (${Math.floor(overall / 10) * 10}%)`;
+    }
+    if (completed) return `Finished dubbing ${what} into ${lang}`;
+    if (failed) return `Dub of ${what} failed`;
+    if (file) return `Getting ${what} ready to dub into ${lang}`;
+    return null;
+  }, [job, file, targetLang, languages, running, completed, failed, overall]);
+  useEffect(() => setPresenceActivity(activity), [activity]);
+  useEffect(() => () => setPresenceActivity(null), []);
 
   // Mirror the live job into the works library. The record is created the
   // moment the job is (see start()), so a run that is still processing shows up
