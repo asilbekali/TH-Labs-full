@@ -10,6 +10,7 @@ import SignIn from '../../pages/SignIn'
 import { useIsDesktop, useMediaQuery } from '../../hooks/useMediaQuery'
 import { useAuth } from '../../lib/auth'
 import { leaveToLanding, LOCAL_AUTH } from '../../lib/landing'
+import { usePresenceBeacon } from '../../lib/presence'
 
 // Routes that render as their own workbench on desktop: they own two or three
 // internally-scrolling regions, so they take the content area raw instead of
@@ -90,6 +91,9 @@ export default function AppShell({ children }: { children: ReactNode }) {
 
   // Close the mobile drawer whenever the route changes.
   useEffect(() => setDrawer(false), [pathname])
+
+  // Puts this tab on the admin panel's Agent City — see lib/presence.ts.
+  usePresenceBeacon(pathname, ready && !!user)
 
   // ── The door ──────────────────────────────────────────────────────────────
   // `ready` is load-bearing. The session is restored asynchronously (a handoff

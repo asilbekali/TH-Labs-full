@@ -575,3 +575,25 @@ model RealtimeSession {
 
   @@index([userId, createdAt])
 }
+
+/// One row per browser per UTC day, written by POST /v1/presence when a page
+/// is opened — what the admin panel's Agent City counts as "visitors". The
+/// visitorId is a random value the browser keeps in localStorage; it names a
+/// browser, not a person, unless that browser is signed in.
+model SiteVisit {
+  id        String  @id @default(cuid())
+  visitorId String
+  /// "YYYY-MM-DD", UTC. Part of the unique key, so a returning browser bumps
+  /// its row instead of adding one.
+  day       String
+  /// "landing" (th-labs.uz) or "app" (the signed-in Studio).
+  site      String
+  userId    Int?
+  pageviews Int     @default(1)
+
+  firstSeen DateTime @default(now())
+  lastSeen  DateTime @default(now()) @updatedAt
+
+  @@unique([visitorId, day, site])
+  @@index([lastSeen])
+}

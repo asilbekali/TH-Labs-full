@@ -10,6 +10,7 @@ import { LoggerModule } from './common/logger/logger.module';
 import { MailModule } from './mail/mail.module';
 import { UsersModule } from './users/users.module';
 import { AuthModule } from './auth/auth.module';
+import { PresenceModule } from './presence/presence.module';
 import { AdminModule } from './admin/admin.module';
 import { AdminMailModule } from './admin-mail/admin-mail.module';
 import { CommunityModule } from './community/community.module';
@@ -45,6 +46,8 @@ import { RealtimeModule } from './realtime/realtime.module';
     // Same reason as AuditModule: `/admin/mail` must register before
     // AdminController's `/admin/:id`.
     AdminMailModule,
+    // Same reason again: `/admin/city` must register before `/admin/:id`.
+    PresenceModule,
     AdminModule,
     CommunityModule,
     FeedbackModule,
