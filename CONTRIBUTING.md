@@ -9,6 +9,9 @@ There are exactly two long-lived branches:
 | `main`    | Production. Every release on it is tagged `vX.Y.Z`. | Release PRs (`release/*`, cut from `develop`), and `hotfix/*` PRs |
 | `develop` | Staging. All feature work lands here first. | Feature PRs, and `main` back-merges after a hotfix |
 
+Both are permanent. A GitHub ruleset ("Keep main and develop") refuses to
+delete or force-push them, for everyone, including GitHub's own auto-delete.
+
 Everything else is short-lived and is deleted automatically when its PR merges:
 
 | Pattern              | Example              | Branches from | Merges into |
@@ -60,21 +63,21 @@ from a `release/vX.Y.0` branch holding the same commits; see
 - **No self-merge.** The reviewer, not the author, presses Merge.
 - PRs into `main` come only from `release/*` or `hotfix/*`. The only PR into
   `develop` from `main` is a back-merge after a hotfix.
-- Never open a PR with `develop` itself as the source branch. GitHub deletes a
-  PR's source branch when it merges, and on the free plan nothing protects
-  `develop` from that.
+- Release PRs come from a `release/vX.Y.0` branch, not from `develop` itself,
+  so `develop` can keep taking features while a release is reviewed.
 - Never `git push --force` to `main` or `develop`, and never delete them.
+  GitHub refuses both.
 - **Only Asilbek creates release tags** (`v*`) and GitHub releases.
 
 CI (`.github/workflows/ci.yml`) runs lint, tests, type-check and build for
 `api/`, `frontend/` and `backend/` on every PR into `develop` or `main`. PRs
 that only touch Markdown or `docs/` skip it.
 
-## Why we follow these rules without GitHub branch protection
+## What protects main and develop
 
-This repository is private on GitHub's free plan, where branch protection,
-required reviews, required status checks and rulesets don't exist. GitHub won't
-stop a bad push, so three things stand in for it:
+The repository is public, so GitHub's free plan allows rulesets. One ruleset,
+"Keep main and develop", blocks deleting and force-pushing both branches. It
+doesn't require PRs, approvals or green CI, so three more things cover that:
 
 1. **A local pre-push hook** (`.githooks/pre-push`). It refuses any push that
    updates, force-pushes or deletes `main` or `develop`, and tells you to open a
@@ -149,8 +152,9 @@ git fetch --prune
 ## Releasing (develop → main)
 
 Asilbek only. Cut a release branch from `develop` and open the Release PR from
-it. It holds exactly what `develop` holds, and it is what GitHub deletes on
-merge, so `develop` survives:
+it. It freezes exactly what `develop` holds at that moment, so features merged
+while the release is reviewed don't sneak into it. GitHub deletes the release
+branch on merge, and `develop` stays:
 
 ```bash
 git switch develop

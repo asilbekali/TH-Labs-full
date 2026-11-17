@@ -1,10 +1,10 @@
 # Raises the alarm when main or develop changes without a pull request, or a
 # release tag is pushed by someone other than the release owner.
 #
-# The free plan has no branch protection for private repositories, so nothing
-# can stop such a push. This makes it visible instead: the run fails and an
-# issue mentioning the pusher is opened. It only reads and reports. It never
-# reverts or changes code.
+# The "Keep main and develop" ruleset only blocks deleting and force-pushing
+# those branches; a plain push without a PR still goes through. This makes it
+# visible instead: the run fails and an issue mentioning the pusher is opened.
+# It only reads and reports. It never reverts or changes code.
 
 name: branch guard
 
