@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "TH-Labs Real-Time Dubbing",
+  "short_name": "TH-Labs Dub",
+  "description": "Hear any call, meeting or livestream in your own language, in real time.",
+  "version": "0.1.0",
+  "minimum_chrome_version": "116",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "action": {
+    "default_title": "TH-Labs Real-Time Dubbing",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "permissions": ["tabCapture", "offscreen", "storage", "activeTab"],
+  "host_permissions": ["https://th-labs.uz/*"]
+}
