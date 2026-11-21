@@ -1,11 +1,10 @@
 // One dubbing session in the offscreen document.
 //
-//   tab stream ─┬─▶ originalGain (user's volume) ─────────────▶ speakers
-//               └─▶ pcm16k-encoder worklet ─▶ 100 ms base64 ─▶ active socket
-//   any socket ─▶ 24 kHz chunks scheduled back to back ─▶ dubGain ─▶ speakers
+//   tab stream ──▶ pcm16k-encoder worklet ─▶ 100 ms base64 ─▶ active socket
+//   any socket ─▶ 24 kHz chunks scheduled back to back ─▶ speakers
 //
-// Capturing a tab mutes it for the user, which is why the original is routed
-// to the speakers again at a low volume.
+// Capturing a tab mutes it for the user, and the original is deliberately
+// never routed back: the listener hears only the dubbed voice.
 //
 // Gemini sessions are capped (5 min by default) and each token opens one
 // socket. So a session is a chain of sockets: shortly before the cap, the next
@@ -36,7 +35,6 @@ const OUT_OF_TIME = "You've used today's live dubbing time. It resets at midnigh
 export class DubSession {
   private ctx: AudioContext | null = null
   private stream: MediaStream | null = null
-  private originalGain: GainNode | null = null
   private encoder: AudioWorkletNode | null = null
   private nextStart = 0
 
@@ -51,12 +49,10 @@ export class DubSession {
   private readonly streamId: string
   private readonly language: string
   private readonly events: SessionEvents
-  private volume: number
 
-  constructor(streamId: string, language: string, volume: number, events: SessionEvents) {
+  constructor(streamId: string, language: string, events: SessionEvents) {
     this.streamId = streamId
     this.language = language
-    this.volume = volume
     this.events = events
   }
 
@@ -72,10 +68,6 @@ export class DubSession {
       if (this.stopped) return
 
       const source = ctx.createMediaStreamSource(this.stream)
-      this.originalGain = ctx.createGain()
-      this.originalGain.gain.value = this.volume
-      source.connect(this.originalGain).connect(ctx.destination)
-
       this.encoder = new AudioWorkletNode(ctx, 'pcm16k-encoder')
       this.encoder.port.onmessage = (e: MessageEvent<ArrayBuffer>) => this.active?.send(bytesToBase64(e.data))
       // A silent path to the destination keeps the worklet being pulled.
@@ -92,11 +84,6 @@ export class DubSession {
       return
     }
     await this.connect()
-  }
-
-  setVolume(volume: number): void {
-    this.volume = volume
-    if (this.ctx && this.originalGain) this.originalGain.gain.setTargetAtTime(volume, this.ctx.currentTime, 0.05)
   }
 
   /** The user turned dubbing off. */

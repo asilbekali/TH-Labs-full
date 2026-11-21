@@ -68,7 +68,6 @@ export type PopupRequest =
   | { type: 'languages/get' }
   | { type: 'dub/start'; tabId: number }
   | { type: 'dub/stop' }
-  | { type: 'dub/volume'; volume: number }
 
 // ── offscreen → background ──────────────────────────────────────────────────
 export type OffscreenEvent =
@@ -79,9 +78,8 @@ export type OffscreenEvent =
 
 // ── background → offscreen ──────────────────────────────────────────────────
 export type OffscreenCommand =
-  | { target: 'offscreen'; type: 'start'; streamId: string; language: string; volume: number }
+  | { target: 'offscreen'; type: 'start'; streamId: string; language: string }
   | { target: 'offscreen'; type: 'stop' }
-  | { target: 'offscreen'; type: 'volume'; volume: number }
 
 export type Reply<T = unknown> =
   | { ok: true; data: T }
@@ -106,12 +104,11 @@ export class RequestError extends Error {
 // ── storage keys ────────────────────────────────────────────────────────────
 /** chrome.storage.local: { accessToken, user } */
 export const AUTH_KEY = 'auth'
-/** chrome.storage.local: { language, volume } */
+/** chrome.storage.local: { language } */
 export const SETTINGS_KEY = 'settings'
 /** chrome.storage.session: DubState */
 export const DUB_KEY = 'dub'
 
 export interface Settings {
   language: string
-  volume: number
 }

@@ -18,7 +18,7 @@ chrome.runtime.onMessage.addListener((msg: OffscreenCommand) => {
   switch (msg.type) {
     case 'start': {
       session?.stop()
-      const current = new DubSession(msg.streamId, msg.language, msg.volume, {
+      const current = new DubSession(msg.streamId, msg.language, {
         onStatus: (status) => {
           if (session === current) void ask({ type: 'offscreen/state', status }).catch(() => {})
         },
@@ -39,9 +39,6 @@ chrome.runtime.onMessage.addListener((msg: OffscreenCommand) => {
     }
     case 'stop':
       session?.stop()
-      break
-    case 'volume':
-      session?.setVolume(msg.volume)
       break
   }
   return false

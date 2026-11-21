@@ -10,8 +10,6 @@ export const SIGNUP_URL = `${SITE_URL}/`
 export const PRICING_URL = `${SITE_URL}/#pricing`
 
 export const DEFAULT_LANGUAGE = 'en'
-/** How loud the original tab audio stays under the dub, 0..1. */
-export const DEFAULT_ORIGINAL_VOLUME = 0.15
 
 // Wire format of Gemini Live Translate (contract section 3).
 export const INPUT_RATE = 16_000

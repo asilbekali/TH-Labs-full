@@ -18,7 +18,7 @@ import {
   SETTINGS_KEY,
   type Settings,
 } from '../lib/messages'
-import { DEFAULT_LANGUAGE, DEFAULT_ORIGINAL_VOLUME } from '../config'
+import { DEFAULT_LANGUAGE } from '../config'
 import { shouldStopOnNavigation } from './navigation'
 
 const OFFSCREEN_PATH = 'offscreen.html'
@@ -41,7 +41,7 @@ async function setState(patch: Partial<DubState>): Promise<DubState> {
 async function getSettings(): Promise<Settings> {
   const got = await chrome.storage.local.get(SETTINGS_KEY)
   const s = got[SETTINGS_KEY] as Partial<Settings> | undefined
-  return { language: s?.language ?? DEFAULT_LANGUAGE, volume: s?.volume ?? DEFAULT_ORIGINAL_VOLUME }
+  return { language: s?.language ?? DEFAULT_LANGUAGE }
 }
 
 async function paintBadge(state: DubState): Promise<void> {
@@ -117,8 +117,8 @@ async function startDub(tabId: number): Promise<void> {
       ),
     )
     await ensureOffscreen()
-    const { language, volume } = await getSettings()
-    await tellOffscreen({ target: 'offscreen', type: 'start', streamId, language, volume })
+    const { language } = await getSettings()
+    await tellOffscreen({ target: 'offscreen', type: 'start', streamId, language })
   } catch (err) {
     log('start failed', err)
     await finish('capture', "Couldn't capture this tab's audio. Reload the tab and try again.")
@@ -157,9 +157,6 @@ async function handle(msg: PopupRequest | OffscreenEvent): Promise<unknown> {
     case 'dub/stop':
       await stopDub()
       return getState()
-    case 'dub/volume':
-      await chrome.runtime.sendMessage({ target: 'offscreen', type: 'volume', volume: msg.volume } satisfies OffscreenCommand).catch(() => {})
-      return null
     case 'offscreen/grant':
       return startSession(msg.language)
     case 'offscreen/state': {

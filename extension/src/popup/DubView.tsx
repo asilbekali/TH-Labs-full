@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { DEFAULT_LANGUAGE, DEFAULT_ORIGINAL_VOLUME, MIN_GRANT_SECONDS, PRICING_URL } from '../config'
+import { DEFAULT_LANGUAGE, MIN_GRANT_SECONDS, PRICING_URL } from '../config'
 import { LIVE_LANGUAGES } from '../lib/languages'
 import {
   type Account,
@@ -27,7 +27,6 @@ export function DubView({ user }: { user: User }) {
   const stored = useStored<Settings>('local', SETTINGS_KEY)
   const settings: Settings = {
     language: stored?.language ?? DEFAULT_LANGUAGE,
-    volume: stored?.volume ?? DEFAULT_ORIGINAL_VOLUME,
   }
   const [account, setAccount] = useState<Account | null>(null)
   const [languages, setLanguages] = useState<Language[]>(LIVE_LANGUAGES)
@@ -70,11 +69,6 @@ export function DubView({ user }: { user: User }) {
     } finally {
       setBusy(false)
     }
-  }
-
-  function setVolume(volume: number) {
-    save({ volume })
-    if (running) void ask({ type: 'dub/volume', volume }).catch(() => {})
   }
 
   const on = running && !elsewhere
@@ -154,20 +148,6 @@ export function DubView({ user }: { user: User }) {
         {!running && usage && !usage.configured && (
           <p className="error">Live dubbing is unavailable right now. Try again later.</p>
         )}
-
-        <label className="field">
-          <span>
-            Original audio <span className="muted">{Math.round(settings.volume * 100)}%</span>
-          </span>
-          <input
-            type="range"
-            min={0}
-            max={1}
-            step={0.05}
-            value={settings.volume}
-            onChange={(e) => setVolume(Number(e.target.value))}
-          />
-        </label>
       </section>
 
       <p className="tip">Use headphones in meetings so others don't hear the dubbed voice through your microphone.</p>
