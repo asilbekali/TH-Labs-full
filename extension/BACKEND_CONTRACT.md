@@ -1,7 +1,7 @@
 # Backend contract for the Chrome extension
 
 What the extension can rely on, read from the source on 2026-11-21. Every
-claim names the file it came from. Section 6 lists what is missing or conflicts
+claim names the file it came from. Section 7 lists what is missing or conflicts
 with the brief; those need a decision before the audio pipeline is built.
 
 Base: `https://th-labs.uz/v1` (NestJS account API, `api/`). Caddy routes
@@ -120,7 +120,9 @@ extension ══ wss://generativelanguage.googleapis.com/… ══▶ Gemini Li
 { "targetLanguage": "uz" }
 ```
 
-`targetLanguage` is an app catalog code (section 4). 200:
+`targetLanguage` is an app catalog code (section 4). The source language is not
+a parameter. Success is **201 Created** (the route has no `@HttpCode`), so check
+`res.ok`, not `=== 200`. Body:
 
 ```json
 {
@@ -137,11 +139,42 @@ extension ══ wss://generativelanguage.googleapis.com/… ══▶ Gemini Li
 
 | Status | Meaning | Popup copy |
 |---|---|---|
-| 400 | language not supported | "That language isn't available for live dubbing." |
+| 400 | language not supported, or a malformed body (`targetLanguage` must be a 2–10 character string; any extra field is rejected) | "That language isn't available for live dubbing." |
 | 401 | access token bad or expired | refresh once, then log out |
 | 429 | `{ message: "Daily live translation limit reached", remainingSeconds }` | "You've used today's live dubbing time. It resets at midnight UTC." |
 | 502 | Google refused the token (the reservation is released) | "Live dubbing is unavailable right now. Try again shortly." |
 | 503 | no `GEMINI_API_KEY` on the server | same as 502 |
+
+### GET /v1/realtime/usage (Bearer)
+
+Read-only. It mints nothing and reserves nothing, so it is safe to call every
+time the popup opens. 200:
+
+```json
+{ "configured": true, "unlimited": false, "usedSecondsToday": 300, "dailySeconds": 900, "sessionSeconds": 300 }
+```
+
+- `configured: false` means the server has no Gemini key, so every `POST /session` would 503. Disable the toggle and say "Live dubbing is unavailable right now."
+- Minutes left today = `max(0, dailySeconds - usedSecondsToday)`. If `unlimited` is true, show no limit.
+- If fewer than 30 seconds are left (`MIN_GRANT_SECONDS`), the next `POST` will 429, so the toggle can be disabled up front.
+- `usedSecondsToday` is the sum of **granted** seconds since 00:00 UTC.
+
+### Checked against production (2026-11-21)
+
+- `https://th-labs.uz/docs-json` lists both routes with bearer auth and the
+  `StartSessionDto` body. **It has no response schemas** (both responses show
+  an empty description), so the response shapes above come from
+  `realtime.service.ts`, not from Swagger.
+- With no token or a bad token, both routes answer
+  `401 {"message":"Unauthorized","statusCode":401}`.
+- `GET /v1/languages` returns exactly the 32 codes below, in the same order.
+- `/v1/health` reports `pipeline: "down"`. That is the FastAPI dubbing
+  pipeline on Modal and does **not** affect live translation, which needs only
+  the account API, its database (`up`) and the Gemini key.
+- No rate limiter is installed in `api/`. The per-user advisory lock and the
+  daily allowance are the only limits.
+- Not yet checked: whether production has `GEMINI_API_KEY` set
+  (`usage.configured`). That needs a signed-in request.
 
 ### Limits (`realtime.service.ts`, `realtime.logic.ts`)
 
@@ -225,7 +258,15 @@ list with English names if the request fails.
 
 ---
 
-## 6. Gaps and conflicts with the brief
+## 6. Decisions (2026-11-21)
+
+- **Q1:** go direct to Google with the per-session token. `PRIVACY.md` and the store listing disclose that audio goes to Google's Gemini API while dubbing is on.
+- **Q2:** before the 5-minute cap, and after a dropped socket, mint a new session automatically. Keep going until the daily allowance runs out, then treat 429 as "out of time today".
+- **Q3:** no "Forgot password?" link until a reset flow exists.
+- **Q4:** "Create an account" opens `https://th-labs.uz/`.
+- **Q5:** the popup shows live minutes left today prominently, with plan and credits smaller.
+
+## 7. Gaps and conflicts with the brief (as raised)
 
 **Q1. Audio goes to Google, not only to TH-Labs.** The brief says the extension
 "talks only to the TH-Labs backend". With the current backend that is not true:
