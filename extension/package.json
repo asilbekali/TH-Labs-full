@@ -1,0 +1,29 @@
+{
+  "name": "th-labs-dubbing-extension",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "TH-Labs Real-Time Dubbing: Chrome extension (Manifest V3).",
+  "scripts": {
+    "build": "tsc --noEmit && vite build",
+    "build:debug": "tsc --noEmit && vite build --mode development",
+    "typecheck": "tsc --noEmit",
+    "zip": "npm run build && rm -f th-labs-dubbing.zip && cd dist && zip -qr ../th-labs-dubbing.zip . && cd .. && echo 'th-labs-dubbing.zip ready'"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.326",
+    "@types/react": "^18.3.23",
+    "@types/react-dom": "^18.3.7",
+    "@vitejs/plugin-react": "^4.4.1",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.5"
+  },
+  "allowScripts": {
+    "esbuild@0.25.12": true,
+    "fsevents@2.3.3": true
+  }
+}
