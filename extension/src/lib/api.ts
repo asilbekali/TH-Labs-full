@@ -110,14 +110,14 @@ export async function getLanguages(): Promise<Language[]> {
     if (!res.ok) return LIVE_LANGUAGES
     const { languages } = (await res.json()) as { languages: Language[] }
     const live = new Set(LIVE_LANGUAGES.map((l) => l.code))
-    const list = languages.filter((l) => live.has(l.code)).map(({ code, name }) => ({ code, name }))
+    const list = languages.filter((l) => live.has(l.code)).map(({ code, name }) => ({ code, name: typeof name === 'string' ? name : (LIVE_LANGUAGES.find((l) => l.code === code)?.name ?? code) }))
     return list.length ? list : LIVE_LANGUAGES
   } catch {
     return LIVE_LANGUAGES
   }
 }
 
-/** POST /v1/realtime/session. Reserves up to 5 minutes of today's time, so call it only right before opening the socket. */
+/** POST /v1/realtime/session. Spends free time, or tokens once that is used, so call it only right before opening the socket. */
 export function startSession(targetLanguage: string): Promise<SessionGrant> {
   return authed<SessionGrant>('/realtime/session', json({ targetLanguage }))
 }

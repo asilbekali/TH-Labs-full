@@ -43,6 +43,9 @@ export interface RealtimeUsage {
   usedSecondsToday: number
   dailySeconds: number
   sessionSeconds: number
+  creditsPerMinute?: number
+  /** Seconds the token balance buys once the free time is used. */
+  affordableSeconds?: number
 }
 
 export interface Language {
@@ -58,6 +61,8 @@ export interface SessionGrant {
   maxSeconds: number
   remainingSecondsToday: number
   unlimited: boolean
+  /** Tokens taken for this session; 0 while it runs on free time. */
+  creditsCharged?: number
 }
 
 // ── popup → background ──────────────────────────────────────────────────────

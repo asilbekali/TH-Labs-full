@@ -89,11 +89,10 @@ That does not matter: requests from extension pages to a host listed in
 |---|---|---|
 | `GET /v1/payments/entitlements` | `{ tier: "FREE"\|"PRO"\|"STUDIO", tierName: "Free"\|"Pro"\|"Studio Max", features, ... }` | plan name |
 | `GET /v1/payments/credits?page=1&limit=1` | `{ balance, page, limit, total, entries }` | credit balance |
-| `GET /v1/realtime/usage` | `{ configured, unlimited, usedSecondsToday, dailySeconds, sessionSeconds }` | **live minutes left today** |
+| `GET /v1/realtime/usage` | `{ configured, unlimited, trialSeconds, trialUsedSeconds, trialRemainingSeconds, balanceSeconds, availableSeconds, sessionSeconds }` | **free trial left + bought minutes** |
 
-Important: **live translation does not spend credits.** It is metered by a
-separate daily allowance of seconds (section 3). A user with 0 credits can still
-dub live, and a user with 10,000 credits is still stopped by the daily limit.
+**Updated 2026-11-27:** live translation uses a one-time **10-minute free trial**
+first (section 3), then **bought real-time minutes** (a wallet of seconds, separate from AI-dubbing tokens).
 
 ---
 
@@ -131,8 +130,9 @@ a parameter. Success is **201 Created** (the route has no `@HttpCode`), so check
   "wsUrl": "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained?access_token=…",
   "targetLanguage": "uz",
   "expiresAt": "2026-11-21T10:05:00.000Z",
-  "maxSeconds": 300,
-  "remainingSecondsToday": 600,
+  "maxSeconds": 60,
+  "trialRemainingSeconds": 240,
+  "chargedSeconds": 0,
   "unlimited": false
 }
 ```
@@ -141,7 +141,7 @@ a parameter. Success is **201 Created** (the route has no `@HttpCode`), so check
 |---|---|---|
 | 400 | language not supported, or a malformed body (`targetLanguage` must be a 2–10 character string; any extra field is rejected) | "That language isn't available for live dubbing." |
 | 401 | access token bad or expired | refresh once, then log out |
-| 429 | `{ message: "Daily live translation limit reached", remainingSeconds }` | "You've used today's live dubbing time. It resets at midnight UTC." |
+| 402 | `{ reason: "INSUFFICIENT_CREDITS", message, cost, balance, affordableSeconds }`: the free trial and the bought minutes are both used up (`cost`, `balance`, `affordableSeconds` are in seconds) | "You've used your free minutes and have no real-time minutes left." |
 | 502 | Google refused the token (the reservation is released) | "Live dubbing is unavailable right now. Try again shortly." |
 | 503 | no `GEMINI_API_KEY` on the server | same as 502 |
 
@@ -151,13 +151,14 @@ Read-only. It mints nothing and reserves nothing, so it is safe to call every
 time the popup opens. 200:
 
 ```json
-{ "configured": true, "unlimited": false, "usedSecondsToday": 300, "dailySeconds": 900, "sessionSeconds": 300 }
+{ "configured": true, "unlimited": false, "trialSeconds": 600, "trialUsedSeconds": 600, "trialRemainingSeconds": 0, "balanceSeconds": 3000, "availableSeconds": 3000, "sessionSeconds": 60 }
 ```
 
 - `configured: false` means the server has no Gemini key, so every `POST /session` would 503. Disable the toggle and say "Live dubbing is unavailable right now."
-- Minutes left today = `max(0, dailySeconds - usedSecondsToday)`. If `unlimited` is true, show no limit.
-- If fewer than 30 seconds are left (`MIN_GRANT_SECONDS`), the next `POST` will 429, so the toggle can be disabled up front.
-- `usedSecondsToday` is the sum of **granted** seconds since 00:00 UTC.
+- Free minutes left = `trialRemainingSeconds / 60`; bought minutes left = `balanceSeconds / 60`. Show `availableSeconds` as the total, in minutes. If `unlimited` is true, show no limit.
+- If fewer than 30 seconds are left (`MIN_GRANT_SECONDS`), the next `POST` charges credits. If `affordableSeconds` is under 30 too it will 402, so the toggle can be disabled up front.
+- The trial is **once per account** (10 minutes, never resets). `trialUsedSeconds` is the sum of free granted seconds ever; paid sessions are not in it.
+- `usedSecondsToday`, `dailySeconds`, and the session's `remainingSecondsToday` and `creditsCharged` are deprecated aliases; don't use them.
 
 ### Checked against production (2026-11-21)
 
@@ -172,7 +173,7 @@ time the popup opens. 200:
   pipeline on Modal and does **not** affect live translation, which needs only
   the account API, its database (`up`) and the Gemini key.
 - No rate limiter is installed in `api/`. The per-user advisory lock and the
-  daily allowance are the only limits.
+  free trial are the only limits.
 - Not yet checked: whether production has `GEMINI_API_KEY` set
   (`usage.configured`). That needs a signed-in request.
 
@@ -180,16 +181,16 @@ time the popup opens. 200:
 
 | Setting | Default | Effect |
 |---|---|---|
-| `REALTIME_SESSION_SECONDS` | **300** | each session is capped at 5 minutes |
-| `REALTIME_DAILY_SECONDS` | **900** | 15 minutes per user per UTC day |
+| `REALTIME_SESSION_SECONDS` | **60** | each session is capped at 1 minute (paid ones never longer) |
+| `REALTIME_TRIAL_SECONDS` | **600** | 10 free minutes per account, once; after that bought real-time minutes |
 | `MIN_GRANT_SECONDS` | 30 | no session is granted with less than 30 s left |
 | token `uses` | **1** | one token opens exactly one socket |
 | token open window | 60 s | the socket must be opened within 60 s of minting |
-| token expiry | grant + 30 s | Google closes the socket after that |
-| `REALTIME_UNLIMITED_EMAILS` | (list) | listed accounts skip the daily cap, not the 5-minute cap |
+| token expiry | grant + 15 s | Google closes the socket after that |
+| `REALTIME_UNLIMITED_EMAILS` | (list) | listed accounts skip the trial cap and are never charged; the session cap still applies |
 
 The allowance counts **granted** seconds, not used seconds. The server never
-sees how long a socket really ran, so every `POST /session` reserves up to 300 s
+sees how long a socket really ran, so every `POST /session` uses up to 60 s
 even if the socket dies after 2 s.
 
 ### WebSocket protocol (Gemini Live, v1beta, constrained endpoint)
@@ -222,7 +223,7 @@ even if the socket dies after 2 s.
 | `sessionResumptionUpdate` | ignored by the Studio |
 
 **Close**: code 1000 is a normal stop. Anything else carries `event.reason`.
-Expect a close once `maxSeconds + 30` has passed.
+Expect a close once `maxSeconds + 15` has passed.
 
 **Source language**: always auto-detected. There is no parameter for it, so
 the "Speaker language" dropdown from the brief is left out.
@@ -261,7 +262,7 @@ list with English names if the request fails.
 ## 6. Decisions (2026-11-21)
 
 - **Q1:** go direct to Google with the per-session token. `PRIVACY.md` and the store listing disclose that audio goes to Google's Gemini API while dubbing is on.
-- **Q2:** before the 5-minute cap, and after a dropped socket, mint a new session automatically. Keep going until the daily allowance runs out, then treat 429 as "out of time today".
+- **Q2:** at the session cap, and after a dropped socket, mint a new session automatically. Keep going until the free time and the tokens run out, then treat 402 as "out of time".
 - **Q3:** no "Forgot password?" link until a reset flow exists.
 - **Q4:** "Create an account" opens `https://th-labs.uz/`.
 - **Q5:** the popup shows live minutes left today prominently, with plan and credits smaller.
