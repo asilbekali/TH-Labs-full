@@ -187,6 +187,20 @@ chrome.runtime.onMessage.addListener((msg: { target?: string; type?: string }, _
   return true // the reply is async
 })
 
+// ── keyboard shortcut ───────────────────────────────────────────────────────
+
+// Pressing the shortcut counts as invoking the extension, so tabCapture works
+// on the active tab without opening the popup.
+chrome.commands?.onCommand.addListener(async (command, tab) => {
+  if (command !== 'toggle-dubbing' || tab?.id === undefined) return
+  const signedIn = (await chrome.storage.local.get(AUTH_KEY))[AUTH_KEY]
+  if (!signedIn) return void chrome.action.openPopup().catch(() => {})
+  const state = await getState()
+  const running = state.status === 'connecting' || state.status === 'live' || state.status === 'reconnecting'
+  if (running && state.tabId === tab.id) await stopDub()
+  else await startDub(tab.id)
+})
+
 // ── tab and auth events ─────────────────────────────────────────────────────
 
 chrome.tabs.onRemoved.addListener(async (tabId) => {

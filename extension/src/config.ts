@@ -19,8 +19,12 @@ export const CHUNK_SECONDS = 0.1
 
 /** Socket open but no setupComplete by then: treat the attempt as failed. */
 export const CONNECT_TIMEOUT_MS = 15_000
-/** Start the next session this long before the current one hits its cap. */
-export const ROLLOVER_LEAD_SECONDS = 10
+/**
+ * Start the next session this long before the current one hits its cap. Short,
+ * because a session may be paid for: the socket outlives its cap by a few
+ * seconds, which covers the hand-over.
+ */
+export const ROLLOVER_LEAD_SECONDS = 1
 /** How long a replaced socket stays open to deliver what it still owes. */
 export const DRAIN_MS = 4_000
 export const MAX_RECONNECTS = 5

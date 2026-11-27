@@ -23,8 +23,9 @@ const LS = 'https://th-labs.lemonsqueezy.com/checkout/buy';
 // api/.env can override any starting link / variant id:
 //   LEMONSQUEEZY_LINK_<KEY>=https://…   LEMONSQUEEZY_VARIANT_<KEY>=2203365
 // where <KEY> is PRO_MONTHLY, PRO_YEARLY, STUDIO_MONTHLY, STUDIO_YEARLY,
-// PACK_100, PACK_500 or PACK_2000. Like the defaults, these only fill an EMPTY
-// column — once an admin sets a value in the panel, the panel wins.
+// PACK_100, PACK_500, PACK_2000, REALTIME_10, REALTIME_30 or REALTIME_60. Like
+// the defaults, these only fill an EMPTY column — once an admin sets a value in
+// the panel, the panel wins.
 function fromEnv(
   key: string,
   fallback: { checkoutUrl?: string; lsVariantId?: string },

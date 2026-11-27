@@ -6,11 +6,12 @@
 // Capturing a tab mutes it for the user, and the original is deliberately
 // never routed back: the listener hears only the dubbed voice.
 //
-// Gemini sessions are capped (5 min by default) and each token opens one
+// Gemini sessions are capped (1 min by default) and each token opens one
 // socket. So a session is a chain of sockets: shortly before the cap, the next
 // grant is minted and its socket opened; when it is ready, audio switches to
 // it and the old one drains for a few seconds. A dropped socket is replaced
-// the same way, with exponential backoff. 429 means today's time is used up.
+// the same way, with exponential backoff. 402 means the free time
+// and the tokens are both used up (429 on an older API: today's time is).
 import {
   DRAIN_MS,
   MAX_RECONNECTS,
@@ -30,7 +31,7 @@ export interface SessionEvents {
   onEnded(kind: EndKind | null, message: string | null): void
 }
 
-const OUT_OF_TIME = "You've used today's live dubbing time. It resets at midnight UTC."
+const OUT_OF_TIME = "You've used today's free minutes and have no tokens left for live dubbing. Top up, or come back after midnight UTC."
 
 export class DubSession {
   private ctx: AudioContext | null = null
@@ -102,7 +103,7 @@ export class DubSession {
       if (this.stopped) return
       const status = err instanceof RequestError ? err.status : undefined
       const message = err instanceof Error ? err.message : 'Live dubbing is unavailable right now.'
-      if (status === 429) {
+      if (status === 402 || status === 429) {
         // Let the current socket run to its end; it closes on its own.
         this.outOfTime = true
         if (!this.active) this.end('out-of-time', OUT_OF_TIME)
@@ -118,9 +119,10 @@ export class DubSession {
     this.pending = new LiveSocket(grant, {
       onReady: (sock) => this.promote(sock),
       onAudio: (b64) => this.play(b64),
-      onGoAway: (sock) => {
-        if (sock === this.active) void this.connect()
-      },
+      // The next socket is due within the minute, and starting it early would
+      // pay for the same seconds twice. If this one closes first, onClosed
+      // replaces it.
+      onGoAway: () => log('going away'),
       onClosed: (sock, reason) => this.onClosed(sock, reason),
     })
   }

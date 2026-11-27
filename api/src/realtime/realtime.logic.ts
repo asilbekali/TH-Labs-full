@@ -1,7 +1,7 @@
-// Pure rules behind POST /v1/realtime/session: how much live translation a user
-// may still start today, which Google language code a catalog code becomes,
-// and the ephemeral-token request that locks a session to one model and one
-// target language. Kept free of Nest and Prisma so it can be tested directly.
+// Pure rules behind POST /v1/realtime/session: how much of the one-time free
+// trial a user has left, what their real-time minutes buy after that, which Google
+// language code a catalog code becomes, and the ephemeral-token request that
+// locks a session to one model and one target language. Kept free of Nest and Prisma so it can be tested directly.
 
 /** A session shorter than this is not worth handing out. */
 export const MIN_GRANT_SECONDS = 30;
@@ -27,14 +27,14 @@ export function isUnlimited(
 const OPEN_WINDOW_SECONDS = 60;
 
 /** Grace past the granted seconds before Google cuts the socket. */
-const EXPIRY_SLACK_SECONDS = 30;
+const EXPIRY_SLACK_SECONDS = 15;
 
-/** Midnight UTC of the UTC day `now` falls in — where the daily allowance resets. */
-export function utcDayStart(now: Date): Date {
-  return new Date(
-    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
-  );
-}
+/**
+ * Longest paid session. The charge is for granted time and is never handed
+ * back, so a session stopped early can lose at most one minute; clients carry
+ * on by starting the next one.
+ */
+const PAID_SESSION_SECONDS = 60;
 
 export interface Allowance {
   ok: boolean;
@@ -43,19 +43,47 @@ export interface Allowance {
 }
 
 /**
- * What a user who has been granted `usedSeconds` today may start next.
- * Granted, not measured: the browser talks to Google directly, so the server
- * never sees how long a session really ran, and the grant is the bound.
+ * What a user who has been granted `usedSeconds` of free time, ever, may start
+ * next out of a `trialSeconds` trial. The trial is once per account: it never
+ * resets. Granted, not measured: the browser talks to Google directly, so the
+ * server never sees how long a session really ran, and the grant is the bound.
  */
 export function allowance(
   usedSeconds: number,
-  dailySeconds: number,
+  trialSeconds: number,
   sessionSeconds: number,
 ): Allowance {
-  const remainingSeconds = Math.max(0, dailySeconds - usedSeconds);
+  const remainingSeconds = Math.max(0, trialSeconds - usedSeconds);
+  // TODO(human): decide what happens to a trial tail under MIN_GRANT_SECONDS
+  // (e.g. 20 s left). Today it is refused below and never used, so the next
+  // session is paid in full.
   const grant = Math.min(sessionSeconds, remainingSeconds);
   const ok = grant >= MIN_GRANT_SECONDS;
   return { ok, remainingSeconds, grantSeconds: ok ? grant : 0 };
+}
+
+export interface PaidGrant {
+  ok: boolean;
+  grantSeconds: number;
+  /** Seconds taken from the real-time wallet: always the grant itself. */
+  cost: number;
+}
+
+/**
+ * What `balanceSeconds` left in the real-time wallet buys next, once the free
+ * trial is used up. The wallet holds time, so a grant costs exactly its own
+ * length and there is no rounding to lose.
+ */
+export function paidGrant(
+  balanceSeconds: number,
+  sessionSeconds: number,
+): PaidGrant {
+  const balance = Number.isFinite(balanceSeconds)
+    ? Math.max(0, Math.floor(balanceSeconds))
+    : 0;
+  const grant = Math.min(sessionSeconds, PAID_SESSION_SECONDS, balance);
+  const ok = grant >= MIN_GRANT_SECONDS;
+  return { ok, grantSeconds: ok ? grant : 0, cost: ok ? grant : 0 };
 }
 
 // The app's 32 catalog languages (backend/app/languages.py). Google takes
