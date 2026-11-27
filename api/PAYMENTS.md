@@ -98,6 +98,19 @@ variant ids in the admin panel, and swap the key.
 | pack_100 | 2203420 | 100 |
 | pack_500 | 2203424 | 500 |
 | pack_2000 | 2203428 | 2 000 |
+| realtime_10 | 2390008 (**live**) | 600 s (10 min) |
+| realtime_30 | 2390012 (**live**) | 1 800 s (30 min) |
+| realtime_60 | 2390013 (**live**) | 3 600 s (60 min) |
+
+**Two wallets.** `realtime_*` packs credit `User.realtimeSeconds`: real-time
+dubbing **time**, not tokens. A pack's `credits` is seconds, so it sells
+exactly the minutes in its name, and a session takes the seconds it was
+granted. The price lives only in Lemon Squeezy and `priceCents`: 35¢ a
+minute ($3.50 / $10.50 / $21.00). A one-time 10-minute free trial comes first.
+Every other pack and plan credits `User.credits` (AI-dubbing tokens). Neither
+can pay for the other. The wallet comes from the slug prefix (`packWallet`),
+and every `CreditEntry` records which wallet it moved (REALTIME entries are in
+seconds). `GET /payments/credits?wallet=realtime` lists the real-time ledger.
 
 Change any of it from the admin panel: `PATCH /v1/admin/billing/plans/:id` or
 `/credit-packs/:id` with `checkoutUrl`, `lsVariantId`, `creditsGranted`,

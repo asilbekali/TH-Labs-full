@@ -77,9 +77,9 @@ export interface AppEnv {
   REALTIME_MODEL: string;
   /** Longest single session, seconds. */
   REALTIME_SESSION_SECONDS: number;
-  /** Seconds a user may be granted per UTC day. */
-  REALTIME_DAILY_SECONDS: number;
-  /** Comma-separated emails with no daily allowance (testers, staff). */
+  /** One-time free trial per account, seconds. After it sessions cost tokens. */
+  REALTIME_TRIAL_SECONDS: number;
+  /** Comma-separated emails with no trial limit and no charge (testers, staff). */
   REALTIME_UNLIMITED_EMAILS?: string;
 
   // ── Audit log ────────────────────────────────────────────────────────────
@@ -151,8 +151,8 @@ export function validateEnv(config: RawEnv): AppEnv {
     GEMINI_API_KEY: config.GEMINI_API_KEY?.trim() || undefined,
     REALTIME_MODEL:
       config.REALTIME_MODEL?.trim() || 'gemini-3.5-live-translate-preview',
-    REALTIME_SESSION_SECONDS: toInt(config.REALTIME_SESSION_SECONDS, 300),
-    REALTIME_DAILY_SECONDS: toInt(config.REALTIME_DAILY_SECONDS, 900),
+    REALTIME_SESSION_SECONDS: toInt(config.REALTIME_SESSION_SECONDS, 60),
+    REALTIME_TRIAL_SECONDS: toInt(config.REALTIME_TRIAL_SECONDS, 600),
     REALTIME_UNLIMITED_EMAILS:
       config.REALTIME_UNLIMITED_EMAILS?.trim() || undefined,
 

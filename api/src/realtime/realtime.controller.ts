@@ -21,16 +21,19 @@ export class RealtimeController {
     summary: 'Start a live translation session',
     description:
       'Mints a one-use Gemini Live Translate token locked to the target ' +
-      'language, after checking the daily allowance. The browser opens ' +
-      '`wsUrl` itself; no audio passes through this API. 429 when the ' +
-      "day's allowance is used, 503 when no Gemini key is configured.",
+      'language. Uses the one-time free trial first, then charges tokens ' +
+      'for the granted seconds. The browser opens `wsUrl` itself; no audio ' +
+      'passes through this API. 402 when neither the trial nor the ' +
+      'balance covers a session, 503 when no Gemini key is configured.',
   })
   start(@CurrentUser() user: AuthenticatedUser, @Body() dto: StartSessionDto) {
     return this.realtime.startSession(user.id, dto.targetLanguage, user.email);
   }
 
   @Get('usage')
-  @ApiOperation({ summary: 'Live translation seconds used today' })
+  @ApiOperation({
+    summary: 'Free trial left, token balance, and the minutes it buys',
+  })
   usage(@CurrentUser() user: AuthenticatedUser) {
     return this.realtime.usage(user.id, user.email);
   }

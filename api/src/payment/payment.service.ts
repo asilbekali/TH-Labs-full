@@ -10,6 +10,7 @@ import {
   BillingCycle,
   CreditPack,
   CreditReason,
+  CreditWallet,
   Plan,
   PlanTier,
   Prisma,
@@ -28,6 +29,7 @@ import {
   type LsSubscription,
 } from './lemonsqueezy.service';
 import { CanDubDto, CanDubResult } from './dto/can-dub.dto';
+import { packWallet } from './credit-packs';
 import { CommitDubDto, CommitDubResult } from './dto/commit-dub.dto';
 import {
   PaymentRequiredException,
@@ -77,6 +79,14 @@ const LS_RENEWAL_GRACE_MS = 3 * 24 * 60 * 60 * 1000;
 // deleted account and registered again must not inherit that account's
 // purchases. A few minutes of slack absorb clock skew between LS and the DB.
 const ORDER_CLOCK_SKEW_MS = 10 * 60 * 1000;
+
+/** The cached balance of one wallet. */
+function walletBalance(
+  user: { credits: number; realtimeSeconds: number },
+  wallet: CreditWallet,
+): number {
+  return wallet === CreditWallet.REALTIME ? user.realtimeSeconds : user.credits;
+}
 
 function isUniqueViolation(error: unknown): boolean {
   return (
@@ -200,14 +210,21 @@ export class PaymentService {
     });
 
     return {
-      packs: packs.map((pack) => ({
-        id: pack.slug,
-        credits: pack.credits,
-        priceCents: pack.priceCents,
-        currency: pack.currency,
-        ...(pack.popular ? { popular: true } : {}),
-        available: this.isSellable(pack) && this.ls.configured,
-      })),
+      packs: packs.map((pack) => {
+        const realtime = packWallet(pack.slug) === CreditWallet.REALTIME;
+        return {
+          id: pack.slug,
+          // Seconds of live dubbing for a 'realtime' pack, tokens otherwise.
+          credits: pack.credits,
+          priceCents: pack.priceCents,
+          currency: pack.currency,
+          ...(pack.popular ? { popular: true } : {}),
+          /** 'realtime' packs pay only for live sessions, 'dub' only for dubs. */
+          wallet: realtime ? 'realtime' : 'dub',
+          ...(realtime ? { minutes: pack.credits / 60 } : {}),
+          available: this.isSellable(pack) && this.ls.configured,
+        };
+      }),
       creditsPerMinute: CREDITS_PER_MINUTE,
       qualityMultiplier: QUALITY_MULTIPLIER,
     };
@@ -835,7 +852,13 @@ export class PaymentService {
     order: LsOrder,
   ): Promise<GrantedPurchase> {
     this.checkAmount(order, pack.priceCents, pack.slug);
-    const description = `${pack.credits} tokens — one-time pack`;
+    const wallet = packWallet(pack.slug);
+    // A real-time pack's `credits` is seconds; say it in minutes.
+    const what =
+      wallet === CreditWallet.REALTIME
+        ? `${pack.credits / 60} minutes of real-time dubbing`
+        : `${pack.credits.toLocaleString('en-US')} tokens`;
+    const description = `${what} — one-time pack`;
 
     const balance = await this.prisma.transaction(async (tx) => {
       await tx.payment.create({
@@ -856,17 +879,18 @@ export class PaymentService {
         CreditReason.PACK_PURCHASE,
         order.id,
         `${pack.slug} purchase (order #${order.orderNumber})`,
+        wallet,
       );
     }, `grantPackOrder(${order.id})`);
 
     this.logger.log(
-      `Granted ${pack.credits} credits to user ${userId} ` +
+      `Granted ${pack.credits} ${wallet} credits to user ${userId} ` +
         `(${pack.slug}, LS order ${order.id})`,
     );
     await this.rememberCustomer(userId, order.customerId);
     this.emailReceipt(userId, {
       kind: 'pack',
-      item: `${pack.credits.toLocaleString('en-US')} tokens`,
+      item: what,
       paidAt: order.createdAt,
       creditsGranted: pack.credits,
       balance,
@@ -1098,8 +1122,9 @@ export class PaymentService {
   }
 
   // ── Credit ledger primitives ─────────────────────────────────────────────
-  // The ledger (CreditEntry) is the source of truth; User.credits is a cached
-  // balance. Both are written inside one transaction, always.
+  // The ledger (CreditEntry) is the source of truth; User.credits and
+  // User.realtimeSeconds are cached balances, one per wallet. Both are written
+  // inside one transaction, always, and an entry only ever moves one wallet.
   private async applyCredits(
     tx: Tx,
     userId: number,
@@ -1107,23 +1132,29 @@ export class PaymentService {
     reason: CreditReason,
     refId?: string | null,
     note?: string | null,
+    wallet: CreditWallet = CreditWallet.DUB,
   ): Promise<number> {
     const user = await tx.user.update({
       where: { id: userId },
-      data: { credits: { increment: delta } },
-      select: { credits: true },
+      data:
+        wallet === CreditWallet.REALTIME
+          ? { realtimeSeconds: { increment: delta } }
+          : { credits: { increment: delta } },
+      select: { credits: true, realtimeSeconds: true },
     });
+    const balance = walletBalance(user, wallet);
     await tx.creditEntry.create({
       data: {
         userId,
         delta,
-        balance: user.credits,
+        balance,
         reason,
+        wallet,
         refId: refId ?? null,
         note: note ?? null,
       },
     });
-    return user.credits;
+    return balance;
   }
 
   async grantCredits(
@@ -1144,46 +1175,85 @@ export class PaymentService {
     );
   }
 
-  // Atomic, race-safe spend. The conditional decrement (updateMany with a
-  // `credits >= amount` guard) means two concurrent spends can never both pass
-  // the balance check — exactly one wins and the balance never goes negative.
-  async spendCredits(
+  /** Spend AI-dubbing tokens (User.credits) on a dub. */
+  spendCredits(
     userId: number,
     amount: number,
     jobId: string,
     note?: string,
   ): Promise<number> {
+    return this.spendFrom(CreditWallet.DUB, userId, amount, jobId, note);
+  }
+
+  /** Spend seconds of the real-time wallet (User.realtimeSeconds) on a live session. */
+  spendRealtimeSeconds(
+    userId: number,
+    seconds: number,
+    sessionId: string,
+    note?: string,
+  ): Promise<number> {
+    return this.spendFrom(
+      CreditWallet.REALTIME,
+      userId,
+      seconds,
+      sessionId,
+      note,
+    );
+  }
+
+  // Atomic, race-safe spend. The conditional decrement (updateMany with a
+  // `balance >= amount` guard) means two concurrent spends can never both pass
+  // the balance check — exactly one wins and the balance never goes negative.
+  // Idempotent on refId, because `transaction` may retry a commit whose answer
+  // was lost.
+  private async spendFrom(
+    wallet: CreditWallet,
+    userId: number,
+    amount: number,
+    refId: string,
+    note?: string,
+  ): Promise<number> {
     if (amount <= 0)
       throw new BadRequestException('Spend amount must be positive.');
+    const realtime = wallet === CreditWallet.REALTIME;
+    const reason = realtime
+      ? CreditReason.REALTIME_SPEND
+      : CreditReason.DUB_SPEND;
     return this.prisma.transaction(async (tx) => {
-      const decremented = await tx.user.updateMany({
-        where: { id: userId, credits: { gte: amount } },
-        data: { credits: { decrement: amount } },
+      const existing = await tx.creditEntry.findFirst({
+        where: { userId, refId, reason },
       });
-      if (decremented.count === 0) {
-        const user = await tx.user.findUnique({
-          where: { id: userId },
-          select: { credits: true },
-        });
-        if (!user) throw new NotFoundException('User not found.');
-        throw new BadRequestException('INSUFFICIENT_CREDITS');
-      }
+      if (existing) return existing.balance;
+      const decremented = await tx.user.updateMany({
+        where: realtime
+          ? { id: userId, realtimeSeconds: { gte: amount } }
+          : { id: userId, credits: { gte: amount } },
+        data: realtime
+          ? { realtimeSeconds: { decrement: amount } }
+          : { credits: { decrement: amount } },
+      });
       const user = await tx.user.findUnique({
         where: { id: userId },
-        select: { credits: true },
+        select: { credits: true, realtimeSeconds: true },
       });
+      if (!user) throw new NotFoundException('User not found.');
+      if (decremented.count === 0) {
+        throw new BadRequestException('INSUFFICIENT_CREDITS');
+      }
+      const balance = walletBalance(user, wallet);
       await tx.creditEntry.create({
         data: {
           userId,
           delta: -amount,
-          balance: user!.credits,
-          reason: CreditReason.DUB_SPEND,
-          refId: jobId,
-          note: note ?? `dub ${jobId}`,
+          balance,
+          reason,
+          wallet,
+          refId,
+          note: note ?? `${realtime ? 'live session' : 'dub'} ${refId}`,
         },
       });
-      return user!.credits;
-    }, `spendCredits(${jobId})`);
+      return balance;
+    }, `spendFrom(${wallet}, ${refId})`);
   }
 
   // ── The credit gate ─────────────────────────────────────────────────────
@@ -1494,31 +1564,51 @@ export class PaymentService {
     return { page, limit, total, items };
   }
 
-  async getCredits(userId: number, page: number, limit: number) {
+  /**
+   * Both balances, and one wallet's ledger (AI dubbing unless asked): a page
+   * of entries from both would interleave two running totals.
+   */
+  async getCredits(
+    userId: number,
+    page: number,
+    limit: number,
+    wallet: CreditWallet = CreditWallet.DUB,
+  ) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      select: { credits: true },
+      select: { credits: true, realtimeSeconds: true },
     });
     if (!user) throw new NotFoundException('User not found.');
 
+    const where = { userId, wallet };
     const [total, entries] = await this.prisma.$transaction([
-      this.prisma.creditEntry.count({ where: { userId } }),
+      this.prisma.creditEntry.count({ where }),
       this.prisma.creditEntry.findMany({
-        where: { userId },
+        where,
         orderBy: { createdAt: 'desc' },
         skip: (page - 1) * limit,
         take: limit,
       }),
     ]);
-    return { balance: user.credits, page, limit, total, entries };
+    return {
+      balance: user.credits,
+      /** Seconds of real-time dubbing left in the real-time wallet. */
+      realtimeSeconds: user.realtimeSeconds,
+      wallet: wallet === CreditWallet.REALTIME ? 'realtime' : 'dub',
+      page,
+      limit,
+      total,
+      entries,
+    };
   }
 
-  // Dev-only drift report: the ledger's net delta must equal the cached balance,
-  // and each row's running `balance` must be internally consistent.
+  // Dev-only drift report, per wallet: each wallet's net delta must equal its
+  // cached balance, and each row's running `balance` must be internally
+  // consistent within its own wallet.
   async reconcile(userId: number) {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      select: { credits: true },
+      select: { credits: true, realtimeSeconds: true },
     });
     if (!user) throw new NotFoundException('User not found.');
 
@@ -1527,23 +1617,30 @@ export class PaymentService {
       orderBy: { createdAt: 'asc' },
     });
 
-    let running = 0;
-    let brokenAt: string | null = null;
-    for (const e of entries) {
-      running += e.delta;
-      if (running !== e.balance && brokenAt === null) brokenAt = e.id;
-    }
-
-    const ledgerBalance = running;
-    return {
-      cachedBalance: user.credits,
-      ledgerBalance,
-      inSync: user.credits === ledgerBalance && brokenAt === null,
-      firstBrokenEntryId: brokenAt,
-      entryCount: entries.length,
+    const check = (wallet: CreditWallet) => {
+      let running = 0;
+      let brokenAt: string | null = null;
+      let count = 0;
+      for (const e of entries) {
+        if (e.wallet !== wallet) continue;
+        count++;
+        running += e.delta;
+        if (running !== e.balance && brokenAt === null) brokenAt = e.id;
+      }
+      const cachedBalance = walletBalance(user, wallet);
+      return {
+        cachedBalance,
+        ledgerBalance: running,
+        inSync: cachedBalance === running && brokenAt === null,
+        firstBrokenEntryId: brokenAt,
+        entryCount: count,
+      };
     };
+    const dub = check(CreditWallet.DUB);
+    const realtime = check(CreditWallet.REALTIME);
+    // The top-level fields stay the AI-dubbing wallet's, as before.
+    return { ...dub, inSync: dub.inSync && realtime.inSync, realtime };
   }
-
 
   // When a monthly plan is bought on Aug 25 it must lapse on Sep 25, not on
   // Sep 24 — so monthly and yearly step by calendar units, not by a fixed

@@ -105,6 +105,10 @@ model User {
   /// that no ledger row accounted for, which is exactly the drift
   /// /payments/credits/reconcile exists to report.
   credits             Int       @default(0)
+  /// Real-time dubbing time, in SECONDS — a wallet of its own
+  /// (CreditWallet.REALTIME). Packs sell minutes outright (realtime_60 = 3600),
+  /// so it only pays for live sessions and `credits` only pays for dubs.
+  realtimeSeconds     Int       @default(0)
   /// Lemon Squeezy customer id, learned from the first order this account
   /// claims. LS creates the customer itself at checkout, so this is recorded
   /// rather than requested. Not unique: one LS customer is one email, and an
@@ -182,6 +186,15 @@ enum CreditReason {
   DUB_SPEND
   REFUND
   ADMIN_ADJUSTMENT
+  REALTIME_SPEND
+}
+
+/// Which balance a ledger entry moves. DUB is User.credits (AI dubbing),
+/// REALTIME is User.realtimeSeconds (live dubbing, counted in seconds rather
+/// than tokens). Nothing crosses over.
+enum CreditWallet {
+  DUB
+  REALTIME
 }
 
 // Catalog of purchasable plans (five rows: FREE + PRO/STUDIO × monthly/yearly).
@@ -315,6 +328,9 @@ model CreditEntry {
   delta   Int // positive grant, negative spend
   balance Int // running balance after this entry
   reason  CreditReason
+  /// The balance this entry moves; `balance` is that wallet's running total.
+  /// For REALTIME, `delta` and `balance` are seconds.
+  wallet  CreditWallet @default(DUB)
   refId   String? // jobId, paymentId, etc.
   note    String?
 
@@ -562,13 +578,16 @@ model EditorProject {
 /// One live-translation session handed out by POST /v1/realtime/session.
 /// The browser talks to Google directly, so the server never learns how long a
 /// session really ran: `grantedSeconds` (the token's lifetime) is what the
-/// daily allowance is summed from.
+/// free trial is summed from, and what a paid session is charged for.
 model RealtimeSession {
   id             String   @id @default(cuid())
   userId         Int
   /// Google's BCP-47 code the token was locked to (e.g. "uz", "zh-Hans").
   targetLanguage String
   grantedSeconds Int
+  /// Seconds taken from the real-time wallet for this session. 0 is a free
+  /// one, and only free sessions count against the one-time trial.
+  chargedSeconds Int      @default(0)
 
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   createdAt DateTime @default(now())
