@@ -25,6 +25,22 @@
     "service_worker": "background.js",
     "type": "module"
   },
-  "permissions": ["tabCapture", "offscreen", "storage", "activeTab"],
-  "host_permissions": ["https://th-labs.uz/*"]
+  "permissions": [
+    "tabCapture",
+    "offscreen",
+    "storage",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "https://th-labs.uz/*"
+  ],
+  "commands": {
+    "toggle-dubbing": {
+      "suggested_key": {
+        "default": "Alt+Shift+D",
+        "mac": "Alt+Shift+D"
+      },
+      "description": "Turn real-time dubbing on or off for the current tab"
+    }
+  }
 }

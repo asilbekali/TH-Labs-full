@@ -79,6 +79,13 @@ export function affordableSeconds(
   return Math.floor((credits * 60) / rateFor(quality));
 }
 
+// ── Real-time dubbing ──────────────────────────────────────────────────────
+// Not priced in tokens at all. The real-time wallet (User.realtimeSeconds)
+// holds time: a pack sells minutes outright and a session takes the seconds it
+// was granted, so nothing here converts money to time. The price — 35¢ a
+// minute today, $3.50 / $10.50 / $21.00 for 10 / 30 / 60 minutes — lives in
+// Lemon Squeezy and in each pack's priceCents (credit-packs.ts).
+
 /**
  * The published per-minute price list, for the pricing page and the admin
  * panel. Replaces the old flat per-dub `QUALITY_COST`.

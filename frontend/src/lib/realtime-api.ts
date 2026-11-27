@@ -14,7 +14,10 @@ export interface RealtimeSessionGrant {
   expiresAt: string
   /** The session ends itself after this many seconds. */
   maxSeconds: number
+  /** Free seconds left today, after this session. */
   remainingSecondsToday: number
+  /** Tokens taken for this session; 0 while it runs on free time. */
+  creditsCharged?: number
   /** No daily allowance on this account. */
   unlimited?: boolean
 }
@@ -23,9 +26,13 @@ export interface RealtimeSessionGrant {
 export interface RealtimeUsage {
   configured: boolean
   unlimited?: boolean
+  /** Free seconds used today, out of `dailySeconds` (more on the first day). */
   usedSecondsToday: number
   dailySeconds: number
   sessionSeconds: number
+  creditsPerMinute?: number
+  /** Seconds the token balance buys once the free time is used. */
+  affordableSeconds?: number
 }
 
 export function startRealtimeSession(targetLanguage: string): Promise<RealtimeSessionGrant> {

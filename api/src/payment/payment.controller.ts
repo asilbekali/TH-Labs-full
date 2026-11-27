@@ -14,6 +14,7 @@ import {
 } from '@nestjs/common';
 import type { RawBodyRequest } from '@nestjs/common';
 import type { Request } from 'express';
+import { CreditWallet } from '@prisma/client';
 import {
   ApiBearerAuth,
   ApiHeader,
@@ -35,6 +36,7 @@ import { CreditCheckoutQueryDto } from './dto/credit-checkout-query.dto';
 import { CanDubDto } from './dto/can-dub.dto';
 import { CommitDubDto } from './dto/commit-dub.dto';
 import { PaginationQueryDto } from './dto/pagination-query.dto';
+import { CreditsQueryDto } from './dto/credits-query.dto';
 
 @ApiTags('payments')
 @Controller('payments')
@@ -189,14 +191,23 @@ export class PaymentController {
   @Get('credits')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
-  @ApiOperation({ summary: 'Credit balance + paginated ledger (auth)' })
+  @ApiOperation({
+    summary:
+      'AI-dubbing and real-time balances, plus one paginated ledger (auth)',
+  })
   @ApiQuery({ name: 'page', required: false })
   @ApiQuery({ name: 'limit', required: false })
+  @ApiQuery({ name: 'wallet', required: false, enum: ['dub', 'realtime'] })
   credits(
     @CurrentUser() user: AuthenticatedUser,
-    @Query() q: PaginationQueryDto,
+    @Query() q: CreditsQueryDto,
   ) {
-    return this.payments.getCredits(user.id, q.page, q.limit);
+    return this.payments.getCredits(
+      user.id,
+      q.page,
+      q.limit,
+      q.wallet === 'realtime' ? CreditWallet.REALTIME : CreditWallet.DUB,
+    );
   }
 
   @Get('credits/reconcile')

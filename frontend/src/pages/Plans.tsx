@@ -29,6 +29,7 @@ import { checkoutUnavailableReason, unbuyablePlans } from "../lib/lemonsqueezy";
 import {
   PLAN_TIER_NAMES,
   creditsForMinutes,
+  isRealtimePack,
   markCheckoutStarted,
   packFor,
 } from "../lib/payments-api";
@@ -671,6 +672,22 @@ const EST_QUALITIES = [
   { key: "studio", label: "Studio" },
 ];
 
+// Two ways to spend the same tokens. Each has its own packs, but they all top
+// up one balance through the same checkout.
+type TokenUse = "dubbing" | "realtime";
+const TOKEN_USES: { key: TokenUse; label: string; blurb: string }[] = [
+  {
+    key: "dubbing",
+    label: "AI dubbing",
+    blurb: "Pay for the video you have, at any quality.",
+  },
+  {
+    key: "realtime",
+    label: "Real-time dubbing",
+    blurb: "Pay for the minutes you are live, in one go.",
+  },
+];
+
 /**
  * Credits bought outright, for the person who has one video and no interest in
  * a subscription.
@@ -693,6 +710,7 @@ function TopUpSection({
 }) {
   const [minutes, setMinutes] = useState(4.5);
   const [quality, setQuality] = useState("balanced");
+  const [use, setUse] = useState<TokenUse>("dubbing");
 
   if (!catalog) {
     return (
@@ -703,9 +721,14 @@ function TopUpSection({
     );
   }
 
+  const realtime = use === "realtime";
+  const packs = catalog.packs
+    .filter((p) => isRealtimePack(p) === realtime)
+    .sort((a, b) => a.credits - b.credits);
   const needed = creditsForMinutes(minutes, quality, catalog);
-  const recommended = packFor(needed, catalog.packs);
-  const packs = [...catalog.packs].sort((a, b) => a.credits - b.credits);
+  const recommended = packFor(needed, packs);
+  // packFor settles for the largest pack when none is big enough.
+  const packsNeeded = recommended ? Math.ceil(needed / recommended.credits) : 1;
 
   return (
     <div className="space-y-4">
@@ -716,129 +739,206 @@ function TopUpSection({
             Buy tokens once — no subscription
           </h2>
           <p className="mt-1 text-sm text-secondary">
-            Tokens never expire and work on any quality. Pay for the video you
-            have.
+            Tokens never expire. The same balance works for AI dubbing and
+            real-time dubbing.
           </p>
         </div>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,360px)_minmax(0,1fr)]">
-        {/* Estimator */}
-        <div className="card flex flex-col p-6">
-          <SectionMark>How many do I need?</SectionMark>
-
-          <div className="mt-4 flex items-baseline gap-1.5">
-            <span className="font-mono text-4xl font-medium text-primary">
-              {fmtMinutes(minutes)}
-            </span>
-            <span className="font-mono text-sm text-muted">min of video</span>
-          </div>
-          <input
-            type="range"
-            min={0.5}
-            max={60}
-            step={0.5}
-            value={minutes}
-            onChange={(e) => setMinutes(Number(e.target.value))}
-            aria-label="Length of your clip in minutes"
-            className="calc-slider focusable mt-3 h-11 w-full cursor-pointer"
-          />
-          <div className="-mt-1 flex justify-between font-mono text-[10px] text-muted">
-            <span>30s</span>
-            <span>60 min</span>
-          </div>
-
-          <div className="mt-4 flex rounded-control border border-subtle bg-sunken p-1">
-            {EST_QUALITIES.map((q) => (
-              <button
-                key={q.key}
-                onClick={() => setQuality(q.key)}
-                className="focusable relative flex-1 rounded-[8px] px-3 py-2 font-mono text-xs font-medium transition-colors"
+      <div className="max-w-[420px]">
+        <div
+          role="group"
+          aria-label="What the tokens are for"
+          className="flex rounded-control border border-subtle bg-sunken p-1"
+        >
+          {TOKEN_USES.map((u) => (
+            <button
+              key={u.key}
+              type="button"
+              aria-pressed={use === u.key}
+              onClick={() => setUse(u.key)}
+              className="focusable relative min-h-[44px] flex-1 rounded-[8px] px-3 py-2 font-mono text-xs font-medium transition-colors"
+            >
+              {use === u.key && (
+                <motion.span
+                  layoutId="token-use-pill"
+                  transition={{ type: "spring", stiffness: 400, damping: 32 }}
+                  className="absolute inset-0 rounded-[8px] bg-brand/15 shadow-[inset_0_0_0_1px_rgb(var(--c-brand-500)/0.4)]"
+                />
+              )}
+              <span
+                className={`relative z-10 ${use === u.key ? "text-brand" : "text-muted hover:text-secondary"}`}
               >
-                {quality === q.key && (
-                  <motion.span
-                    layoutId="est-quality-pill"
-                    transition={{ type: "spring", stiffness: 400, damping: 32 }}
-                    className="absolute inset-0 rounded-[8px] bg-brand/15 shadow-[inset_0_0_0_1px_rgb(var(--c-brand-500)/0.4)]"
-                  />
-                )}
-                <span
-                  className={`relative z-10 ${quality === q.key ? "text-brand" : "text-muted hover:text-secondary"}`}
-                >
-                  {q.label}
-                </span>
-              </button>
-            ))}
-          </div>
-
-          <div className="mt-5 border-t border-subtle pt-4">
-            <div className="flex items-baseline justify-between">
-              <span className="text-sm text-secondary">You need about</span>
-              <span className="font-display text-[1.75rem] text-primary">
-                <AnimatedNumber value={needed} />{" "}
-                <span className="text-sm text-muted">tokens</span>
+                {u.label}
               </span>
+            </button>
+          ))}
+        </div>
+        <p className="mt-1.5 font-mono text-[11px] text-muted">
+          {TOKEN_USES.find((u) => u.key === use)!.blurb}
+        </p>
+      </div>
+
+      {realtime ? (
+        // Already sold by the minute, so there is nothing to estimate.
+        <div className="grid gap-3 sm:grid-cols-2 sm:gap-4 lg:grid-cols-3">
+          {packs.map((p) => {
+            const live = p.credits / catalog.realtimeCreditsPerMinute;
+            return (
+              <PackCard
+                key={p.id}
+                pack={p}
+                amount={fmtMinutes(live)}
+                unit="min live"
+                buys={`${p.credits.toLocaleString()} tokens`}
+                rate={`$${(p.priceCents / 100 / live).toFixed(2)} / min`}
+                badge={p.popular ? "Popular" : undefined}
+                busy={busyPackId === p.id}
+                disabled={
+                  disabled || busyPackId !== null || p.available === false
+                }
+                unavailable={p.available === false}
+                onBuy={() => onBuy(p.id)}
+              />
+            );
+          })}
+        </div>
+      ) : (
+        <div className="grid gap-6 lg:grid-cols-[minmax(0,360px)_minmax(0,1fr)]">
+          {/* Estimator */}
+          <div className="card flex flex-col p-6">
+            <SectionMark>How many do I need?</SectionMark>
+
+            <div className="mt-4 flex items-baseline gap-1.5">
+              <span className="font-mono text-4xl font-medium text-primary">
+                {fmtMinutes(minutes)}
+              </span>
+              <span className="font-mono text-sm text-muted">min of video</span>
             </div>
+            <input
+              type="range"
+              min={0.5}
+              max={60}
+              step={0.5}
+              value={minutes}
+              onChange={(e) => setMinutes(Number(e.target.value))}
+              aria-label="Length of your clip in minutes"
+              className="calc-slider focusable mt-3 h-11 w-full cursor-pointer"
+            />
+            <div className="-mt-1 flex justify-between font-mono text-[10px] text-muted">
+              <span>30s</span>
+              <span>60 min</span>
+            </div>
+
+            <div className="mt-4 flex rounded-control border border-subtle bg-sunken p-1">
+              {EST_QUALITIES.map((q) => (
+                <button
+                  key={q.key}
+                  onClick={() => setQuality(q.key)}
+                  className="focusable relative flex-1 rounded-[8px] px-3 py-2 font-mono text-xs font-medium transition-colors"
+                >
+                  {quality === q.key && (
+                    <motion.span
+                      layoutId="est-quality-pill"
+                      transition={{ type: "spring", stiffness: 400, damping: 32 }}
+                      className="absolute inset-0 rounded-[8px] bg-brand/15 shadow-[inset_0_0_0_1px_rgb(var(--c-brand-500)/0.4)]"
+                    />
+                  )}
+                  <span
+                    className={`relative z-10 ${quality === q.key ? "text-brand" : "text-muted hover:text-secondary"}`}
+                  >
+                    {q.label}
+                  </span>
+                </button>
+              ))}
+            </div>
+
+            <div className="mt-5 border-t border-subtle pt-4">
+              <div className="flex items-baseline justify-between">
+                <span className="text-sm text-secondary">You need about</span>
+                <span className="font-display text-[1.75rem] text-primary">
+                  <AnimatedNumber value={needed} />{" "}
+                  <span className="text-sm text-muted">tokens</span>
+                </span>
+              </div>
+              {recommended && (
+                <p className="mt-1.5 font-mono text-[11px] text-muted">
+                  {packsNeeded > 1
+                    ? `That is ${packsNeeded} of the`
+                    : "Covered by the"}{" "}
+                  {recommended.credits.toLocaleString()}-token pack ·{" "}
+                  {fmtCents(recommended.priceCents, recommended.currency)}
+                  {packsNeeded > 1 && " each"}
+                </p>
+              )}
+            </div>
+
             {recommended && (
-              <p className="mt-1.5 font-mono text-[11px] text-muted">
-                Covered by the {recommended.credits.toLocaleString()}-token
-                pack · {fmtCents(recommended.priceCents, recommended.currency)}
-              </p>
+              <button
+                onClick={() => onBuy(recommended.id)}
+                disabled={disabled || busyPackId !== null}
+                className="btn-primary focusable mt-4 w-full py-3 font-mono text-sm disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {busyPackId === recommended.id
+                  ? "Redirecting…"
+                  : disabled
+                    ? "Checkout unavailable"
+                    : `Buy ${recommended.credits.toLocaleString()} tokens · ${fmtCents(recommended.priceCents, recommended.currency)} →`}
+              </button>
             )}
           </div>
 
-          {recommended && (
-            <button
-              onClick={() => onBuy(recommended.id)}
-              disabled={disabled || busyPackId !== null}
-              className="btn-primary focusable mt-4 w-full py-3 font-mono text-sm disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {busyPackId === recommended.id
-                ? "Redirecting…"
-                : disabled
-                  ? "Checkout unavailable"
-                  : `Buy ${recommended.credits.toLocaleString()} tokens · ${fmtCents(recommended.priceCents, recommended.currency)} →`}
-            </button>
-          )}
+          {/* Packs */}
+          <div className="grid gap-3 sm:grid-cols-2 sm:gap-4">
+            {packs.map((p) => (
+              <PackCard
+                key={p.id}
+                pack={p}
+                amount={p.credits.toLocaleString()}
+                unit="tokens"
+                buys={`≈ ${(p.credits / catalog.creditsPerMinute).toFixed(1)} min at Balanced`}
+                rate={`$${(p.priceCents / 100 / p.credits).toFixed(3)} / token`}
+                badge={recommended?.id === p.id ? "Your pick" : undefined}
+                busy={busyPackId === p.id}
+                // `available === false` is the server saying it has no LS
+                // link or variant for this pack. Undefined means the fallback catalog,
+                // which knows nothing either way — don't disable on that.
+                disabled={
+                  disabled || busyPackId !== null || p.available === false
+                }
+                unavailable={p.available === false}
+                onBuy={() => onBuy(p.id)}
+              />
+            ))}
+          </div>
         </div>
-
-        {/* Packs */}
-        <div className="grid gap-3 sm:grid-cols-2 sm:gap-4">
-          {packs.map((p) => (
-            <PackCard
-              key={p.id}
-              pack={p}
-              minutes={p.credits / catalog.creditsPerMinute}
-              recommended={recommended?.id === p.id}
-              busy={busyPackId === p.id}
-              // `available === false` is the server saying it has no LS
-              // link or variant for this pack. Undefined means the fallback catalog,
-              // which knows nothing either way — don't disable on that.
-              disabled={
-                disabled || busyPackId !== null || p.available === false
-              }
-              unavailable={p.available === false}
-              onBuy={() => onBuy(p.id)}
-            />
-          ))}
-        </div>
-      </div>
+      )}
     </div>
   );
 }
 
 function PackCard({
   pack,
-  minutes,
-  recommended,
+  amount,
+  unit,
+  buys,
+  rate,
+  badge,
   busy,
   disabled,
   unavailable,
   onBuy,
 }: {
   pack: CreditPack;
-  minutes: number;
-  recommended: boolean;
+  /** The headline, e.g. "100" "tokens" or "10" "min live". */
+  amount: string;
+  unit: string;
+  /** The line under it, e.g. "≈ 5.0 min at Balanced" or "200 tokens". */
+  buys: string;
+  /** Unit price beside the total, e.g. "$0.30 / min". */
+  rate: string;
+  /** Set on the one pack the section highlights. */
+  badge?: string;
   busy: boolean;
   disabled: boolean;
   /** No payment link configured for this pack — the price is real, the button isn't. */
@@ -846,7 +946,6 @@ function PackCard({
   onBuy: () => void;
 }) {
   const spot = usePointerSpotlight<HTMLDivElement>();
-  const perCredit = pack.priceCents / 100 / pack.credits;
   return (
     <motion.div
       ref={spot.ref}
@@ -855,7 +954,7 @@ function PackCard({
       whileHover={{ y: -3 }}
       transition={{ type: "spring", stiffness: 380, damping: 26 }}
       className={`card spotlight sheen relative flex items-center gap-3 p-4 sm:flex-col sm:items-stretch sm:gap-0 sm:p-5 ${
-        recommended ? "border-brand/45 ring-1 ring-brand/40" : ""
+        badge ? "border-brand/45 ring-1 ring-brand/40" : ""
       }`}
     >
       <div className="min-w-0 flex-1 sm:flex-none">
@@ -864,18 +963,18 @@ function PackCard({
         <div className="above flex items-start justify-between gap-2">
           <div className="flex items-baseline gap-1.5">
             <span className="font-mono text-2xl font-medium text-primary">
-              {pack.credits.toLocaleString()}
+              {amount}
             </span>
-            <span className="font-mono text-xs text-muted">tokens</span>
+            <span className="font-mono text-xs text-muted">{unit}</span>
           </div>
-          {recommended && (
+          {badge && (
             <span className="shrink-0 rounded-pill bg-brand px-2.5 py-0.5 font-mono text-[10px] font-medium uppercase tracking-wide text-canvas">
-              Your pick
+              {badge}
             </span>
           )}
         </div>
         <div className="mt-1 font-mono text-[11px] text-muted">
-          ≈ {minutes.toFixed(1)} min at Balanced
+          {buys}
         </div>
       </div>
 
@@ -884,7 +983,7 @@ function PackCard({
           {fmtCents(pack.priceCents, pack.currency)}
         </span>
         <span className="hidden font-mono text-[11px] text-muted sm:inline">
-          · ${perCredit.toFixed(3)} / token
+          · {rate}
         </span>
       </div>
 
@@ -892,7 +991,7 @@ function PackCard({
         onClick={onBuy}
         disabled={disabled}
         className={`focusable above min-h-[44px] shrink-0 rounded-control px-4 py-2.5 font-mono text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60 sm:mt-4 sm:w-full ${
-          recommended ? "btn-primary" : "btn-ghost"
+          badge ? "btn-primary" : "btn-ghost"
         }`}
       >
         {busy ? (

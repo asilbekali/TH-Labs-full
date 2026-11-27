@@ -10,6 +10,11 @@
 //   Google → serverContent.modelTurn audio (24 kHz Int16) → scheduled
 //       back to back on a 24 kHz AudioContext; transcriptions → handlers
 //
+// A grant is short (a minute), so with `renew` a session is a chain of sockets:
+// when a grant runs out the next one is minted and its socket opened, and the
+// microphone moves over once it is ready. Google keeps the old socket open a
+// few seconds past its grant, which covers the hand-over.
+//
 // The wire format was verified against the real API before this was written
 // (api/scripts/gemini-live-smoke.mjs; findings in the realtime plan).
 import { base64ToFloat32, downsampleTo16k, int16ToBase64 } from './pcm.ts'
@@ -36,6 +41,8 @@ const CHUNK_SECONDS = 0.1
 const PLAYBACK_LEAD = 0.05
 // Socket open but no setupComplete by then: give up rather than hang.
 const CONNECT_TIMEOUT_MS = 15_000
+// How long a replaced socket stays open to deliver what it still owes.
+const DRAIN_MS = 4_000
 const DECODER = new TextDecoder()
 
 // Posts each 128-sample render quantum of the first input channel.
@@ -62,6 +69,11 @@ interface ServerMessage {
 
 export class LiveTranslateSession {
   private ws: WebSocket | null = null
+  /** The next socket in the chain, until it is ready to take over. */
+  private nextWs: WebSocket | null = null
+  private oldWs: WebSocket | null = null
+  private drainTimer: ReturnType<typeof setTimeout> | null = null
+  private renewing = false
   private inCtx: AudioContext | null = null
   private outCtx: AudioContext | null = null
   private source: MediaStreamAudioSourceNode | null = null
@@ -73,21 +85,27 @@ export class LiveTranslateSession {
   private timer: ReturnType<typeof setTimeout> | null = null
   private connectTimer: ReturnType<typeof setTimeout> | null = null
   private ended = false
-  private readonly grant: RealtimeSessionGrant
+  private grant: RealtimeSessionGrant
   private readonly stream: MediaStream
   private readonly handlers: LiveHandlers
   private readonly connectTimeoutMs: number
+  private readonly renew?: () => Promise<RealtimeSessionGrant>
 
   constructor(
     grant: RealtimeSessionGrant,
     stream: MediaStream,
     handlers: LiveHandlers,
-    options: { connectTimeoutMs?: number } = {},
+    options: {
+      connectTimeoutMs?: number
+      /** Mints the grant to carry on with. Without it the session ends at `maxSeconds`. */
+      renew?: () => Promise<RealtimeSessionGrant>
+    } = {},
   ) {
     this.grant = grant
     this.stream = stream
     this.handlers = handlers
     this.connectTimeoutMs = options.connectTimeoutMs ?? CONNECT_TIMEOUT_MS
+    this.renew = options.renew
   }
 
   async start(): Promise<void> {
@@ -110,14 +128,17 @@ export class LiveTranslateSession {
     }
     if (this.ended) return
 
+    this.ws = this.openSocket(this.grant)
+  }
+
+  private openSocket(grant: RealtimeSessionGrant): WebSocket | null {
     let ws: WebSocket
     try {
-      ws = new WebSocket(this.grant.wsUrl)
+      ws = new WebSocket(grant.wsUrl)
     } catch (err) {
       this.stop(`Could not reach the translation service (${err instanceof Error ? err.message : String(err)})`)
-      return
+      return null
     }
-    this.ws = ws
     // ArrayBuffer, decoded synchronously: with Blobs each message needs an
     // async .text(), and those can settle out of order — audio chunks and
     // transcript pieces would then play and print out of order.
@@ -129,11 +150,11 @@ export class LiveTranslateSession {
     ws.onopen = () => {
       // The token already locks the target language and transcriptions;
       // the setup only has to name the model.
-      ws.send(JSON.stringify({ setup: { model: `models/${this.grant.model}` } }))
+      ws.send(JSON.stringify({ setup: { model: `models/${grant.model}` } }))
     }
     ws.onmessage = (event) => {
       try {
-        this.onMessage(event.data)
+        this.onMessage(ws, event.data)
       } catch (err) {
         // Anything thrown here (starting the microphone, playing audio) would
         // otherwise be lost and leave the session stuck connecting.
@@ -141,10 +162,43 @@ export class LiveTranslateSession {
       }
     }
     ws.onclose = (event) => {
+      // A replaced socket, or one whose replacement is on its way.
+      if (ws !== this.ws && ws !== this.nextWs) return
+      if (ws === this.ws && this.renewing) return
       this.stop(
         event.code === 1000 ? null : event.reason || `Connection closed (code ${event.code})`,
       )
     }
+    return ws
+  }
+
+  /** The grant has run out: carry on with a new one, or end. */
+  private async rollOver(): Promise<void> {
+    if (!this.renew) return this.stop('Session time is up')
+    this.renewing = true
+    let grant: RealtimeSessionGrant
+    try {
+      grant = await this.renew()
+    } catch (err) {
+      this.stop(err instanceof Error ? err.message : 'Session time is up')
+      return
+    }
+    if (this.ended) return
+    this.grant = grant
+    this.nextWs = this.openSocket(grant)
+  }
+
+  private promote(next: WebSocket): void {
+    this.oldWs = this.ws
+    this.drainTimer = setTimeout(() => this.oldWs?.close(1000, 'replaced'), DRAIN_MS)
+    this.ws = next
+    this.nextWs = null
+    this.renewing = false
+    this.startTimer()
+  }
+
+  private startTimer(): void {
+    this.timer = setTimeout(() => void this.rollOver(), this.grant.maxSeconds * 1000)
   }
 
   /** Ends the session: mic, audio, socket. Safe to call more than once. */
@@ -153,19 +207,22 @@ export class LiveTranslateSession {
     this.ended = true
     if (this.timer) clearTimeout(this.timer)
     if (this.connectTimer) clearTimeout(this.connectTimer)
+    if (this.drainTimer) clearTimeout(this.drainTimer)
     for (const track of this.stream.getTracks()) track.stop()
     this.node?.port.close()
     this.node?.disconnect()
     this.source?.disconnect()
     this.sink?.disconnect()
-    if (this.ws && this.ws.readyState <= WebSocket.OPEN) this.ws.close(1000, 'stopped')
+    for (const ws of [this.ws, this.nextWs, this.oldWs]) {
+      if (ws && ws.readyState <= WebSocket.OPEN) ws.close(1000, 'stopped')
+    }
     void this.inCtx?.close().catch(() => {})
     void this.outCtx?.close().catch(() => {})
     this.handlers.onState('ended')
     this.handlers.onEnd(reason)
   }
 
-  private onMessage(data: unknown): void {
+  private onMessage(ws: WebSocket, data: unknown): void {
     if (this.ended) return
     // Google sends its JSON as binary frames in browsers.
     const text = typeof data === 'string' ? data : DECODER.decode(data as ArrayBuffer)
@@ -178,9 +235,12 @@ export class LiveTranslateSession {
     if (msg.setupComplete) {
       if (this.connectTimer) clearTimeout(this.connectTimer)
       this.connectTimer = null
-      this.beginCapture()
+      if (ws === this.nextWs) this.promote(ws)
+      else this.beginCapture()
     }
-    if (msg.goAway) this.stop('The translation service ended the session')
+    // Sent ahead of a close. With `renew` the next socket is due anyway, and
+    // starting it early would pay for the same seconds twice.
+    if (msg.goAway && !this.renew) this.stop('The translation service ended the session')
     const content = msg.serverContent
     if (!content) return
     if (content.inputTranscription?.text) this.handlers.onInput(content.inputTranscription.text)
@@ -203,7 +263,7 @@ export class LiveTranslateSession {
     this.node.connect(this.sink)
     this.sink.connect(ctx.destination)
     this.handlers.onState('live')
-    this.timer = setTimeout(() => this.stop('Session time is up'), this.grant.maxSeconds * 1000)
+    this.startTimer()
   }
 
   private onFrame(frame: Float32Array): void {

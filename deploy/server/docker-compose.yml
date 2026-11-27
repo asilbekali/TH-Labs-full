@@ -86,11 +86,12 @@ services:
       # ── Live translation (Realtime page) ─────────────────────────────────
       # Optional. Without GEMINI_API_KEY, POST /v1/realtime/session answers 503
       # and the page stays a preview. The key mints one-use Gemini tokens
-      # server-side; it never reaches the browser. The two limits bound the
-      # Google bill while the feature is free.
+      # server-side; it never reaches the browser. WELCOME is the free time
+      # on an account's first live day, DAILY on every day after; past that
+      # sessions are paid with tokens.
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
-      REALTIME_SESSION_SECONDS: ${REALTIME_SESSION_SECONDS:-300}
-      REALTIME_DAILY_SECONDS: ${REALTIME_DAILY_SECONDS:-900}
+      REALTIME_SESSION_SECONDS: ${REALTIME_SESSION_SECONDS:-60}
+      REALTIME_TRIAL_SECONDS: ${REALTIME_TRIAL_SECONDS:-600}
       # Comma-separated emails with no daily allowance (testers, staff).
       REALTIME_UNLIMITED_EMAILS: ${REALTIME_UNLIMITED_EMAILS:-}
       # The dubbing pipeline's origin (the Modal web URL). GET /v1/health probes
