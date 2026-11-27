@@ -6,8 +6,9 @@
 //   then for a session (POST /v1/realtime/session, which checks the daily
 //   allowance), then streams speech straight to Google's Live Translate model
 //   and plays the translation back (lib/live-translate.ts). The source language
-//   is detected by the model. Free while it is a playground: 5 minutes a
-//   session, 15 a day, enforced by the API.
+//   is detected by the model. Each day has free minutes, more on the first;
+//   after them every minute is charged in tokens. The API decides both, and the
+//   session carries on from one grant to the next by itself.
 // * Preview — otherwise. Nothing is translated or sent; the conversation lines
 //   are samples (lib/realtime-preview.ts), and the page says so.
 //
@@ -30,8 +31,9 @@ import { LiveTranslateSession } from '../lib/live-translate'
 import { EASE_ENTRANCE } from '../lib/motion'
 import { REALTIME_TOUR, accountKey, hasSeenTour, markTourSeen } from '../lib/onboarding'
 import { useLanguages } from '../lib/queries'
+import { notifyCreditsChanged } from '../lib/payments-api'
 import { getRealtimeUsage, startRealtimeSession } from '../lib/realtime-api'
-import type { RealtimeUsage } from '../lib/realtime-api'
+import type { RealtimeSessionGrant, RealtimeUsage } from '../lib/realtime-api'
 import { SAMPLE_COUNT, sampleLine } from '../lib/realtime-preview'
 import { EDITOR_SHAPE } from '../lib/shape'
 
@@ -39,6 +41,9 @@ const NOTIFY_KEY = 'thlabs.realtime.notify'
 
 // A pause this long between transcription pieces starts a new line.
 const LINE_GAP_MS = 1500
+// The API hands out no session shorter than this.
+const MIN_FREE_SECONDS = 30
+const EXTENSION_URL = 'https://chromewebstore.google.com/detail/ldchkkmimnmciglkoajfjmjlnlgdbmkk'
 
 /** One live exchange: what was heard and what was said in translation. */
 interface LiveLine {
@@ -115,6 +120,7 @@ export default function Realtime() {
   const [liveLines, setLiveLines] = useState<LiveLine[]>([])
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null)
   const [leftToday, setLeftToday] = useState<number | null>(null)
+  const [paying, setPaying] = useState(false)
   const sessionRef = useRef<LiveTranslateSession | null>(null)
   const lastPieceRef = useRef(0)
   const liveMode = usage?.configured === true
@@ -148,7 +154,7 @@ export default function Realtime() {
     }
   }, [])
 
-  // The countdown of a live session. The session also ends itself at zero.
+  // The countdown of the free time. A session paid with tokens has none.
   useEffect(() => {
     if (!live || !liveMode) return
     const id = window.setInterval(() => setSecondsLeft((s) => (s == null ? s : Math.max(0, s - 1))), 1000)
@@ -295,7 +301,7 @@ export default function Realtime() {
               target: 'rt-usage',
               prefer: 'left' as const,
               title: 'Your free minutes',
-              body: 'It is free while we test it. This shows how long a session can run and how much is left today.',
+              body: 'You get free minutes every day. This shows how much is left today. After that, live minutes use your tokens.',
             },
           ]
         : []),
@@ -327,6 +333,14 @@ export default function Realtime() {
   // The order and the unwinding live in lib/live-start.ts: microphone first
   // (a blocked one spends no allowance), and nothing carries on if the page is
   // left while the permission prompt or the connection is pending.
+  function showGrant(grant: RealtimeSessionGrant) {
+    const paid = (grant.creditsCharged ?? 0) > 0
+    setPaying(paid)
+    setSecondsLeft(grant.unlimited || paid ? null : grant.maxSeconds + grant.remainingSecondsToday)
+    setLeftToday(grant.unlimited ? null : grant.remainingSecondsToday)
+    if (paid) notifyCreditsChanged()
+  }
+
   async function startLive() {
     setConnecting(true)
     setLiveLines([])
@@ -335,8 +349,7 @@ export default function Realtime() {
       mint: () => startRealtimeSession(targetLang),
       alive: () => mountedRef.current,
       open: (grant, stream) => {
-        setSecondsLeft(grant.maxSeconds)
-        setLeftToday(grant.unlimited ? null : grant.remainingSecondsToday)
+        showGrant(grant)
         lastPieceRef.current = 0
         const session = new LiveTranslateSession(grant, stream, {
           onState: (state) => {
@@ -351,8 +364,15 @@ export default function Realtime() {
             setLive(false)
             setMicStream(null)
             setSecondsLeft(null)
+            setPaying(false)
             if (reason) setNotice(reason)
             refreshUsage()
+          },
+        }, {
+          renew: async () => {
+            const next = await startRealtimeSession(targetLang)
+            if (mountedRef.current) showGrant(next)
+            return next
           },
         })
         // Set before start() so Stop and leaving the page both reach it.
@@ -527,7 +547,7 @@ export default function Realtime() {
         <span className="chip px-2 py-0.5 text-[12px] text-primary">Preview</span>
         <p className="order-last min-w-0 basis-full text-[13px] text-muted sm:order-none sm:flex-1 sm:basis-0 sm:truncate">
           {liveMode
-            ? 'Preview. Translations may be imperfect.'
+            ? 'Warning: translations may be too perfect. Sorry in advance.'
             : 'Sample lines only. Nothing you say is sent.'}
         </p>
         <span className="flex items-center gap-1.5 text-[13px] text-secondary" aria-live="polite">
@@ -540,8 +560,13 @@ export default function Realtime() {
           </button>
         )}
         {liveMode && live && secondsLeft != null && (
-          <span className="font-mono text-[13px] tabular-nums text-secondary" aria-label="Time left in this session">
+          <span className="font-mono text-[13px] tabular-nums text-secondary" aria-label="Free time left today">
             {clock(secondsLeft)}
+          </span>
+        )}
+        {liveMode && live && paying && (
+          <span className="text-[13px] text-secondary" aria-live="polite">
+            Using tokens · {usage?.creditsPerMinute} / min
           </span>
         )}
         {live && (
@@ -635,6 +660,21 @@ export default function Realtime() {
 
   const settings = (
     <aside className="no-scrollbar min-h-0 min-w-0 space-y-3 lg:overflow-y-auto">
+      <section className="card p-5">
+        <span className="chip px-2 py-0.5 text-[12px] text-primary">Chrome extension</span>
+        <p className="mt-2.5 text-sm font-medium text-primary">Dub any tab in real time</p>
+        <p className="mt-1 text-[13px] leading-relaxed text-secondary">
+          This playground is for testing. Real-time dubbing works as a browser extension, on any video or call in Chrome.
+        </p>
+        <a
+          href={EXTENSION_URL}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="btn-primary focusable mt-3 flex h-10 w-full items-center justify-center text-sm"
+        >
+          Get the extension
+        </a>
+      </section>
       <section className="card relative z-10 space-y-4 p-5">
         <h2 className="text-[15px] font-semibold text-primary">Settings</h2>
         {liveMode ? (
@@ -670,19 +710,21 @@ export default function Realtime() {
 
       {liveMode && usage ? (
         <section data-tour="rt-usage" className="card p-5">
-          <span className="chip px-2 py-0.5 text-[12px] text-primary">Free preview</span>
-          <p className="mt-2.5 text-sm font-medium text-primary">Live translation is free while we test it</p>
+          <span className="chip px-2 py-0.5 text-[12px] text-primary">Live time</span>
+          <p className="mt-2.5 text-sm font-medium text-primary">
+            {usage.unlimited ? 'No daily limit on this account' : `${Math.round(usage.dailySeconds / 60)} free minutes today`}
+          </p>
           <p className="mt-1 text-[13px] leading-relaxed text-secondary">
-            {usage.unlimited
-              ? `Up to ${Math.round(usage.sessionSeconds / 60)} minutes a session, with no daily limit on this account.`
-              : `Up to ${Math.round(usage.sessionSeconds / 60)} minutes a session and ${Math.round(usage.dailySeconds / 60)} minutes a day.`}{' '}
+            {!usage.unlimited && usage.creditsPerMinute != null && `After that, ${usage.creditsPerMinute} tokens a minute. `}
             Your speech is sent to our translation provider and is not stored by us.
           </p>
-          {usage.unlimited ? (
-            <p className="mt-3 text-[13px] text-primary">No daily limit</p>
-          ) : leftToday != null && (
+          {!usage.unlimited && leftToday != null && (
             <p className="mt-3 text-[13px] text-primary" aria-live="polite">
-              {leftToday > 0 ? `${Math.floor(leftToday / 60)} min left today` : 'You’ve used today’s minutes. Come back tomorrow.'}
+              {leftToday >= MIN_FREE_SECONDS
+                ? `${clock(leftToday)} of free time left today`
+                : (usage.affordableSeconds ?? 0) >= MIN_FREE_SECONDS
+                  ? 'Today’s free minutes are used. Live minutes now use your tokens.'
+                  : 'Today’s free minutes are used. Top up tokens or come back tomorrow.'}
             </p>
           )}
         </section>

@@ -81,12 +81,12 @@ const grant: RealtimeSessionGrant = {
   remainingSecondsToday: 0,
 }
 
-function session(opts?: { connectTimeoutMs?: number }) {
+function session(opts?: ConstructorParameters<typeof LiveTranslateSession>[3], g = grant) {
   const stopped: string[] = []
   const stream = { getTracks: () => [{ stop: () => stopped.push('track') }] } as unknown as MediaStream
   const events = { ended: [] as (string | null)[], output: [] as string[], states: [] as string[] }
   const s = new LiveTranslateSession(
-    grant,
+    g,
     stream,
     {
       onState: (st) => events.states.push(st),
@@ -144,4 +144,54 @@ test('onEnd fires once however many ways the session stops', async () => {
   s.stop()
   FakeSocket.last!.close(1011, 'auth token has expired')
   assert.deepEqual(events.ended, [null])
+})
+
+const tick = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+test('a grant that runs out is followed by the next one without ending', async () => {
+  const short = { ...grant, maxSeconds: 0.02 }
+  const { s, events, stopped } = session({ renew: async () => ({ ...grant, wsUrl: 'wss://example/2' }) }, short)
+  await s.start()
+  const first = FakeSocket.last!
+  first.open()
+  first.receive({ setupComplete: {} })
+  await tick(40)
+  const second = FakeSocket.last!
+  assert.equal(second.url, 'wss://example/2')
+  first.close(1008, 'token expired') // gone before its replacement is ready
+  second.open()
+  second.receive({ setupComplete: {} })
+  second.receive({ serverContent: { outputTranscription: { text: 'davomi' } } })
+  assert.deepEqual(events.output, ['davomi'])
+  assert.deepEqual(events.ended, [])
+  assert.deepEqual(stopped, [])
+  s.stop()
+  assert.deepEqual(events.ended, [null])
+})
+
+test('a refused renewal ends the session with the reason', async () => {
+  const renew = () => Promise.reject(new Error('not enough tokens'))
+  const { s, events } = session({ renew }, { ...grant, maxSeconds: 0.02 })
+  await s.start()
+  FakeSocket.last!.open()
+  FakeSocket.last!.receive({ setupComplete: {} })
+  await tick(40)
+  assert.deepEqual(events.ended, ['not enough tokens'])
+})
+
+test('neither a close warning nor a stopped session buys another minute', async () => {
+  let minted = 0
+  const renew = async () => {
+    minted++
+    return grant
+  }
+  const { s } = session({ renew }, { ...grant, maxSeconds: 0.03 })
+  await s.start()
+  FakeSocket.last!.open()
+  FakeSocket.last!.receive({ setupComplete: {} })
+  FakeSocket.last!.receive({ goAway: {} }) // does not buy a minute early
+  assert.equal(minted, 0)
+  s.stop()
+  await tick(60)
+  assert.equal(minted, 0)
 })

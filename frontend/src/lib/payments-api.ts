@@ -169,6 +169,8 @@ export interface CreditPacksResponse {
   creditsPerMinute: number
   /** Multiplier on creditsPerMinute, per quality key. */
   qualityMultiplier: Record<string, number>
+  /** Credits a minute of real-time dubbing burns. It has no quality tiers. */
+  realtimeCreditsPerMinute: number
   /** False when these are the built-in defaults rather than the API's. */
   fromServer: boolean
 }
@@ -203,6 +205,35 @@ export interface ClaimResponse {
   subscription: unknown | null
 }
 
+// Packs sold as live minutes: 20 tokens a minute at 35¢ a minute, rounded
+// down to the cent per pack. Must agree with the seed in
+// api/src/payment/credit-packs.ts. Shown until the API lists its own,
+// and unavailable because there is no product to sell before then.
+const DEFAULT_REALTIME_PACKS: CreditPack[] = [
+  { id: 'realtime_10', credits: 200, priceCents: 350, currency: 'usd', available: false },
+  {
+    id: 'realtime_30',
+    credits: 600,
+    priceCents: 1050,
+    currency: 'usd',
+    popular: true,
+    available: false,
+  },
+  { id: 'realtime_60', credits: 1200, priceCents: 2100, currency: 'usd', available: false },
+]
+
+/**
+ * Whether a pack is sold as real-time minutes. Read off the slug, which is
+ * permanent once a pack exists. The tokens themselves work anywhere.
+ */
+export function isRealtimePack(pack: Pick<CreditPack, 'id'>): boolean {
+  return pack.id.startsWith('realtime_')
+}
+
+function withRealtimePacks(packs: CreditPack[]): CreditPack[] {
+  return packs.some(isRealtimePack) ? packs : [...packs, ...DEFAULT_REALTIME_PACKS]
+}
+
 const DEFAULT_CREDIT_PACKS: Omit<CreditPacksResponse, 'fromServer'> = {
   packs: [
     { id: 'pack_100', credits: 100, priceCents: 119, currency: 'usd' },
@@ -213,6 +244,9 @@ const DEFAULT_CREDIT_PACKS: Omit<CreditPacksResponse, 'fromServer'> = {
   // in both directions: 100 → 5 min, 500 → 25 min, 2000 → 100 min.
   creditsPerMinute: 20,
   qualityMultiplier: { fast: 0.5, balanced: 1, studio: 2 },
+  // Real-time dubbing sells at 35¢ a minute for 20 real-time tokens. Those
+  // live in their own wallet, so they need not be worth what a dubbing token is.
+  realtimeCreditsPerMinute: 20,
 }
 
 /**
@@ -315,7 +349,7 @@ export interface CommitDubResult {
 // Fired whenever a call changes the credit balance, so the wallet can refetch
 // and the top-bar pill updates without a manual page refresh.
 export const CREDITS_CHANGED_EVENT = 'th:credits-changed'
-function notifyCreditsChanged(): void {
+export function notifyCreditsChanged(): void {
   if (typeof window !== 'undefined') {
     window.dispatchEvent(new Event(CREDITS_CHANGED_EVENT))
   }
@@ -342,17 +376,24 @@ export async function getCreditPacks(): Promise<CreditPacksResponse> {
     )
     if (Array.isArray(res.packs) && res.packs.length > 0) {
       return {
-        packs: res.packs,
+        packs: withRealtimePacks(res.packs),
         creditsPerMinute:
           Number(res.creditsPerMinute) || DEFAULT_CREDIT_PACKS.creditsPerMinute,
         qualityMultiplier: res.qualityMultiplier ?? DEFAULT_CREDIT_PACKS.qualityMultiplier,
+        realtimeCreditsPerMinute:
+          Number(res.realtimeCreditsPerMinute) ||
+          DEFAULT_CREDIT_PACKS.realtimeCreditsPerMinute,
         fromServer: true,
       }
     }
   } catch {
     /* endpoint not deployed yet, or the user is signed out — use the defaults */
   }
-  return { ...DEFAULT_CREDIT_PACKS, fromServer: false }
+  return {
+    ...DEFAULT_CREDIT_PACKS,
+    packs: withRealtimePacks(DEFAULT_CREDIT_PACKS.packs),
+    fromServer: false,
+  }
 }
 
 // ── Checkout ──────────────────────────────────────────────────────────────
