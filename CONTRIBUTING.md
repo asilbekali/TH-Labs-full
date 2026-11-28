@@ -112,7 +112,13 @@ Tags follow `vMAJOR.MINOR.PATCH`.
 - **PATCH** (`v1.1.1`): only `hotfix/*` releases.
 - **MINOR** (`v1.2.0`): every release from `develop`, even one that only has fixes.
 - **MAJOR** (`v2.0.0`): a breaking change for callers of the account API or the
-  pipeline API, such as a removed endpoint or a changed response shape.
+  pipeline API, such as a removed endpoint or a changed response shape, or a
+  change in what the product is mainly for. v2 is the move to real-time dubbing
+  as the main product.
+- All apps share one version, so the backend, api, frontend and extension stay
+  in step.
+- The `/v1` route prefix is the API's own contract version, separate from the
+  product version. It changes only when the routes break.
 
 ## Starting a feature
 
