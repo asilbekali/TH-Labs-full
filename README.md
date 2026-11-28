@@ -18,9 +18,14 @@
 
 ## What is TH-Labs?
 
-TH-Labs translates a video into **30+ languages** and keeps **the speaker's own
-voice** in the dub. You upload a video, choose a language, and get back the
-same person speaking that language, with the original music and effects kept.
+TH-Labs dubs **live speech in real time**. Calls, meetings and livestreams
+reach you in your own language as people talk, through the Studio's Realtime
+screen or the Chrome extension. Version 2 makes real-time dubbing the main
+product.
+
+Uploaded videos still work too. TH-Labs translates a video into **30+
+languages** and keeps **the speaker's own voice** in the dub, with the original
+music and effects kept.
 
 It implements the cascaded **ASR → NMT → TTS → voice clone → sync** pipeline
 from the RSEF 2026 paper *"An Automatic AI Dubbing System for Multilingual
@@ -35,7 +40,8 @@ Abdug'afforov, New Uzbekistan University).
 
 | Folder | What it is | Stack | Runs on |
 |---|---|---|---|
-| [`frontend/`](frontend) | The Studio web app: dubbing, text to speech, real-time translation, account, plans | React · Vite · TypeScript · Tailwind | Modal (served by the backend) |
+| [`frontend/`](frontend) | The Studio web app: real-time dubbing, video dubbing, text to speech, account, plans | React · Vite · TypeScript · Tailwind | Modal (served by the backend) |
+| [`extension/`](extension) | The Chrome extension: real-time dubbing for any tab (calls, meetings, streams) | TypeScript · Vite · Manifest V3 | Chrome |
 | [`backend/`](backend) | The dubbing pipeline: jobs, live progress, models | FastAPI · Python | Modal, L4 GPU |
 | [`api/`](api) | The account API: users, sign-in, credits, payments, admin | NestJS · Prisma · PostgreSQL | VPS, Docker |
 | [`deploy/`](deploy) | Server compose, Caddy, Modal and Docker configs | | |

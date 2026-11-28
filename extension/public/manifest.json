@@ -3,7 +3,7 @@
   "name": "TH-Labs Real-Time Dubbing",
   "short_name": "TH-Labs Dub",
   "description": "Hear any call, meeting or livestream in your own language, in real time.",
-  "version": "0.1.0",
+  "version": "2.0.0",
   "minimum_chrome_version": "116",
   "icons": {
     "16": "icons/icon-16.png",
